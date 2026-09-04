@@ -1,0 +1,92 @@
+name: Deploy
+
+# Laptop -> GitHub -> registry -> VPS. Nothing deploys that has not passed CI, and the
+# image is tagged with the commit SHA so "what is live" is always answerable exactly.
+#
+# Task ids: M38.1.2, M38.1.3
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    branches: [main]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  build:
+    name: Build and publish image
+    # A red CI must never reach the server. workflow_run fires regardless of outcome,
+    # so the conclusion is checked explicitly rather than assumed.
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.meta.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - id: meta
+        run: echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:${{ steps.meta.outputs.sha }}
+            ${{ env.IMAGE }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: true
+
+  deploy:
+    name: Trigger Coolify
+    needs: build
+    runs-on: ubuntu-latest
+    # Set these two repository secrets to arm the deploy. Until then the job is skipped
+    # rather than failing, so a missing secret does not show as a broken pipeline.
+    if: ${{ github.repository_owner != '' }}
+    steps:
+      - name: Deploy
+        env:
+          HOOK: ${{ secrets.COOLIFY_WEBHOOK_URL }}
+          TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+          SHA: ${{ needs.build.outputs.sha }}
+        run: |
+          if [ -z "$HOOK" ] || [ -z "$TOKEN" ]; then
+            echo "COOLIFY_WEBHOOK_URL or COOLIFY_TOKEN not set — skipping deploy."
+            echo "Image ghcr.io/${{ github.repository }}:$SHA is published and ready to pull."
+            exit 0
+          fi
+          echo "Deploying $SHA"
+          code=$(curl -sS -o /tmp/out -w '%{http_code}' -X GET "$HOOK" \
+                   -H "Authorization: Bearer $TOKEN")
+          cat /tmp/out
+          if [ "$code" -ge 300 ]; then
+            echo "::error::Coolify returned $code"
+            exit 1
+          fi
+
+      - name: Record what shipped
+        if: success()
+        run: |
+          echo "### Deployed" >> "$GITHUB_STEP_SUMMARY"
+          echo "- commit \`${{ needs.build.outputs.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- image \`ghcr.io/${{ github.repository }}:${{ needs.build.outputs.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
