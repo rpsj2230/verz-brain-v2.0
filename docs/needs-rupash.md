@@ -5,28 +5,36 @@ can be settled quickly. Nothing here is blocking other work.
 
 Served at `/build/needs-rupash`.
 
-## While you were asleep
+## Session summary
 
-Wave 0 went from 57% to 85% of what I can build without you. Three bugs found and fixed,
-two of them in my own progress reporting:
+**Wave 0 is at 66%** — 85 of 129 tasks. The remaining 44 are mostly future-wave work
+(staging, wave-close rituals, the Lark digest) plus six OpenBao tasks that need OpenBao
+deployed and two blocked items listed below.
+
+Five bugs found and fixed, three of them in my own work:
 
 - **The entitlement type never checked expiry.** A contractor whose contract ended
-  yesterday, with grants still on file, was granted access. Found by the permission
-  canaries on their first run — which is the entire reason for writing tests whose correct
-  answer is a refusal. Expiry now lives on the entitlement itself rather than in whoever
-  builds one.
-- **The app never ran migrations.** `Settings` used an env prefix, so it read
-  `BRAIN_DATABASE_URL` while compose provided `DATABASE_URL`. It found nothing, skipped
-  migrations, and reported healthy — because an app with no database serves documents
-  perfectly well. Found by the new CI job that starts the whole stack.
-- **The progress number was inflated, twice.** A parent task id closed every leaf beneath
-  it, so a commit saying `M0.6` claimed connector cassettes that were not written. Then my
-  correction listed ten ids under "deliberately NOT claimed" and claimed all ten, because
-  a scanner has no concept of negation. Both rules are now strict: only exact leaf ids, only
-  in the subject or a `Closes:` trailer. The number fell from 8.0% to 5.6% and is now true.
+  yesterday, grants still on file, was granted access. Found by the permission canaries on
+  their first run — the entire reason for writing tests whose correct answer is a refusal.
+- **The app never ran migrations.** `Settings` read `BRAIN_DATABASE_URL` while compose
+  provided `DATABASE_URL`. Found nothing, skipped migrations, reported healthy. Found by
+  the new CI job that starts the whole stack. There is now a configuration check that
+  refuses to bind a port on a missing required setting.
+- **The progress number was inflated, twice.** A parent id closed every leaf beneath it,
+  so `M0.6` claimed connector cassettes that were not written. Then my correction listed
+  ten ids under "deliberately NOT claimed" and claimed all ten. Both rules are strict now:
+  exact leaf ids, and only in the subject or a `Closes:` trailer. The number is lower than
+  it was and it is now true.
+- **The compose was corrupted three times** by substring surgery on YAML — most recently
+  `"  cache:"` matching inside a `depends_on` block. I stopped editing it that way.
+- **The image reported `commit: unknown`.** Coolify resolves `${VAR:-default}` at save
+  time and bakes the literal in, so no runtime variable could override it. The image now
+  carries its own commit as a build argument.
 
-The number on the status page is lower than it was last night. That is the correction, not
-a regression.
+Built: the database layer with PgBouncer, migrations at startup under an advisory lock,
+worker sizing read from the container's own cgroup limits, a request deadline, cursor
+pagination, per-environment configuration checks, the synthetic company with canaries,
+twenty golden questions, ten injection payloads, and nine connector cassettes.
 
 ---
 
