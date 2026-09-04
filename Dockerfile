@@ -41,6 +41,11 @@ ENV PATH="/app/.venv/bin:$PATH" \
 WORKDIR /app
 COPY --from=builder --chown=brain:brain /app/.venv /app/.venv
 COPY --from=builder --chown=brain:brain /app/src /app/src
+# The migrations and their config. Without these the migrate container starts, finds no
+# alembic.ini, and exits with "No 'script_location' key found" - which looks like a
+# configuration mistake rather than a missing file.
+COPY --chown=brain:brain alembic.ini /app/alembic.ini
+COPY --chown=brain:brain migrations /app/migrations
 # The tracker, architecture and the status computed from git at build time. Baking the
 # status in means the page can never disagree with the binary serving it.
 COPY --chown=brain:brain docs /app/docs
