@@ -55,3 +55,23 @@ class Base(DeclarativeBase):
     """Declarative base carrying the naming convention."""
 
     metadata = metadata
+
+
+def normalise_database_url(url: str) -> str:
+    """Point a plain postgres URL at psycopg 3.
+
+    `postgresql://` is what every operator, tutorial and other tool writes, and SQLAlchemy
+    maps it to psycopg2 — a driver this project does not install. The failure is
+    `ModuleNotFoundError: No module named 'psycopg2'`, which reads like a missing
+    dependency rather than a URL scheme, so it sends you to pyproject.toml instead of to
+    the connection string.
+
+    Rather than require every deployment to spell the driver correctly, accept the form
+    people actually write.
+
+    Task ids: M0.3.2
+    """
+    for prefix in ("postgresql://", "postgres://"):
+        if url.startswith(prefix):
+            return "postgresql+psycopg://" + url[len(prefix) :]
+    return url

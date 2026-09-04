@@ -18,7 +18,7 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-from brain.db import SCHEMAS, metadata
+from brain.db import SCHEMAS, metadata, normalise_database_url
 
 config = context.config
 
@@ -29,7 +29,8 @@ url = os.environ.get("DATABASE_URL")
 if not url:
     msg = "DATABASE_URL is not set; migrations have nothing to connect to"
     raise RuntimeError(msg)
-config.set_main_option("sqlalchemy.url", url.replace("%", "%%"))
+
+config.set_main_option("sqlalchemy.url", normalise_database_url(url).replace("%", "%%"))
 
 target_metadata = metadata
 

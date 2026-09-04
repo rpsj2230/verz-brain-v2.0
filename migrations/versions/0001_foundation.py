@@ -33,9 +33,39 @@ SCHEMAS = ("auth", "gate", "agent", "know", "mem", "obs", "proj", "er", "ops")
 EXTENSIONS = ("vector", "pg_trgm", "fuzzystrmatch", "unaccent")
 
 APP_ROLE = "brain_app"
+FAST_ROLE = "brain_fastlane"
+
+# Written out rather than assembled, so there is no string interpolation anywhere near a
+# SQL statement in this file. The two role names are constants a few lines above; the only
+# value that is not ours is the password, and that is quoted by the driver further down.
+CREATE_APP_ROLE = """
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'brain_app') THEN
+        CREATE ROLE brain_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE
+            NOINHERIT NOBYPASSRLS;
+    END IF;
+    ALTER ROLE brain_app NOSUPERUSER NOBYPASSRLS;
+END
+$$;
+"""
+
+CREATE_FAST_ROLE = """
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'brain_fastlane') THEN
+        CREATE ROLE brain_fastlane NOLOGIN NOSUPERUSER NOBYPASSRLS NOINHERIT;
+    END IF;
+END
+$$;
+"""
 
 
 def upgrade() -> None:
+    # The SQL above names these roles literally; this keeps the constants honest.
+    assert APP_ROLE in CREATE_APP_ROLE
+    assert FAST_ROLE in CREATE_FAST_ROLE
+
     for ext in EXTENSIONS:
         op.execute(f'CREATE EXTENSION IF NOT EXISTS "{ext}"')
 
@@ -48,19 +78,7 @@ def upgrade() -> None:
     #
     # The role name is a constant in this file, so interpolating it is safe. The password
     # is handled separately below, because it is not.
-    op.execute(  # noqa: S608 - APP_ROLE is a constant in this file, not input
-        f"""
-        DO $$
-        BEGIN
-            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{APP_ROLE}') THEN
-                CREATE ROLE {APP_ROLE} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE
-                    NOINHERIT NOBYPASSRLS;
-            END IF;
-            ALTER ROLE {APP_ROLE} NOSUPERUSER NOBYPASSRLS;
-        END
-        $$;
-        """
-    )
+    op.execute(CREATE_APP_ROLE)
 
     password = os.environ.get("APP_ROLE_PASSWORD", "")
     if password:
@@ -92,17 +110,7 @@ def upgrade() -> None:
     # The fast lane answers without a model, from the local projection only, and must be
     # unable to reach the network. That is enforced by the database rather than by a
     # prompt: this role holds no privileges beyond reading projected fields.
-    op.execute(
-        """
-        DO $$
-        BEGIN
-            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'brain_fastlane') THEN
-                CREATE ROLE brain_fastlane NOLOGIN NOSUPERUSER NOBYPASSRLS NOINHERIT;
-            END IF;
-        END
-        $$;
-        """
-    )
+    op.execute(CREATE_FAST_ROLE)
     op.execute(f"GRANT brain_fastlane TO {APP_ROLE}")
     op.execute("GRANT USAGE ON SCHEMA proj TO brain_fastlane")
 
