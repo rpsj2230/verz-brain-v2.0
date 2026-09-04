@@ -123,15 +123,20 @@ def _leaf_ids(node: Any, prefix: str, out: list[str]) -> None:
 
 
 def _is_closed(leaf: str, closed: set[str]) -> bool:
-    """A leaf counts as closed when it is named, or when any ancestor id is named.
+    """A leaf counts as closed only when its own id is named. Ancestors close nothing.
 
-    Closing `M0.2` closes the leaves beneath it, because that is how commits are actually
-    written — nobody lists forty leaf ids when the whole subtree landed together.
+    This was the other way round until 2026-09-04, on the reasoning that nobody lists
+    forty leaf ids when a whole subtree lands together. That convenience was quietly
+    inflating the number: a commit saying `M0.6` closed all seven children including
+    connector cassettes, which were not written, and a commit saying `M0.3` closed the
+    PgBouncer tasks, which do not exist yet either.
+
+    Nothing warned, because an ancestor id is exactly what an honest commit for a large
+    piece of work looks like. The page's entire claim is that it cannot show progress that
+    does not exist, so the rule has to be the strict one and commits have to list what
+    they actually closed.
     """
-    if leaf in closed:
-        return True
-    parts = leaf.split(".")
-    return any(".".join(parts[: i + 1]) in closed for i in range(1, len(parts)))
+    return leaf in closed
 
 
 def build_status(repo: Path, wbs: dict[str, Any], ref: str = "HEAD") -> Status:

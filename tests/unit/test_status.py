@@ -80,12 +80,16 @@ def test_progress_counts_only_what_commits_closed(repo: Path) -> None:
     assert s.percent == 60.0
 
 
-def test_closing_a_parent_closes_its_leaves(repo: Path) -> None:
-    """Nobody lists forty leaf ids when a whole subtree lands together, so `M0.2` has to
-    close `M0.2.1`."""
+def test_a_parent_id_closes_nothing(repo: Path) -> None:
+    """Changed 2026-09-04 after finding the number inflated.
+
+    An ancestor id used to close every leaf beneath it, which is what an honest commit
+    for a large piece of work looks like - and exactly why it was dangerous. A commit
+    saying M0.6 closed connector cassettes that were never written. Nothing warned.
+    """
     git(repo, "commit", "--allow-empty", "-m", "M0.2: the whole subtree")
     s = status.build_status(repo, WBS)
-    assert "M0.2.1" in s.done_task_ids
+    assert "M0.2.1" not in s.done_task_ids
 
 
 def test_a_leaf_id_does_not_close_a_sibling(repo: Path) -> None:
@@ -109,7 +113,7 @@ def test_current_wave_is_none_when_everything_is_done(repo: Path) -> None:
 
     Note the ids: a bare `M0` is a module, not a task, and deliberately closes nothing.
     """
-    git(repo, "commit", "--allow-empty", "-m", "M0.1 M0.2 M1.1 everything")
+    git(repo, "commit", "--allow-empty", "-m", "M0.1.1 M0.1.2 M0.2.1 M1.1.1 M1.1.2 everything")
     s = status.build_status(repo, WBS)
     assert s.done == s.total
     assert s.current_wave is None
