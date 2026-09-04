@@ -1,0 +1,31 @@
+#!/bin/sh
+# Runs the same gates CI runs, before anything leaves the laptop.
+#
+# This is not a substitute for server-side branch protection — a hook can be skipped with
+# --no-verify, and on a private repo without GitHub Pro there is no server-side rule to
+# fall back on. It is here so the common case (someone pushes broken work by accident)
+# is caught in seconds rather than in a CI queue.
+#
+# Install: git config core.hooksPath ops/hooks
+# Task ids: M0.1.3, M38.1.3
+
+set -e
+
+echo "pre-push: format"
+uv run ruff format --check src tests
+
+echo "pre-push: lint"
+uv run ruff check src tests
+
+echo "pre-push: types (strict)"
+uv run mypy
+
+echo "pre-push: invariants"
+# These encode rules that must never break. If one fails, the push stops here.
+uv run pytest tests/invariants -q
+
+echo "pre-push: sweeps"
+uv run python -m brain.ops.sweeps tool_registry
+uv run python -m brain.ops.sweeps traceability
+
+echo "pre-push: all gates green"
