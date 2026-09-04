@@ -1,10 +1,32 @@
 # Needs Rupash
 
 Decisions and access I cannot resolve alone. Each has options and a recommendation so it
-can be settled quickly. Nothing here is blocking other work — I have moved on and will
-keep moving.
+can be settled quickly. Nothing here is blocking other work.
 
-Served at `/build/needs-rupash`. Last updated 2026-09-04, overnight session.
+Served at `/build/needs-rupash`.
+
+## While you were asleep
+
+Wave 0 went from 57% to 85% of what I can build without you. Three bugs found and fixed,
+two of them in my own progress reporting:
+
+- **The entitlement type never checked expiry.** A contractor whose contract ended
+  yesterday, with grants still on file, was granted access. Found by the permission
+  canaries on their first run — which is the entire reason for writing tests whose correct
+  answer is a refusal. Expiry now lives on the entitlement itself rather than in whoever
+  builds one.
+- **The app never ran migrations.** `Settings` used an env prefix, so it read
+  `BRAIN_DATABASE_URL` while compose provided `DATABASE_URL`. It found nothing, skipped
+  migrations, and reported healthy — because an app with no database serves documents
+  perfectly well. Found by the new CI job that starts the whole stack.
+- **The progress number was inflated, twice.** A parent task id closed every leaf beneath
+  it, so a commit saying `M0.6` claimed connector cassettes that were not written. Then my
+  correction listed ten ids under "deliberately NOT claimed" and claimed all ten, because
+  a scanner has no concept of negation. Both rules are now strict: only exact leaf ids, only
+  in the subject or a `Closes:` trailer. The number fell from 8.0% to 5.6% and is now true.
+
+The number on the status page is lower than it was last night. That is the correction, not
+a regression.
 
 ---
 
