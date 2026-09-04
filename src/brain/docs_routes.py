@@ -50,23 +50,23 @@ def _doc(name: str) -> FileResponse | HTMLResponse:
     return FileResponse(path, media_type="text/html", headers={"cache-control": "no-store"})
 
 
-@router.get("/tracker", response_class=HTMLResponse, response_model=None)
+@router.get("/build/tracker", response_class=HTMLResponse, response_model=None)
 async def tracker() -> FileResponse | HTMLResponse:
     return _doc("tracker.html")
 
 
-@router.get("/architecture", response_class=HTMLResponse, response_model=None)
+@router.get("/build/architecture", response_class=HTMLResponse, response_model=None)
 async def architecture() -> FileResponse | HTMLResponse:
     return _doc("architecture.html")
 
 
-@router.get("/screens", response_class=HTMLResponse, response_model=None)
+@router.get("/build/screens", response_class=HTMLResponse, response_model=None)
 async def screens() -> FileResponse | HTMLResponse:
     return _doc("screens.html")
 
 
-@router.get("/", response_class=HTMLResponse)
-async def index(request: Request) -> HTMLResponse:
+@router.get("/build", response_class=HTMLResponse)
+async def build_status(request: Request) -> HTMLResponse:
     """A one-screen answer to 'where is this up to', with links to the full documents."""
     s = _read_status()
     waves = s.get("waves", [])
@@ -119,9 +119,9 @@ code{{font-family:"IBM Plex Mono",monospace;font-size:11.5px;color:var(--brand)}
 <div class="track"><span style="width:{pct}%"></span></div>
 <table><thead><tr><th>Wave</th><th>Name</th><th style="text-align:right">Done</th><th></th><th style="text-align:right">%</th></tr></thead>
 <tbody>{wave_rows}</tbody></table>
-<a class="btn pri" href="/tracker">Task tracker</a>
-<a class="btn" href="/architecture">Architecture</a>
-<a class="btn" href="/screens">Key screens</a>
+<a class="btn pri" href="/build/tracker">Task tracker</a>
+<a class="btn" href="/build/architecture">Architecture</a>
+<a class="btn" href="/build/screens">Key screens</a>
 <a class="btn" href="/api/status.json">status.json</a>
 <h3 style="font-family:Poppins,sans-serif;font-size:15px;margin:30px 0 6px">Recently closed</h3>
 <ul>{recent}</ul>
@@ -129,4 +129,130 @@ code{{font-family:"IBM Plex Mono",monospace;font-size:11.5px;color:var(--brand)}
 hand. A task counts as done when a commit naming its id is on main and CI passed, so this
 page cannot show progress that does not exist. Generated at build time from
 {s.get("commit", "?")}, so it always describes the code actually running.</p>
+</div></body></html>""")
+
+
+# --------------------------------------------------------------- product URLs
+# These are where the system itself will live. They are reserved and answered now, so the
+# addresses never move: a link sent today keeps working when the real screen replaces the
+# placeholder. Each says honestly which wave builds it rather than 404ing, because "not
+# yet" and "wrong address" are different problems and should not look the same.
+
+COMING: dict[str, tuple[str, int, str]] = {
+    "/admin": (
+        "Admin console",
+        3,
+        "Company overview, people and grants, agents, knowledge, learning, connectors, models",
+    ),
+    "/me": (
+        "My workspace",
+        4,
+        "Your agents, your knowledge, what it learned about you, your usage",
+    ),
+    "/ask": ("Ask", 2, "The chat. One box, no agent picker - the router chooses"),
+    "/login": ("Sign in", 1, "Single sign-on through Keycloak"),
+}
+
+
+def _placeholder(path: str) -> HTMLResponse:
+    name, wave, detail = COMING[path]
+    s = _read_status()
+    waves = {w["wave"]: w for w in s.get("waves", [])}
+    w = waves.get(wave, {})
+    pct = w.get("percent", 0)
+    done, total = w.get("done", 0), w.get("total", 0)
+    return HTMLResponse(
+        f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>{name} - not built yet</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;600&family=Poppins:wght@600&display=swap">
+<style>
+:root{{--brand:#F47936;--ink:#231F20;--ground:#F6F4F1;--line:#E3DDD7;--dim:#7A716C}}
+@media(prefers-color-scheme:dark){{:root{{--ground:#14110F;--line:#332C25;--ink:#F5F1ED;--dim:#948A83}}}}
+body{{margin:0;background:var(--ground);color:var(--ink);font:15px/1.6 "IBM Plex Sans",system-ui,sans-serif}}
+.w{{max-width:620px;margin:0 auto;padding:14vh 22px 60px}}
+.eyebrow{{font-family:"IBM Plex Mono",monospace;font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--brand)}}
+h1{{font-family:Poppins,sans-serif;font-size:32px;margin:8px 0 14px;letter-spacing:-.02em}}
+p{{color:var(--dim);max-width:52ch}}
+.bar{{height:6px;background:var(--line);border-radius:99px;overflow:hidden;margin:20px 0 8px}}
+.bar>span{{display:block;height:100%;background:var(--brand);border-radius:99px;width:{pct}%}}
+.n{{font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--dim)}}
+a{{color:var(--brand);font-weight:600}}
+</style></head><body><div class="w">
+<div class="eyebrow">Not built yet</div>
+<h1>{name}</h1>
+<p>{detail}.</p>
+<p>This address is reserved. It is built in <strong>wave {wave}</strong>, and this page becomes
+the real screen when that lands - the link will not move.</p>
+<div class="bar"><span></span></div>
+<div class="n">Wave {wave}: {done} of {total} tasks - {pct}%</div>
+<p style="margin-top:28px"><a href="/build">See what is built &rarr;</a></p>
+</div></body></html>""",
+        status_code=200,
+    )
+
+
+@router.get("/admin", response_class=HTMLResponse)
+async def admin_placeholder() -> HTMLResponse:
+    return _placeholder("/admin")
+
+
+@router.get("/me", response_class=HTMLResponse)
+async def me_placeholder() -> HTMLResponse:
+    return _placeholder("/me")
+
+
+@router.get("/ask", response_class=HTMLResponse)
+async def ask_placeholder() -> HTMLResponse:
+    return _placeholder("/ask")
+
+
+@router.get("/login", response_class=HTMLResponse)
+async def login_placeholder() -> HTMLResponse:
+    return _placeholder("/login")
+
+
+@router.get("/", response_class=HTMLResponse)
+async def root() -> HTMLResponse:
+    """The product owns the root. Until it exists, say so and point at what does."""
+    s = _read_status()
+    return HTMLResponse(f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Verz Company Brain</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;600&family=Poppins:wght@600&display=swap">
+<style>
+:root{{--brand:#F47936;--ink:#231F20;--ground:#F6F4F1;--panel:#fff;--line:#E3DDD7;--dim:#7A716C}}
+@media(prefers-color-scheme:dark){{:root{{--ground:#14110F;--panel:#1D1916;--line:#332C25;--ink:#F5F1ED;--dim:#948A83}}}}
+*{{box-sizing:border-box}}
+body{{margin:0;background:var(--ground);color:var(--ink);font:15px/1.6 "IBM Plex Sans",system-ui,sans-serif}}
+.w{{max-width:680px;margin:0 auto;padding:11vh 22px 70px}}
+.eyebrow{{font-family:"IBM Plex Mono",monospace;font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--brand)}}
+h1{{font-family:Poppins,sans-serif;font-size:36px;margin:8px 0 12px;letter-spacing:-.025em}}
+p{{color:var(--dim);max-width:56ch}}
+table{{width:100%;border-collapse:collapse;font-size:13.5px;margin:26px 0 10px}}
+th{{font-family:"IBM Plex Mono",monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);text-align:left;padding:6px 10px 5px 0;border-bottom:1px solid var(--line)}}
+td{{padding:9px 10px 9px 0;border-bottom:1px solid var(--line)}}
+td a{{color:var(--ink);font-weight:600;text-decoration:none}}
+td a:hover{{color:var(--brand)}}
+.tag{{font-family:"IBM Plex Mono",monospace;font-size:9.5px;padding:2px 6px;border-radius:2px;background:var(--line);color:var(--dim);white-space:nowrap}}
+.tag.on{{background:var(--brand);color:#231F20;font-weight:600}}
+.n{{font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--dim);margin-top:26px;border-left:2px solid var(--brand);padding-left:11px;line-height:1.8}}
+</style></head><body><div class="w">
+<div class="eyebrow">Verz Design</div>
+<h1>Company Brain</h1>
+<p>The system is being built. These are its addresses - each one already answers, and each
+becomes the real screen when its wave lands, so a link you save today keeps working.</p>
+<table>
+<thead><tr><th>Address</th><th>What it is</th><th>State</th></tr></thead>
+<tbody>
+<tr><td><a href="/ask">/ask</a></td><td>Ask a question</td><td><span class="tag">wave 2</span></td></tr>
+<tr><td><a href="/admin">/admin</a></td><td>Admin console</td><td><span class="tag">wave 3</span></td></tr>
+<tr><td><a href="/me">/me</a></td><td>My workspace</td><td><span class="tag">wave 4</span></td></tr>
+<tr><td><a href="/login">/login</a></td><td>Sign in</td><td><span class="tag">wave 1</span></td></tr>
+<tr><td><a href="/build">/build</a></td><td>Build progress</td><td><span class="tag on">live</span></td></tr>
+<tr><td><a href="/build/tracker">/build/tracker</a></td><td>Task tracker</td><td><span class="tag on">live</span></td></tr>
+<tr><td><a href="/build/architecture">/build/architecture</a></td><td>Architecture</td><td><span class="tag on">live</span></td></tr>
+<tr><td><a href="/build/screens">/build/screens</a></td><td>Key screens (designs)</td><td><span class="tag on">live</span></td></tr>
+</tbody></table>
+<p class="n">{s.get("done", 0)} of {s.get("total", 0)} tasks built &middot; {s.get("percent", 0)}% &middot; commit {s.get("commit", "?")}<br>
+The screens page shows <strong>designs</strong>, not working software. Nothing on this box can
+answer a question yet.</p>
 </div></body></html>""")

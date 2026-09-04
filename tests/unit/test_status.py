@@ -199,23 +199,23 @@ def test_status_is_never_cached(client: TestClient) -> None:
 
 
 def test_index_shows_the_percentage_and_the_commit(client: TestClient) -> None:
-    text = client.get("/").text
+    text = client.get("/build").text
     assert "25.0%" in text
     assert "abc1234" in text
     assert "The gate" in text
 
 
 def test_tracker_is_served(client: TestClient) -> None:
-    assert client.get("/tracker").status_code == 200
+    assert client.get("/build/tracker").status_code == 200
 
 
 def test_a_missing_document_is_a_404_not_a_crash(client: TestClient) -> None:
     """Architecture is not in this fixture. A missing doc must not take the app down."""
-    assert client.get("/architecture").status_code == 404
+    assert client.get("/build/architecture").status_code == 404
 
 
 def test_docs_pages_are_reachable_in_production(client: TestClient) -> None:
     """Unlike /docs these carry no company data and stay on in production — the whole
     point is that progress is visible without asking anyone."""
-    assert client.get("/").status_code == 200
+    assert client.get("/build").status_code == 200
     assert client.get("/api/status.json").status_code == 200
