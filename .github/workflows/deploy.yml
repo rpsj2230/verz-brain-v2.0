@@ -15,6 +15,11 @@ on:
 permissions:
   contents: read
   packages: write
+  # Keyless signing binds the signature to this workflow's OIDC identity. Without it
+  # cosign has nothing to prove who signed, and falls back to wanting a private key —
+  # which would then have to live somewhere, be rotated, and be revocable. This way
+  # there is no key to steal.
+  id-token: write
 
 env:
   REGISTRY: ghcr.io
@@ -29,6 +34,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       sha: ${{ steps.meta.outputs.sha }}
+      digest: ${{ steps.build.outputs.digest }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -67,7 +73,8 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: docker/build-push-action@v6
+      - id: build
+        uses: docker/build-push-action@v6
         with:
           context: .
           push: true
@@ -79,6 +86,29 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           provenance: true
+
+      - uses: sigstore/cosign-installer@v3.7.0
+
+      - name: Sign the image, keylessly
+        # Signs the digest, not the tag. A tag is a moving pointer, so signing `:latest`
+        # attests to whatever it happens to point at today — which is exactly the thing an
+        # attacker moves. The digest is the image.
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          cosign sign --yes "${{ env.IMAGE }}@${DIGEST}"
+          echo "signed ${{ env.IMAGE }}@${DIGEST}"
+
+      - name: Verify the signature we just made
+        # A signing step nobody verifies is a signing step that silently stops working.
+        # This checks the signature is bound to this repository and this workflow, so a
+        # signature made by some other workflow on some other repo would not pass.
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          cosign verify "${{ env.IMAGE }}@${DIGEST}"             --certificate-identity-regexp "^https://github.com/${{ github.repository }}/"             --certificate-oidc-issuer https://token.actions.githubusercontent.com             > /dev/null
+          echo "signature verifies against ${{ github.repository }}"
+
 
   deploy:
     name: Trigger Coolify

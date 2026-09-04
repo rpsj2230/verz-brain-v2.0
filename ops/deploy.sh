@@ -18,8 +18,30 @@ HOST="${DEPLOY_HOST:-verz-vps}"
 UUID="${DEPLOY_UUID:-c74hlhygvg7scjttu8ydwnqi}"
 DIR="/data/coolify/services/$UUID"
 URL="${DEPLOY_URL:-https://brain.194.233.66.89.sslip.io}"
+REPO="${DEPLOY_REPO:-rpsj2230/verz-brain-v2.0}"
+IMAGE="${DEPLOY_IMAGE:-ghcr.io/rpsj2230/verz-brain-v2.0}"
 
 echo "==> deploying to $HOST ($UUID)"
+
+# A signature nothing checks is a signature that silently stops being made. This verifies
+# on the server, before the image is pulled, that what is about to run was built by this
+# repository's own workflow — not merely that it exists in the registry.
+#
+# cosign is optional here rather than required: a machine without it should not be unable
+# to deploy, but it must say so rather than passing quietly. Skipping a check and passing
+# a check look identical unless one of them is loud.
+ssh -o BatchMode=yes "$HOST" "
+  if command -v cosign >/dev/null 2>&1; then
+    if cosign verify '$IMAGE:latest'         --certificate-identity-regexp '^https://github.com/$REPO/'         --certificate-oidc-issuer https://token.actions.githubusercontent.com         >/dev/null 2>&1; then
+      echo '    signature verified against $REPO'
+    else
+      echo '    SIGNATURE DID NOT VERIFY - refusing to deploy' >&2
+      exit 1
+    fi
+  else
+    echo '    cosign not installed on $HOST; signature NOT checked'
+  fi
+"
 
 # The SHA the image was built from, so /health/ready reports what is actually running
 # rather than "unknown". Coolify's .env has no value for it and the compose default fills
