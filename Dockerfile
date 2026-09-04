@@ -1,7 +1,13 @@
 # Multi-stage. The builder carries uv and the toolchain; the runtime carries neither.
 # Task ids: M0.4, M38.1.2
 
-FROM ghcr.io/astral-sh/uv:0.12.9-python3.13-bookworm-slim AS builder
+FROM python:3.13-slim-bookworm AS builder
+
+# uv is copied in as a pinned binary rather than taken from a combined base image.
+# The `<uv-version>-python<x.y>-<distro>` tags are not published for every uv release —
+# 0.12.9 has none — so depending on one is a build that breaks on an upstream tagging
+# decision. This pins both uv and Python exactly and depends on neither.
+COPY --from=ghcr.io/astral-sh/uv:0.12.9 /uv /uvx /bin/
 
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
