@@ -88,3 +88,46 @@ def test_a_successful_migration_marks_the_app_ready(monkeypatch: pytest.MonkeyPa
         r = c.get("/health/ready")
         assert r.status_code == 200
         assert r.json()["checks"]["migrations"] is True
+
+
+# ------------------------------------------------------------- regression
+def test_the_plain_database_url_is_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression, found by the CI stack job on 2026-09-04.
+
+    Settings carries env_prefix="BRAIN_", so `database_url` looked only at
+    BRAIN_DATABASE_URL. Compose, alembic, and every operator on earth write
+    DATABASE_URL. The deployed app therefore found nothing, skipped migrations, and
+    reported healthy against an empty schema - and nothing failed, because an app with no
+    database is perfectly able to serve documents.
+    """
+    monkeypatch.delenv("BRAIN_DATABASE_URL", raising=False)
+    monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@h/d")
+    assert Settings().database_url == "postgresql://u:p@h/d"
+
+
+def test_the_prefixed_name_still_wins(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Both are accepted; the explicit one takes precedence so a host-wide DATABASE_URL
+    cannot quietly override a deliberate per-app setting."""
+    monkeypatch.setenv("BRAIN_DATABASE_URL", "postgresql://deliberate@h/d")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://ambient@h/d")
+    assert Settings().database_url == "postgresql://deliberate@h/d"
+
+
+def test_a_missing_database_outside_development_is_loud(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Silence was the actual failure. Outside development, no database means unready."""
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("BRAIN_DATABASE_URL", raising=False)
+    app = create_app(Settings(env="staging", database_url=""))
+    with TestClient(app) as c:
+        r = c.get("/health/ready")
+        assert r.status_code == 503
+        assert r.json()["checks"]["database_configured"] is False
+
+
+def test_development_without_a_database_stays_quiet(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Running the docs locally with no Postgres is a normal thing to do."""
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("BRAIN_DATABASE_URL", raising=False)
+    app = create_app(Settings(env="development", database_url=""))
+    with TestClient(app) as c:
+        assert c.get("/health/ready").status_code == 200

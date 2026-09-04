@@ -23,7 +23,7 @@ import structlog
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import AliasChoices, BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from brain.core.errors import BrainError, Outcome, to_public
@@ -38,8 +38,21 @@ class Settings(BaseSettings):
 
     env: Literal["development", "staging", "production"] = "development"
     commit_sha: str = "unknown"
-    database_url: str = ""
-    valkey_url: str = ""
+
+    # DATABASE_URL and VALKEY_URL are read under their plain names as well as the
+    # prefixed ones. The prefix exists so BRAIN_ENV cannot collide with anything else on
+    # a shared host, but these two have universal names that every tool, compose file and
+    # operator already uses — including alembic/env.py two directories away.
+    #
+    # Having two names for one setting is not a naming preference, it is a bug waiting to
+    # happen, and it did: the deployed app read BRAIN_DATABASE_URL, found nothing, and
+    # skipped migrations in silence while reporting healthy.
+    database_url: str = Field(
+        default="", validation_alias=AliasChoices("BRAIN_DATABASE_URL", "DATABASE_URL")
+    )
+    valkey_url: str = Field(
+        default="", validation_alias=AliasChoices("BRAIN_VALKEY_URL", "VALKEY_URL")
+    )
     #: The console and the widget only. Not a wildcard, in any environment.
     cors_origins: tuple[str, ...] = ()
     #: Off in tests, on everywhere else. A deployment that wants migrations applied
@@ -62,6 +75,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # model registry. Readiness reads app.state.ready, so an unattached dependency shows
     # as not-ready rather than as a working instance.
     app.state.ready = {}
+
+    if settings.run_migrations and not settings.database_url and settings.env != "development":
+        # Loud on purpose. Skipping migrations because a variable was unset is exactly
+        # how the deployed app came up healthy against an empty schema.
+        log.error(
+            "no database configured outside development; migrations skipped",
+            env=settings.env,
+            hint="set DATABASE_URL or BRAIN_DATABASE_URL",
+        )
+        app.state.ready["database_configured"] = False
 
     if settings.database_url and settings.run_migrations:
         # Before readiness, deliberately: the application must not answer a question
