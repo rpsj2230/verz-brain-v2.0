@@ -64,6 +64,29 @@ jobs:
       - name: Tests with coverage floor
         run: uv run pytest --cov --cov-report=term-missing
 
+      - name: Migrations go forward, back, and forward again
+        # A migration that cannot be reversed is a deploy with no way home. This runs the
+        # round trip rather than only `upgrade head`, because a downgrade that raises is
+        # discovered at 3am otherwise - and it runs upgrade twice, since a migration that
+        # is not idempotent breaks the second replica rather than the first.
+        env:
+          APP_ROLE_PASSWORD: "ci'test\"password"
+        run: |
+          uv run alembic upgrade head
+          uv run alembic downgrade base
+          uv run alembic upgrade head
+          uv run alembic current | grep -q "(head)" || { echo "::error::not at head"; exit 1; }
+          echo "round trip clean"
+
+      - name: The schema is what the migration says it is
+        run: |
+          n=$(psql "$DATABASE_URL" -tAc "select count(*) from pg_namespace where nspname in ('auth','gate','agent','know','mem','obs','proj','er','ops')" | tr -d '[:space:]')
+          [ "$n" = "9" ] || { echo "::error::expected 9 schemas, found $n"; exit 1; }
+          psql "$DATABASE_URL" -tAc "select rolname, rolbypassrls from pg_roles where rolname like 'brain%'"
+          b=$(psql "$DATABASE_URL" -tAc "select count(*) from pg_roles where rolname like 'brain%' and rolbypassrls" | tr -d '[:space:]')
+          [ "$b" = "0" ] || { echo "::error::a brain role can bypass row-level security"; exit 1; }
+          echo "9 schemas, no role bypasses RLS"
+
   sweeps:
     name: Schema and registry sweeps
     runs-on: ubuntu-latest
