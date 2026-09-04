@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from datetime import UTC, datetime
 from typing import Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -80,20 +81,37 @@ class Grant(BaseModel):
 
 
 class EntitlementSet(BaseModel):
-    """Everything a principal holds. Additive only; there is no deny list by design."""
+    """Everything a principal holds. Additive only; there is no deny list by design.
+
+    `not_after` is carried here rather than checked by whoever builds this, because a
+    check that lives in a helper is a check someone can construct their way around. An
+    expired principal's grants stay on file — revocation and expiry are different events —
+    so the set has to know it is expired and refuse on that basis.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     principal_id: str
     grants: tuple[Grant, ...] = ()
+    #: Copied from the principal at construction. None means no time bound.
+    not_after: datetime | None = None
 
-    def scope_for(self, capability: Capability) -> Scope | None:
+    def is_expired(self, now: datetime | None = None) -> bool:
+        if self.not_after is None:
+            return False
+        return (now or datetime.now(UTC)) >= self.not_after
+
+    def scope_for(self, capability: Capability, now: datetime | None = None) -> Scope | None:
         """The scope in which this principal holds `capability`, or None.
 
         Where several grants cover it, the scopes are intersected. That is deliberately
         the conservative reading: holding a capability twice must never be wider than
         holding it once.
+
+        An expired principal holds nothing, whatever the grant table still says.
         """
+        if self.is_expired(now):
+            return None
         matched = [g.scope for g in self.grants if g.capability.covers(capability)]
         if not matched:
             return None
@@ -102,8 +120,8 @@ class EntitlementSet(BaseModel):
             result = result.intersect(s)
         return result
 
-    def holds(self, capability: Capability) -> bool:
-        return self.scope_for(capability) is not None
+    def holds(self, capability: Capability, now: datetime | None = None) -> bool:
+        return self.scope_for(capability, now) is not None
 
     def intersect(self, ceiling: EntitlementSet) -> Self:
         """`E_run(caller, agent) = E(caller) ∩ agent_ceiling`.
@@ -118,7 +136,14 @@ class EntitlementSet(BaseModel):
             if ceiling_scope is None:
                 continue
             out.append(Grant(capability=g.capability, scope=g.scope.intersect(ceiling_scope)))
-        return type(self)(principal_id=self.principal_id, grants=tuple(out))
+        # The tighter of the two bounds. An agent ceiling with its own expiry - a
+        # time-boxed automation, say - must not outlive either side of the intersection.
+        bounds = [d for d in (self.not_after, ceiling.not_after) if d is not None]
+        return type(self)(
+            principal_id=self.principal_id,
+            grants=tuple(out),
+            not_after=min(bounds) if bounds else None,
+        )
 
     def ent_hash(self) -> str:
         """Stable, order-independent digest of this entitlement set.
@@ -129,5 +154,9 @@ class EntitlementSet(BaseModel):
         order would miss the cache and, worse, look like a different principal in traces.
         """
         parts = sorted(f"{g.capability.value}|{g.scope.model_dump_json()}" for g in self.grants)
+        # The time bound is part of the identity. Without it, an answer cached before a
+        # contractor's expiry would be served to that same contractor afterwards, because
+        # the key would be identical on both sides of the boundary.
+        parts.append(f"not_after|{self.not_after.isoformat() if self.not_after else ''}")
         digest = hashlib.sha256("\n".join(parts).encode()).hexdigest()
         return digest[:32]
