@@ -59,23 +59,32 @@ is currently the only reason they are not.
 
 ---
 
-## 2. Does the Company Brain replace AnyGen for Verz internally?
+## 2. AnyGen — DECIDED 2026-09-05: replace
 
-You already run house skills inside AnyGen today — `verz-master-theme`,
-`verz-doc-letterhead`, `seo-audit`, `website-cro-audit`. I asked this when I wrote the
-AnyGen teardown and it has not been answered.
+Answered. The Company Brain replaces AnyGen for Verz internally.
 
-It changes real work in **M37 (migration and launch)**: whether those skills are imported
-into the new system or rebuilt, whether there is a parallel-running period, and whether
-AnyGen gets decommissioned or stays alongside.
+M37 now carries a second migration, since it previously accounted only for the v1 Company
+Brain. **29 new tasks; the finish moves from 6 Oct to 7 Oct** after splitting M37 across
+three tracks. One day, to replace an entire second system.
 
-| Option | What it means for the build |
-|---|---|
-| **Replace** | M37 gains skill import, a parallel-running period, and AnyGen decommissioning |
-| **Coexist** | M37 shrinks; the two systems split by use case and the skills stay where they are |
+What the decision actually changes:
 
-**Recommendation: decide late, but decide before wave 5.** Nothing before then depends on
-it. I have left M37 as written.
+- **The twelve house skills come across, they are not rewritten.** `verz-master-theme`,
+  `verz-doc-letterhead`, `seo-audit` and `website-cro-audit` go first, because they are in
+  daily use and are the real test of whether import works at all.
+- **Agents are rebuilt rather than imported.** AnyGen has no ceiling and no leash, so
+  there is nothing to carry across — and every rebuilt agent starts at Shadow on writes
+  regardless of how it behaved there.
+- **Their adaptive learning does not transfer.** One toggle over an opaque store has no
+  honest mapping onto four tiers with a review queue. The memory files are read as
+  evidence and tier-one preferences re-derived; anything that would widen a scope is
+  discarded, because nobody approved it under our rules. Worth saying to staff before
+  cutover: the new system starts without what the old one had learned.
+- **Decommissioning a SaaS is not decommissioning a server.** Cancelling the subscription
+  does not revoke the OAuth grants AnyGen holds on Gmail, Drive, Calendar, Sheets and
+  Docs. Those are revoked explicitly, the app is removed from the Lark tenant rather than
+  just from groups, and anything with retention value is exported and verified restorable
+  *before* billing ends — because access ends with billing.
 
 ---
 

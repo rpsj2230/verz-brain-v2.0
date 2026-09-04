@@ -50,11 +50,30 @@ const WIN = {};
 let cursor = new Date(SCH.START + "T00:00:00Z");
 for (const w of waveIds) {
   const mods = TREE.filter(m => m.wave === w);
+  const tracks = mods.reduce((a,m)=>a+(SCH.SPLIT[m.id]||1), 0);
+
+  // A wave takes the longer of two things, and until 2026-09-05 it only took the first.
+  //
+  //   1. its longest single track, since a module cannot be finished faster than its
+  //      own critical path however many other tracks are running
+  //   2. its total work divided by how much can actually run at once
+  //
+  // TRACK_CAP existed in schedule.js and was never read here, so splitting a module more
+  // finely always made the date earlier and nothing ever said "that needs more tracks
+  // than we have". Every date quoted before this rested on a limit nothing enforced.
   const biggest = Math.max.apply(null, mods.map(m => Math.ceil(modLeaves[m.id] / (SCH.SPLIT[m.id]||1))));
-  const days = Math.ceil(biggest / SCH.LEAVES_PER_TRACK_DAY) + SCH.INTEGRATION_DAYS;
+  const byLongestTrack = Math.ceil(biggest / SCH.LEAVES_PER_TRACK_DAY);
+  const concurrent = Math.min(tracks, SCH.TRACK_CAP || tracks);
+  const byCapacity = Math.ceil(waves[w] / (concurrent * SCH.LEAVES_PER_TRACK_DAY));
+  const days = Math.max(byLongestTrack, byCapacity) + SCH.INTEGRATION_DAYS;
+
   const start = new Date(cursor);
   const end = wd(start, days - 1);
-  WIN[w] = { start, end, days, tracks: mods.reduce((a,m)=>a+(SCH.SPLIT[m.id]||1),0), leaves: waves[w] };
+  WIN[w] = {
+    start, end, days, tracks, leaves: waves[w],
+    concurrent,
+    limitedBy: byCapacity > byLongestTrack ? "capacity" : "longest track",
+  };
   cursor = wd(end, 1);
 }
 const PROJ_END = WIN[waveIds[waveIds.length-1]].end;

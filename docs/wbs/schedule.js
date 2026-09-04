@@ -3,7 +3,7 @@
 module.exports = {
   START:"2026-09-08", TRACK_CAP:10, LEAVES_PER_TRACK_DAY:14, INTEGRATION_DAYS:1,
   // modules large enough to run as two or three concurrent tracks
-  SPLIT:{M39:2,M40:2,M32:2,M13:2,M37:2,M11:2,M14:2,M33:2,M30:2,M19:2,M27:2,M7:2,M16:2,M17:2},
+  SPLIT:{M39:2,M40:2,M32:2,M13:2,M37:3,M11:2,M14:2,M33:2,M30:2,M19:2,M27:2,M7:2,M16:2,M17:2},
   WAVE:{
     // W0 foundation — everything types against this
     M0:0, M31:0, M38:0,
