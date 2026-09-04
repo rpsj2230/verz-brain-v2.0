@@ -82,25 +82,27 @@ jobs:
     name: Trigger Coolify
     needs: build
     runs-on: ubuntu-latest
-    # Set these two repository secrets to arm the deploy. Until then the job is skipped
-    # rather than failing, so a missing secret does not show as a broken pipeline.
-    if: ${{ github.repository_owner != '' }}
     steps:
       - name: Deploy
         env:
-          HOOK: ${{ secrets.COOLIFY_WEBHOOK_URL }}
+          # Coolify's generic deploy endpoint. It handles Service resources as well as
+          # Applications (DeployController::deploy_resource -> StartService), which is why
+          # the stack stays a Service: Services have no git webhook, but they do not need
+          # one. Calling the API from here keeps the CI gate — a red build never reaches
+          # the server, which a push webhook could not guarantee.
+          COOLIFY_URL: ${{ secrets.COOLIFY_URL }}
+          SERVICE_UUID: ${{ secrets.COOLIFY_SERVICE_UUID }}
           TOKEN: ${{ secrets.COOLIFY_TOKEN }}
           SHA: ${{ needs.build.outputs.sha }}
         run: |
-          if [ -z "$HOOK" ] || [ -z "$TOKEN" ]; then
-            echo "COOLIFY_WEBHOOK_URL or COOLIFY_TOKEN not set — skipping deploy."
+          if [ -z "$COOLIFY_URL" ] || [ -z "$TOKEN" ] || [ -z "$SERVICE_UUID" ]; then
+            echo "Coolify secrets not set - skipping deploy."
             echo "Image ghcr.io/${{ github.repository }}:$SHA is published and ready to pull."
             exit 0
           fi
-          echo "Deploying $SHA"
-          code=$(curl -sS -o /tmp/out -w '%{http_code}' -X GET "$HOOK" \
-                   -H "Authorization: Bearer $TOKEN")
-          cat /tmp/out
+          echo "Deploying $SHA to service $SERVICE_UUID"
+          code=$(curl -sS -o /tmp/out -w '%{http_code}'                    -X POST "$COOLIFY_URL/api/v1/deploy?uuid=$SERVICE_UUID"                    -H "Authorization: Bearer $TOKEN"                    -H "Content-Type: application/json")
+          cat /tmp/out; echo
           if [ "$code" -ge 300 ]; then
             echo "::error::Coolify returned $code"
             exit 1

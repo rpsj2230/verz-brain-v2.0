@@ -71,15 +71,29 @@ returning wrong answers while appearing healthy.
 
 ### 4. Arm the pipeline
 
-Copy the resource's deploy webhook URL, and create a Coolify API token
-(**Keys & Tokens → API tokens**). Then set both as GitHub repository secrets:
+Coolify Services have no git webhook, but they do not need one: the generic API deploy
+endpoint handles them (`DeployController::deploy_resource` → `StartService`). Calling that
+from GitHub Actions also keeps the CI gate, which a push webhook could not — a push webhook
+fires whether or not the tests passed.
+
+In Coolify: **Keys & Tokens → API tokens → + Add**, with write permission. Then three
+repository secrets:
 
 ```bash
-gh secret set COOLIFY_WEBHOOK_URL --repo rpsj2230/verz-brain-v2.0
+gh secret set COOLIFY_URL --repo rpsj2230/verz-brain-v2.0
+gh secret set COOLIFY_SERVICE_UUID --repo rpsj2230/verz-brain-v2.0
 gh secret set COOLIFY_TOKEN --repo rpsj2230/verz-brain-v2.0
 ```
 
+Values: `http://194.233.66.89:8000`, `c74hlhygvg7scjttu8ydwnqi`, and the API token.
+
 After that, every merge to `main` that passes CI deploys on its own.
+
+**One caveat worth knowing.** Coolify here is served over plain HTTP on port 8000, so the
+API token would cross the internet unencrypted on every deploy. That is a real exposure,
+not a theoretical one. Two ways to close it: put a domain on Coolify so it gets HTTPS, or
+leave deploys manual (one click per wave) until a domain exists. Waves are days apart, so
+manual costs almost nothing.
 
 ## Rollback
 
