@@ -9,15 +9,32 @@ Task ids: M31.1.2.1, M31.1.2.2, M31.1.2.3
 
 from __future__ import annotations
 
+import os
+
 import structlog
 import uvicorn
 
+from brain.app import Settings
+from brain.config import assert_valid
 from brain.runtime import detect_profile
 
 log = structlog.get_logger()
 
 
 def main() -> None:
+    # Before the port is bound. A container that will never work should not be in a load
+    # balancer's rotation at all, so this is the one place crashing beats degrading.
+    settings = Settings()
+    assert_valid(
+        settings.env,
+        {
+            "database_url": settings.database_url,
+            "valkey_url": settings.valkey_url,
+            "app_role_password": os.environ.get("APP_ROLE_PASSWORD", ""),
+            "cors_origins": ",".join(settings.cors_origins),
+        },
+    )
+
     profile = detect_profile()
     log.info(
         "starting server",
