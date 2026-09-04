@@ -26,6 +26,7 @@ from pydantic import BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from brain.core.errors import BrainError, Outcome, to_public
+from brain.docs_routes import router as docs_router
 
 log = structlog.get_logger()
 
@@ -127,6 +128,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         }[exc.outcome]
         log.warning("request failed", outcome=exc.outcome, detail=exc.detail)
         return JSONResponse(status_code=status, content={"message": to_public(exc)})
+
+    app.include_router(docs_router)
 
     @app.get("/health/live", response_model=Health, tags=["health"])
     async def live() -> Health:

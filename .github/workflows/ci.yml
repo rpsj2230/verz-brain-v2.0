@@ -84,6 +84,22 @@ jobs:
       - name: Traceability — nothing claimed without a test id
         run: uv run python -m brain.ops.sweeps traceability
 
+  docs:
+    name: Tracker matches the WBS
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Regenerate and diff
+        # The committed tracker must be reproducible from the WBS. If someone edits the
+        # generated HTML by hand, this fails rather than letting the two drift apart.
+        run: |
+          node docs/wbs/export.js
+          node docs/wbs/render.js
+          git diff --exit-code -- docs/tracker.html docs/wbs.json             || { echo "::error::docs/tracker.html is out of date - run node docs/wbs/render.js"; exit 1; }
+
   supply_chain:
     name: Dependency audit
     runs-on: ubuntu-latest

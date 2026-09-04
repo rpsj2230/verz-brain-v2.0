@@ -33,9 +33,31 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          # Progress is computed from the whole history, so a shallow clone would
+          # report only the last commit's worth of work.
+          fetch-depth: 0
 
       - id: meta
         run: echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      # The tracker and the status page are generated, never hand-edited. Both are built
+      # here so what ships always matches the commit it shipped from — a tracker committed
+      # by hand would drift the moment someone forgot to regenerate it.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Regenerate tracker from the WBS
+        run: |
+          node docs/wbs/export.js
+          node docs/wbs/render.js
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+      - name: Compute progress from git history
+        run: |
+          uv sync --locked
+          uv run python -m brain.status
+          cat docs/status.json | head -20
 
       - uses: docker/setup-buildx-action@v3
 

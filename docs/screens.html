@@ -1,0 +1,1387 @@
+<title>Company Brain Key Screens</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=Poppins:wght@500;600;700&display=swap">
+
+<style>
+  :root{
+    /* Verz brand, sampled from the logo file */
+    --brand:#F47936;          /* Verz orange */
+    --brand-ink:#231F20;      /* Verz near-black */
+    /* orange as TEXT on a light ground has to darken to pass contrast */
+    --acc-text:#B75315;
+    --acc-wash:#FDEDE3;
+
+    --ground:#F6F4F1; --panel:#FFFFFF; --sunk:#EFEBE7; --line:#E3DDD7;
+    --ink:#231F20; --body:#4A4441; --dim:#7A716C; --faint:#A79E98;
+    /* state, deliberately held clear of the brand hue */
+    --ok:#14724A; --ok-w:#DCEDE3; --warn:#8A6410; --warn-w:#F5ECD6; --crit:#A8231B; --crit-w:#F8E2E0;
+    --lock:#5F4A9B; --lock-w:#ECE7F6;
+
+    --ui:"IBM Plex Sans",system-ui,-apple-system,Arial,sans-serif;
+    --brandfont:"Poppins","IBM Plex Sans",system-ui,Arial,sans-serif;
+    --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  }
+  @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+    --acc-text:#F89253; --acc-wash:#2E1B0F;
+    --ground:#14110F; --panel:#1D1916; --sunk:#262019; --line:#332C25;
+    --ink:#F5F1ED; --body:#CDC5BE; --dim:#948A83; --faint:#6E655F;
+    --ok:#57BE8C; --ok-w:#10261B; --warn:#D5A65A; --warn-w:#2B2211; --crit:#E58077; --crit-w:#2E1815;
+    --lock:#A992E0; --lock-w:#221C36;
+  }}
+  :root[data-theme="dark"]{
+    --acc-text:#F89253; --acc-wash:#2E1B0F;
+    --ground:#14110F; --panel:#1D1916; --sunk:#262019; --line:#332C25;
+    --ink:#F5F1ED; --body:#CDC5BE; --dim:#948A83; --faint:#6E655F;
+    --ok:#57BE8C; --ok-w:#10261B; --warn:#D5A65A; --warn-w:#2B2211; --crit:#E58077; --crit-w:#2E1815;
+    --lock:#A992E0; --lock-w:#221C36;
+  }
+  *{box-sizing:border-box}
+  body{background:var(--ground);color:var(--body);font-family:var(--ui);font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased}
+  .page{max-width:1240px;margin:0 auto;padding:0 24px 100px}
+
+  header.doc{padding:44px 0 22px;border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:13px}
+  .wordmark{width:130px;height:26px;flex:none;display:block;object-fit:contain;object-position:left center}
+  .eyebrow{font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--acc-text)}
+  h1{font-family:var(--brandfont);font-size:clamp(30px,4.4vw,42px);font-weight:600;letter-spacing:-.022em;line-height:1.05;color:var(--ink);margin:0;text-wrap:balance}
+  .lede{font-size:17px;line-height:1.55;max-width:64ch;margin:0;color:var(--body)}
+  .note{font-family:var(--mono);font-size:11px;color:var(--dim);border-left:2px solid var(--brand);padding-left:11px}
+
+  .scr{margin-top:52px}
+  .scrhead{display:flex;flex-wrap:wrap;align-items:baseline;gap:12px;margin-bottom:6px}
+  .scrnum{font-family:var(--mono);font-size:11px;font-weight:600;color:var(--acc-text);letter-spacing:.08em}
+  .scrhead h2{font-family:var(--brandfont);font-size:23px;font-weight:600;letter-spacing:-.014em;color:var(--ink);margin:0}
+  .scrhead .who{font-family:var(--mono);font-size:11px;color:var(--dim);background:var(--sunk);padding:3px 8px;border-radius:2px}
+  .scrjob{font-size:14.5px;color:var(--body);max-width:74ch;margin:0 0 14px}
+
+  .frame{border:1px solid var(--line);border-radius:5px;overflow:hidden;background:var(--panel);box-shadow:0 1px 3px rgba(35,31,32,.06),0 10px 28px rgba(35,31,32,.05)}
+  .chrome{display:flex;align-items:center;gap:9px;padding:9px 13px;background:var(--sunk);border-bottom:1px solid var(--line)}
+  .dots{display:flex;gap:5px}
+  .dots i{width:9px;height:9px;border-radius:99px;background:var(--line);display:block}
+  .url{font-family:var(--mono);font-size:10.5px;color:var(--dim);background:var(--panel);border:1px solid var(--line);border-radius:3px;padding:3px 9px;flex:1;max-width:340px}
+
+  .app{display:grid;grid-template-columns:190px 1fr;min-height:520px}
+  .nav{background:var(--sunk);border-right:1px solid var(--line);padding:14px 0;display:flex;flex-direction:column;gap:2px}
+  .brand{display:flex;align-items:center;gap:9px;padding:0 14px 13px;margin-bottom:6px;border-bottom:1px solid var(--line)}
+  .mark{width:27px;height:24px;flex:none;display:block;object-fit:contain}
+  .brandtxt{font-size:13.5px;font-weight:600;color:var(--ink);line-height:1.15;font-family:var(--brandfont)}
+  .brandtxt small{display:block;font-family:var(--mono);font-size:9px;color:var(--dim);font-weight:400;letter-spacing:.07em}
+  .navsec{font-family:var(--mono);font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--faint);padding:11px 14px 4px}
+  .navitem{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 14px;font-size:13px;color:var(--body)}
+  .navitem.on{background:var(--acc-wash);color:var(--acc-text);font-weight:600;box-shadow:inset 3px 0 0 var(--brand)}
+  .navitem .badge{font-family:var(--mono);font-size:9.5px;background:var(--crit-w);color:var(--crit);padding:1px 5px;border-radius:2px;font-weight:600}
+  .navitem .badge.q{background:var(--warn-w);color:var(--warn)}
+
+  .main{padding:16px 20px 22px;display:flex;flex-direction:column;gap:15px;min-width:0}
+  .topbar{display:flex;flex-wrap:wrap;align-items:center;gap:9px;justify-content:space-between}
+  .h{font-family:var(--brandfont);font-size:19px;font-weight:600;color:var(--ink);letter-spacing:-.01em}
+  .filters{display:flex;gap:6px;flex-wrap:wrap}
+  .fchip{font-size:12px;border:1px solid var(--line);background:var(--panel);border-radius:3px;padding:4px 9px;color:var(--body);display:flex;gap:5px;align-items:center}
+  .fchip b{color:var(--ink);font-weight:600}
+  .fchip::after{content:"\25BE";color:var(--faint);font-size:9px}
+  .fchip.scoped{background:var(--acc-wash);border-color:var(--brand);color:var(--acc-text);font-weight:600}
+  .fchip.scoped::after{content:""}
+
+  .kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:3px;overflow:hidden}
+  .kpi{background:var(--panel);padding:11px 13px;display:flex;flex-direction:column;gap:2px;min-width:0}
+  .kpi .lab{font-family:var(--mono);font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint)}
+  .kpi .val{font-size:23px;font-weight:600;color:var(--ink);line-height:1.1;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+  .kpi .sub{font-family:var(--mono);font-size:10px;color:var(--dim)}
+  .kpi .sub.ok{color:var(--ok)} .kpi .sub.warn{color:var(--warn)} .kpi .sub.crit{color:var(--crit)}
+
+  .cols{display:grid;grid-template-columns:1.35fr 1fr;gap:15px;min-width:0}
+  .card{border:1px solid var(--line);border-radius:3px;background:var(--panel);min-width:0}
+  .card>h3{font-family:var(--mono);font-size:9.5px;letter-spacing:.11em;text-transform:uppercase;color:var(--dim);margin:0;padding:9px 13px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:10px}
+  .card>h3 a{color:var(--acc-text);text-decoration:none;font-size:9.5px}
+  .card .in{padding:5px 13px 10px;overflow-x:auto}
+
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  th{font-family:var(--mono);font-size:9px;letter-spacing:.09em;text-transform:uppercase;color:var(--faint);text-align:left;font-weight:500;padding:7px 9px 5px 0;border-bottom:1px solid var(--line);white-space:nowrap}
+  td{padding:7px 9px 7px 0;border-bottom:1px solid var(--line);vertical-align:middle}
+  tr:last-child td{border-bottom:0}
+  td.n{font-family:var(--mono);font-variant-numeric:tabular-nums;color:var(--ink);text-align:right;padding-right:14px}
+  td.name{color:var(--ink);font-weight:500}
+
+  .pill{font-family:var(--mono);font-size:9.5px;font-weight:500;padding:2px 6px;border-radius:2px;white-space:nowrap;display:inline-block;letter-spacing:.03em}
+  .pill.ok{background:var(--ok-w);color:var(--ok)}
+  .pill.warn{background:var(--warn-w);color:var(--warn)}
+  .pill.crit{background:var(--crit-w);color:var(--crit)}
+  .pill.neu{background:var(--sunk);color:var(--dim)}
+
+  .feed{display:flex;flex-direction:column}
+  .fitem{display:grid;grid-template-columns:52px 1fr;gap:9px;padding:7px 0;border-bottom:1px solid var(--line);font-size:12.5px}
+  .fitem:last-child{border-bottom:0}
+  .ftime{font-family:var(--mono);font-size:10px;color:var(--faint);padding-top:1px}
+  .fitem b{color:var(--ink);font-weight:600}
+
+  .att{display:flex;flex-direction:column}
+  .aitem{display:flex;gap:9px;align-items:stretch;padding:8px 0;border-bottom:1px solid var(--line);font-size:12.5px}
+  .aitem:last-child{border-bottom:0}
+  .stripe{width:3px;border-radius:2px;flex:none}
+  .stripe.crit{background:var(--crit)} .stripe.warn{background:var(--warn)} .stripe.ok{background:var(--ok)} .stripe.acc{background:var(--brand)}
+  .aitem .t{color:var(--ink);font-weight:600;display:block}
+  .aitem .d{color:var(--dim);font-size:11.5px}
+
+  .leash th{padding:6px 8px 5px 0}
+  .leash td{padding:6px 8px 6px 0}
+  .rung{display:inline-flex;align-items:center;gap:5px;font-family:var(--mono);font-size:9.5px;font-weight:600}
+  .rung i{width:7px;height:7px;border-radius:99px;display:block;flex:none}
+  .rung.sh i{background:var(--dim)} .rung.sh{color:var(--dim)}
+  .rung.as i{background:var(--warn)} .rung.as{color:var(--warn)}
+  .rung.au i{background:var(--ok)} .rung.au{color:var(--ok)}
+
+  .chat{display:grid;grid-template-columns:212px 1fr;min-height:560px}
+  .threads{background:var(--sunk);border-right:1px solid var(--line);padding:12px 0;display:flex;flex-direction:column}
+  .thread{padding:8px 13px;font-size:12.5px;color:var(--body);border-left:3px solid transparent}
+  .thread.on{background:var(--panel);border-left-color:var(--brand);color:var(--ink);font-weight:600}
+  .thread small{display:block;font-size:10.5px;color:var(--faint);font-weight:400;margin-top:1px}
+  .conv{padding:16px 22px 0;display:flex;flex-direction:column;gap:13px;min-width:0}
+  .msg{display:flex;gap:10px;align-items:flex-start}
+  .av{width:27px;height:27px;border-radius:99px;flex:none;display:grid;place-items:center;font-size:10.5px;font-weight:700;font-family:var(--mono)}
+  .av.me{background:var(--sunk);color:var(--dim)}
+  .av.ai{background:var(--brand);color:var(--brand-ink)}
+  .bub{min-width:0;flex:1}
+  .who2{font-size:12px;font-weight:600;color:var(--ink);margin-bottom:3px}
+  .who2 span{font-weight:400;color:var(--faint);font-family:var(--mono);font-size:10px;margin-left:6px}
+  .qtext{font-size:14.5px;color:var(--ink)}
+  .steps{display:flex;flex-direction:column;gap:3px;margin:2px 0 8px;padding:8px 11px;background:var(--sunk);border-radius:3px;font-family:var(--mono);font-size:10.5px;color:var(--dim)}
+  .steps div{display:flex;gap:7px;align-items:center}
+  .steps .tick{color:var(--ok);font-weight:700}
+  .ans{font-size:14px;line-height:1.6;color:var(--body)}
+  .ans strong{color:var(--ink);font-weight:600}
+
+  .rec{border:1px solid var(--line);border-radius:3px;margin:10px 0;overflow:hidden}
+  .rechead{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 12px;background:var(--sunk);border-bottom:1px solid var(--line)}
+  .rechead .rn{font-size:13px;font-weight:600;color:var(--ink)}
+  .rechead .rt{font-family:var(--mono);font-size:9.5px;color:var(--faint)}
+  .fields{display:grid;grid-template-columns:1fr 1fr}
+  .f{padding:9px 12px;border-bottom:1px solid var(--line);border-right:1px solid var(--line);min-width:0}
+  .f:nth-child(2n){border-right:0}
+  .f:nth-last-child(-n+2){border-bottom:0}
+  .f .fl{font-family:var(--mono);font-size:9px;letter-spacing:.09em;text-transform:uppercase;color:var(--faint);margin-bottom:2px}
+  .f .fv{font-size:14px;color:var(--ink);font-weight:500;font-variant-numeric:tabular-nums}
+  .f.locked{background:var(--lock-w)}
+  .f.locked .fv{color:var(--lock);font-weight:600;display:flex;align-items:center;gap:6px;font-size:12.5px}
+
+  .cites{display:flex;flex-direction:column;gap:4px;margin-top:9px}
+  .cite{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:11.5px;color:var(--dim);font-family:var(--mono)}
+  .cite .src{color:var(--acc-text)}
+  .vbadge{display:inline-flex;align-items:center;gap:3px;background:var(--ok-w);color:var(--ok);font-size:9px;padding:1px 5px;border-radius:2px;font-weight:600}
+
+  .composer{margin:16px 22px 18px;border:1px solid var(--line);border-radius:4px;background:var(--panel)}
+  .cinput{padding:11px 13px;font-size:13.5px;color:var(--faint)}
+  .cfoot{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:7px 13px;border-top:1px solid var(--line);background:var(--sunk)}
+  .scopeline{font-family:var(--mono);font-size:10px;color:var(--dim)}
+  .scopeline b{color:var(--body)}
+  .sendbtn{background:var(--brand);color:var(--brand-ink);font-family:var(--ui);font-size:11.5px;font-weight:700;padding:5px 13px;border-radius:3px;border:0}
+
+  .callout{margin-top:13px;border-left:3px solid var(--lock);background:var(--panel);border-radius:0 3px 3px 0;padding:12px 15px;font-size:13.5px;line-height:1.58;max-width:78ch}
+  .callout b{color:var(--ink)}
+  code{font-family:var(--mono);font-size:.87em;background:var(--sunk);padding:1px 4px;border-radius:2px;color:var(--ink)}
+
+  footer{margin-top:56px;padding-top:16px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:12px}
+  .swatches{display:flex;flex-wrap:wrap;gap:14px}
+  .sw{display:flex;align-items:center;gap:7px;font-family:var(--mono);font-size:10.5px;color:var(--dim)}
+  .sw i{width:15px;height:15px;border-radius:2px;display:block;border:1px solid var(--line);flex:none}
+  .sw b{color:var(--ink);font-weight:600}
+  .fnote{font-family:var(--mono);font-size:10.5px;line-height:1.75;color:var(--dim);max-width:88ch}
+
+  @media (max-width:900px){
+    .kpis{grid-template-columns:repeat(2,1fr)}
+    .cols{grid-template-columns:1fr}
+    .app,.chat{grid-template-columns:1fr}
+    .nav,.threads{display:none}
+  }
+  @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+
+  /* ---- page-level screens (4 onward) ---- */
+  .pane{border:1px solid var(--line);border-radius:5px;overflow:hidden;background:var(--panel);box-shadow:0 1px 3px rgba(35,31,32,.06),0 10px 28px rgba(35,31,32,.05)}
+  .panebar{display:flex;flex-wrap:wrap;gap:10px;justify-content:space-between;align-items:center;padding:9px 15px;background:var(--sunk);border-bottom:1px solid var(--line)}
+  .crumb{font-family:var(--mono);font-size:10px;letter-spacing:.05em;color:var(--dim);display:flex;gap:7px;align-items:center;flex-wrap:wrap}
+  .crumb b{color:var(--acc-text);font-weight:600}
+  .crumb em{font-style:normal;color:var(--ink);font-weight:600}
+  .panebody{padding:15px 18px 20px;display:flex;flex-direction:column;gap:14px;min-width:0}
+
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:14px;min-width:0}
+  .kpis.k4{grid-template-columns:repeat(4,1fr)}
+  .kpis.k3{grid-template-columns:repeat(3,1fr)}
+
+  .grid3{display:grid;grid-template-columns:repeat(auto-fill,minmax(212px,1fr));gap:11px}
+  .tcard{border:1px solid var(--line);border-radius:3px;padding:11px 12px;display:flex;flex-direction:column;gap:6px;background:var(--panel);min-width:0}
+  .tcard .tt{font-weight:600;color:var(--ink);font-size:13.5px;display:flex;justify-content:space-between;gap:8px;align-items:baseline}
+  .tcard .tt em{font-style:normal;font-family:var(--mono);font-size:9px;color:var(--faint);font-weight:400;white-space:nowrap}
+  .tcard .td{font-size:12px;color:var(--dim);line-height:1.45;flex:1}
+  .tcard .tm{font-family:var(--mono);font-size:9px;color:var(--faint);display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+  .tcard .tm b{color:var(--body);font-weight:500}
+  .tcard.up{border-color:var(--brand);box-shadow:inset 0 2px 0 var(--brand)}
+
+  .bar{height:5px;background:var(--sunk);border-radius:99px;overflow:hidden;min-width:54px;display:block;flex:1}
+  .bar>span{display:block;height:100%;border-radius:99px;background:var(--ok)}
+  .bar>span.warn{background:var(--warn)} .bar>span.crit{background:var(--crit)} .bar>span.acc{background:var(--brand)}
+  .barrow{display:flex;align-items:center;gap:9px;padding:5px 0}
+  .barrow .bl{font-size:12.5px;color:var(--ink);min-width:92px}
+  .barrow .bn{font-family:var(--mono);font-size:10.5px;color:var(--dim);font-variant-numeric:tabular-nums;min-width:60px;text-align:right}
+
+  .act{font-family:var(--ui);font-size:10.5px;font-weight:600;color:var(--acc-text);border:1px solid var(--line);border-radius:3px;padding:2px 8px;background:var(--panel);white-space:nowrap;display:inline-block}
+  .act.solid{background:var(--brand);color:var(--brand-ink);border-color:var(--brand)}
+  .act.quiet{color:var(--dim)}
+
+  .tier{font-family:var(--mono);font-size:9px;font-weight:600;padding:1px 5px;border-radius:2px;white-space:nowrap;display:inline-block}
+  .tier.t1{background:var(--ok-w);color:var(--ok)}
+  .tier.t2{background:var(--warn-w);color:var(--warn)}
+  .tier.t3{background:var(--acc-wash);color:var(--acc-text)}
+  .srcchip{font-family:var(--mono);font-size:9px;padding:1px 5px;border-radius:2px;background:var(--sunk);color:var(--dim);white-space:nowrap;display:inline-block}
+
+  .tree{display:flex;flex-direction:column;font-size:12.5px}
+  .tnode{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:6px 8px 6px 0;border-bottom:1px solid var(--line)}
+  .tnode:last-child{border-bottom:0}
+  .tnode .tl{color:var(--ink);font-weight:600}
+  .tnode.d1{padding-left:14px} .tnode.d1 .tl{font-weight:500}
+  .tnode.d2{padding-left:30px} .tnode.d2 .tl{font-weight:400;color:var(--body)}
+  .tnode.sel{background:var(--acc-wash);box-shadow:inset 3px 0 0 var(--brand)}
+  .tnode.sel .tl{color:var(--acc-text);font-weight:600}
+  .tnode .tr{font-family:var(--mono);font-size:10px;color:var(--dim);font-variant-numeric:tabular-nums;white-space:nowrap}
+
+  .hint{font-size:12.5px;color:var(--dim);line-height:1.55;border-left:2px solid var(--brand);padding-left:11px}
+  .hint b{color:var(--ink)}
+
+  .kv{display:flex;justify-content:space-between;gap:10px;padding:5px 0;border-bottom:1px solid var(--line);font-size:12.5px}
+  .kv:last-child{border-bottom:0}
+  .kv .k{color:var(--body);min-width:0}
+  .kv .v{color:var(--ink);font-family:var(--mono);font-size:10.5px;font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+
+  @media (max-width:900px){
+    .two{grid-template-columns:1fr}
+    .kpis.k4,.kpis.k3{grid-template-columns:repeat(2,1fr)}
+  }
+
+</style>
+
+<div class="page">
+
+<header class="doc">
+  <img class="wordmark" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAAAoCAYAAAC7HLUcAAAAAXNSR0IB2cksfwAADG5JREFUeNrs2FtMXEUYwPGu9IKlpbZaEcqyywLSi8j17KYqxho1Pnhp7INGJCT6IImJpCEG0EZbNTE8aNKYlEQTn0CgVMCaWBvbYLRGoyE2lZpa7xSSxpYacKGlwH79Q+dhcrpTdmGXbpuzyS+Es2dm58x838ycWZTj8R6BXC9yUV2eP3L8pZLiRc7H+cT7Q9D9CbkebC3Jk4NVRfJ/g38o2OB3O6MX2Ye+2oZGpSJB21iAnUrVaIN1U2IkSJZ3G8EXgiSqwHqf7H7iLjnziiV0XgjvOmEfVfB9CFHaE7SNz0KUw6OvWkkJ0TCv2+MiCL+BJJqNvmyp3bJeBmst0TrvRLDeWuuEvZMgC7iKeAoJyIuJ9J7xXOBO+fHFEqGz7KqckHcS5Fq8i+yBXGsPF+RIV0Wh/FdnhUuOr7HUCfkbMkHceEopH3utzJVQDfRlefII0EGIwSQ68YmyT+nQ7NW0K21Kq+ZjTcu0XLzxyIb+/u1lekLoQtjshPv8E8TpkbmvIjUQmDwWx0EsxDBE5wxsTPq22+nH2JxoLScJ+iAGA74sb2ocBnAZ9kMMSBxrzUL2Rbbbm8LzFiCAUp/bsyqa8t4Mj4syq1mZc6fLo5j/F3RfPdZguei7SlyIJkHo6zTuK0OAA5FNwbqyqLa1o/XWCnVsG0AxR7YxjxnqXELdGxCAxW+mR1/HTDvvRgA8r3VrJKvIllle2N+MQ4JUIgQxqDaVzVyX6VJbve+VgvBbSG+Rds8BwwSxgu+2oxcTEE0IJ7GLujLC/sblE8EH0YF/IZrfOQxJVn18L4YidBbfwYqsL61kNeBv4edIV2Ku52A3+sOMxTi+RSUJk2wovxy1+AkTEM0UjuF13GYovxUDSnuwrjTpyoD2L+W7Z3BYS3rdabCdtDaqIqZ21hjaGcJJvIM007tIEoPxOcTgNDbFMDmS0Qcx+IVBWTJLgvwGUe4xBH+5/gxhEmilereSCPRyf3qYyeUFjBvKNGn3PQCJ0q+sakmGGdtFP+WhBl9hIpqtqprt/4LMYhJ7GI+kMGPYConAD1g92ymWPUGCl1eMXZiCzOIf3BfmN1KwFxKBo1hr2mrlMSDDEIOO7BhtF2jETojBFNR7T3wThGsvQzTncAjN6MYARNNqqz/ftuqM4xi60ILN2m8VoScCJyDKJEmZckX/1c/Mqm/jvOFgYxB9pgQh8JZx7QuI5g90oxmHELSNyeO2MayGaM7gIJrRjVMQTVP0CeJ/FJMQZQxH0Ip2HLetfL0822JbHbUQzRC+RAu60A/RtF5tq/UexOAinp5/cli304gRiEGnujWuCeLN8Lq4th+iHCUY3bb+SMWnEOUUbta+r4YoU3hyejWe+6niTJvaIMr7hglmR5hZdRgf4SFm+1X8/cCcIP5c23alkXFJsY1Tvko0UZptdXxmC8x0W/lUrvdAlLNzSJBGvTxKqdelraKLuVYPUS7AbavjgN5OZNreSVZybZ/ej1c79r3DNoPZdXrXZbnmuXq0QQzOoWQhEoRgTFb7fFGqDJPG/RBlCGu073ZAlJ4YnChWIATB3z6P9xbDflrfGo3geaRFeszL/37brOw2jFVT8BL15hMSRRTHcXZNpYj+HNLQpdYgpajoz2wRkgrRpajDIhGshhkRdIqFaGdhO0pEdKtLXaI/hIegSx2KYEuzwFNBhzYosCKtg+C4LrvK+B39gT8evreu88YZBz6I/N57++bNfObN+73dhXIvhdgQi52X1E/w61uhIOI59EsW3bXC6+V+oY2PLNYr6ecp/sApd5Eug2lBjDGQAfUu5TCEKVOkD0+I8DIEOboMQdbS4t12wP9xyXjsUwiSYbFnLuVoAt+prWnIcUIyhlFQBDaRYOGlCnJEmHnqJW3cVgjyicU6JfU3g3bQ4VBGkDcTKUMlyH35fcVnw9hBRT/jkvodXLIyqc5ta3CBXrMszlNkYho0pOiq8OHvFXKMgjoqHiRBrgkPik26BcHMHaYsmE08kI/j4RY2ZqV8Ohb2QpDJ9FwS4B0r94LHhdjdCk5XLohZuSBO9kpYKzV7JwgdlMPP4qbZqzFzdQnYCs5SUd8Ewd8DoBv0gF5wT8hQDUQj0ZBuQWjWnqF2PqPftYpxbGKzcIGF3AjSSAviHuIKyAKbkRTauCPE+0G7l4KAOnAaxInrYIyV+QPWeysIHc2RhpBGORpBTiHHB1DjpyDgC7tJF2McHKPq2gShV6t/1IbF9j5WSpAC+AlsBcMWFrNCGzvA70UyaF/BLdAK1mkU5BvIK/pYBCZV1SWI9wd/l5UwBdqoqH+CqMmBLqqqTRDUqQHPWRt9FFqqIFOuBVFTBG8hxx7JZxwCw2BGkq4fBEmwwbUgav6DG5OmUb3qBKHNrHHFyT3B+iQUEEGGwFWQYLQCehJqF+QCy1oNoL8bfRKkBB6DiyBBnAO7kEqtUvYnZVRDoDaUfQR+Sb4dMehkmzQIkgMm6GL9PMk3IQMlCBrbkseJy+OxsJCHFvkLdlJxvwXJ0qac5NArCMrvBqNUtwAMCvkhSNJKuf+5qzW/p3AcPOQbjUTGpSAjaF+axAmUIM6mEhpKgxFwU9G5TlBSfJU9RUWDIEg3hTwXJLp1u9P/V6yuiUxWyCdB8iDiwZtDi7Cb/8OVILTDHWhBrPlU7Rkw2865hVQRhHGcc8iTWGREWRaS3SSi7EIr9VDRQ/crUUQRhGDlQ2oXiRUt6KULRJGFT2FIFzLsIcKXgnwoKxJM6GIpiKKZJBae41ET7fRf/R7GYWf2nN0tN5gPfghnZ2b37MzfOTPf900N87uzG1uPySY3nQg+yRZ+YLJLAtngxi6WQ4GUx1DvKLMh8M4ImKRLYyAQgR/E/Z3LQYcCKfW0QFBxMZNjwPPApHwuXROx28nL5zz+lRTiYX8GEftBkkAOcRTEOxEIys1lYt5CeI6lMfbDfDDk4i5WUOIoXAtyiJ3ctUvgEbFaUH8ju4B3KJDPIMnLAjlrMeDXc2HUIUnZChfCMipBhOEt2Ivo1zimzGaRQFBuPHdwxTnBfbKi9KSXR/nTqoapU2SjH9JGv0stTVDuKVPuPndtBbfbtFzQxhOJJ72auXZeUD+PvY+VQMLWi/Q+CjA82IugRK8JZCqokwz6hpG8hOEAslsW27oLXBDIDhAEEY5OUAEKQZVIIIbDD5/dYa4HwWGQAqaAGWAXaGbK1GOmibMrEJQ5wpRvAItAqgXTTPrhB4gQNUAzEn9AIuV5nwC/mDJFvF+Kc7C9oUGSBKaAVFDArR+vcW2UMddCtOs1i+pPp9mjiR0fVgLp1TWZQHi+0zjbQ4l1XliDZOy3iM3Pol2MPkmZqy6mC+8HtUzIuYwPJvU3muRydIEvoJ37fAjkU1W7AinjkrH6QK8FpWwbfbrmM8nDGAKN4D3o4q59A8mjc0lW+ilSlm+jFTSAoEkQ6UJuLGzlBPQbdIJGwXZvrkOBtICw6J8zOIQZyD/Wi/QAF4LA8xPUyOOtEFbtolGy1xJwHTSwgZbcYDxtUtdHCU/dFuLqB8XGvRwKZJONo5bumsS1TaV0ZVlGJolD2yLZibzHDAwRHWCfYGAdAyGL+v2guAcxYw4FgtlCm0N5MB/BoIlTM3NsBMIftEDRkzbI/suntBgh7Bq4DNpAiERzbG5Kql8ycFNADqgCzTR7tFIa7gWQjrb9JvW2ghIiK8pZbw24AkqiJFPQD3FgHQ3yZtBBtIJqcBIkW+Sv+1FmOc0mdZQ81E7tPQPZRq66xXiYDXTwCrSANmqnllKA0yV1NVBC5PViZrMKVqTPAyAd3OQEXo/nDXBtnGHusUy8rkNbVM6pD8QnXGPIeRnWM/7ZAQaG0w8h48mGaGKsF0CdCfgbT4GJnrceXQsYTjowKaxr8fb6daUvpGfEGzMLpTvHZpTpiDYSRtpxcsaVXCCSzMYBMHvMO4QWYx0xiGMAbFNnyChzWyBhzBijZxFtqVcevigGgZQaMT2qy5U5EMhDwcw3bvR6RFvhlWk9gUm7lBEEc1R3K7MhkBsgQrSBRJMy27kTWOZ56QtsiWInJV91tTIHZ6dFGF6DPLAXHAAXuUhx+F20BM98gbA+vAvyWCKOepCoulqZHaOc9ucgEgX94JQXv0QaGBAcOLZJdbMyh7umhmf+tsUZzk3gEB344SGTZwwiFkgtzJW5NsZmgG3gOCgEBSATrAIJXn/4SeArF0K9SHWrMmXmh4SVhHXNp96KMmWMUSjyCzBTvQ1l/6v9AYuuD/1btgprAAAAAElFTkSuQmCC" alt="Verz Design">
+  <div class="eyebrow">Company Brain &middot; key screens &middot; one per role</div>
+  <h1>Key Screens</h1>
+  <p class="lede">The primary screen each role lives in. Not every screen &mdash; the one that defines what that person does all day, specified closely enough to build from.</p>
+  <p class="note">Mockups in the Verz palette. Figures are illustrative, not measurements.</p>
+</header>
+
+<!-- ============ 1 ============ -->
+<section class="scr">
+  <div class="scrhead">
+    <span class="scrnum">SCREEN 1</span>
+    <h2>Company Overview</h2>
+    <span class="who">Super Admin</span>
+  </div>
+  <p class="scrjob">Answers one question at a glance: <em>is the brain healthy, and is anything waiting on me?</em> Everything filters by department and person, which is the whole point of company-level oversight. Note what is <em>not</em> here: no document contents, no field values. Existence and configuration are governed by role; content is governed by entitlement.</p>
+
+  <div class="frame">
+    <div class="chrome"><div class="dots"><i></i><i></i><i></i></div><div class="url">brain.verzdesign.com/admin</div></div>
+    <div class="app">
+      <div class="nav">
+        <div class="brand"><img class="mark" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADEAAAArCAYAAADR0WDhAAAAGXRFWHRTb2Z0d2FyZQBBZG9iZSBJbWFnZVJlYWR5ccllPAAAAyBpVFh0WE1MOmNvbS5hZG9iZS54bXAAAAAAADw/eHBhY2tldCBiZWdpbj0i77u/IiBpZD0iVzVNME1wQ2VoaUh6cmVTek5UY3prYzlkIj8+IDx4OnhtcG1ldGEgeG1sbnM6eD0iYWRvYmU6bnM6bWV0YS8iIHg6eG1wdGs9IkFkb2JlIFhNUCBDb3JlIDUuMC1jMDYwIDYxLjEzNDc3NywgMjAxMC8wMi8xMi0xNzozMjowMCAgICAgICAgIj4gPHJkZjpSREYgeG1sbnM6cmRmPSJodHRwOi8vd3d3LnczLm9yZy8xOTk5LzAyLzIyLXJkZi1zeW50YXgtbnMjIj4gPHJkZjpEZXNjcmlwdGlvbiByZGY6YWJvdXQ9IiIgeG1sbnM6eG1wPSJodHRwOi8vbnMuYWRvYmUuY29tL3hhcC8xLjAvIiB4bWxuczp4bXBNTT0iaHR0cDovL25zLmFkb2JlLmNvbS94YXAvMS4wL21tLyIgeG1sbnM6c3RSZWY9Imh0dHA6Ly9ucy5hZG9iZS5jb20veGFwLzEuMC9zVHlwZS9SZXNvdXJjZVJlZiMiIHhtcDpDcmVhdG9yVG9vbD0iQWRvYmUgUGhvdG9zaG9wIENTNSBXaW5kb3dzIiB4bXBNTTpJbnN0YW5jZUlEPSJ4bXAuaWlkOkJDMjlEMzgwRkZGQjExRTdBNDE2OEVGNzI2NDE3NjBEIiB4bXBNTTpEb2N1bWVudElEPSJ4bXAuZGlkOkJDMjlEMzgxRkZGQjExRTdBNDE2OEVGNzI2NDE3NjBEIj4gPHhtcE1NOkRlcml2ZWRGcm9tIHN0UmVmOmluc3RhbmNlSUQ9InhtcC5paWQ6QkMyOUQzN0VGRkZCMTFFN0E0MTY4RUY3MjY0MTc2MEQiIHN0UmVmOmRvY3VtZW50SUQ9InhtcC5kaWQ6QkMyOUQzN0ZGRkZCMTFFN0E0MTY4RUY3MjY0MTc2MEQiLz4gPC9yZGY6RGVzY3JpcHRpb24+IDwvcmRmOlJERj4gPC94OnhtcG1ldGE+IDw/eHBhY2tldCBlbmQ9InIiPz5dK3lzAAAD8ElEQVR42tRYW0hUQRie3T2mi+56SRGMzLSLhBkIGUQZRIZ0oxv0XGhmBUmaoGh21dDQiiJCrd56iEyCeii7WG8RYWYUpqk9ZUJeMsnbbt/UGMNpd87Zc2l3Bz7+PTP/mTPffGe+mbOWlAVJjwghG0gQllCbhRQsD++ygMQQrqOCjUB2YuhkRaZz3DHH8k3CdQ1QFSyDT46USNVq50BqtBSPyzlAPlUiDD/eA0mBPPiIEAspyogY2J5ij7UQYmPVLxzVL7OsPf19P3FREqiDx4DJ7kX20cc7Y0d3pNjjOQJuoHA253eBIs8R1gYSgbS5IVM1a5yDCeG2BA/NN6DCPvpD4iopq1c8MX+VmDArqVzl6F83LzQRl54IjAFlvFqEU+M6wl5B/x+AAmASGDfp3bfi1bkF+1wiSCuDCtWzF5K8kb6CgMPLzamAHevomVkqfC/NzEcQEegD6vkKG38xNDI8FhMV5VLY/FYi5xpyXSYQiES4C4QL0vZDhQ6+wuoh6QLQK+iEztIhk4SoBOIE7dRSb8sr/yGBV2UCoVjpYVg/cQarQCfnsCDlr6UqkmBEmhHaBB3SY8opg1U4D4QI2m9ChdeqSXCW6xa050GNdINUyEbYKkrhLVU1CajRjtAk6JiaQqkBBKhD1imknYUKX3wmwUo5mwV5mWCHxlwDhKCWmiZo72VmI5xNrwU2+gN2Ok1Pvlx1C7ANSt1B+5ROFaKZpdoFablQoVPUj6TiWRfZbNGDYiEG32qwpcYI2ttAoFnNIVGxYAEnI3wGgWkDLXUpQqdgIqmpZIBEu1JfapSgi/yTCRtbncLzm9QQULOwzTof5SBsUrDUcrX9Wf1AQJIf4LxY6oDaPiUDB0edLo+uHQzggSD1IDsNa7ZUTQtbBYEshEvACjaIVBCZ9JBHnagbiBZ0t0uNIxmmBAY1H6EW2MNVLwSOsHp5OaFAoM1XApqVYK9OGTt2eNqoRoHFGNBX7p5lCB2CDdbFLPWNr+PRtLDxoBmELMFO6wROy+rqFU4IjVoI6HWno8CM6LiA2U9nKmxG2CjIpcpV6PlbR8+auIpwQJDyBMhhO7Pou7kEKtRqHYfefeI4MCJoXw80KxDoYecz4hcSmL1BFV94WxTai3k7drvdPsOIHfsy8FHjvU9BoEXvAHSTYLNYrOFWl7cP//9OghG5h+Drd0aj/P8jv5JQabmGWappJDCrbxEaVKaf4XfzQFJi1nKHFXK69VqqqSSY5Z5USCvydMINJCVouQJ0eWlrZSZAApoEBjnFFrm8zHipD0glKJH7CA9l1Q1s8QcHCQ+WO8IWPQkqEpj1dwjnyJ8/3Y6xRW9K+SXAAAhYSe/BcO5cAAAAAElFTkSuQmCC" alt=""><div class="brandtxt">Verz Brain<small>SUPER ADMIN</small></div></div>
+        <div class="navsec">Operate</div>
+        <div class="navitem on">Overview</div>
+        <div class="navitem">Live runs</div>
+        <div class="navitem">Models &amp; health<span class="badge">1</span></div>
+        <div class="navitem">Connectors</div>
+        <div class="navsec">Govern</div>
+        <div class="navitem">People &amp; grants</div>
+        <div class="navitem">Scopes</div>
+        <div class="navitem">Agents &amp; leashes<span class="badge q">3</span></div>
+        <div class="navitem">Skills &amp; templates<span class="badge q">7</span></div>
+        <div class="navitem">Knowledge<span class="badge q">12</span></div>
+        <div class="navitem">Learning<span class="badge q">3</span></div>
+        <div class="navitem">Audit</div>
+        <div class="navsec">Report</div>
+        <div class="navitem">Questions &amp; gaps</div>
+        <div class="navitem">Usage &amp; cost</div>
+        <div class="navitem">Quality &amp; canaries</div>
+      </div>
+
+      <div class="main">
+        <div class="topbar">
+          <div class="h">Company overview</div>
+          <div class="filters">
+            <span class="fchip">All departments</span>
+            <span class="fchip">All people</span>
+            <span class="fchip"><b>Last 7 days</b></span>
+          </div>
+        </div>
+
+        <div class="kpis">
+          <div class="kpi"><span class="lab">Questions</span><span class="val">1,847</span><span class="sub">312 machine excluded</span></div>
+          <div class="kpi"><span class="lab">Agents live</span><span class="val">14</span><span class="sub">4 global &middot; 10 dept</span></div>
+          <div class="kpi"><span class="lab">Connectors</span><span class="val">6</span><span class="sub warn">1 degraded &mdash; Xero</span></div>
+          <div class="kpi"><span class="lab">Redaction rate</span><span class="val">8.2%</span><span class="sub">of fields returned</span></div>
+          <div class="kpi"><span class="lab">Spend</span><span class="val">S$412</span><span class="sub ok">62% of month</span></div>
+        </div>
+
+        <div class="cols">
+          <div class="card">
+            <h3>Departments <a href="#">Compare &rarr;</a></h3>
+            <div class="in">
+              <table>
+                <thead><tr><th>Department</th><th style="text-align:right">Questions</th><th style="text-align:right">Agents</th><th>Knowledge</th><th style="text-align:right">Spend</th></tr></thead>
+                <tbody>
+                  <tr><td class="name">Maintenance</td><td class="n">926</td><td class="n">5</td><td><span class="pill ok">94% fresh</span></td><td class="n">S$186</td></tr>
+                  <tr><td class="name">Web</td><td class="n">431</td><td class="n">4</td><td><span class="pill warn">61% fresh</span></td><td class="n">S$102</td></tr>
+                  <tr><td class="name">Sales</td><td class="n">288</td><td class="n">3</td><td><span class="pill ok">88% fresh</span></td><td class="n">S$79</td></tr>
+                  <tr><td class="name">Marketing</td><td class="n">202</td><td class="n">2</td><td><span class="pill neu">not connected</span></td><td class="n">S$45</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3>Needs you</h3>
+            <div class="in att">
+              <div class="aitem"><span class="stripe crit"></span><div><span class="t">Xero connector failing</span><span class="d">429 rate limit &middot; 14 refusals in 2 hours &middot; retry backing off</span></div></div>
+              <div class="aitem"><span class="stripe acc"></span><div><span class="t">3 leash promotions pending</span><span class="d">Site Health Sentinel &middot; Assisted &rarr; Autonomous &middot; 47 clean runs</span></div></div>
+              <div class="aitem"><span class="stripe warn"></span><div><span class="t">7 skills awaiting review</span><span class="d">4 imported from GitHub, 3 authored in Studio</span></div></div>
+              <div class="aitem"><span class="stripe warn"></span><div><span class="t">12 knowledge items past review date</span><span class="d">Web department &middot; oldest 94 days</span></div></div>
+              <div class="aitem"><span class="stripe ok"></span><div><span class="t">Permission canaries green</span><span class="d">All 34 passed &middot; last run 06:00 today</span></div></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Activity <a href="#">Full audit &rarr;</a></h3>
+          <div class="in feed">
+            <div class="fitem"><span class="ftime">14:22</span><div><b>Siti Rahman</b> granted <code>read:client.hours_remaining</code> to the Web department &middot; reason recorded</div></div>
+            <div class="fitem"><span class="ftime">13:47</span><div><b>Support Ticket Agent</b> demoted to Assisted by circuit breaker &middot; correction rate 18% over 24h</div></div>
+            <div class="fitem"><span class="ftime">11:05</span><div><b>Daniel Ong</b> published <b>Quote Drafter v3</b> to Sales &middot; grants widened, second approver required</div></div>
+            <div class="fitem"><span class="ftime">09:31</span><div>Template <b>Site Health Sentinel v2.1</b> available &middot; 4 instances can upgrade</div></div>
+            <div class="fitem"><span class="ftime">08:00</span><div>Restore drill completed &middot; measured RTO <b>41 minutes</b> against a 2 hour target</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 2 ============ -->
+<section class="scr">
+  <div class="scrhead">
+    <span class="scrnum">SCREEN 2</span>
+    <h2>Department Console</h2>
+    <span class="who">Department Admin &middot; Maintenance</span>
+  </div>
+  <p class="scrjob">The same shape as the Super Admin view, bounded to one scope &mdash; deliberately, so there is one console to learn and one to build. What differs is the work: this person runs review queues and sets leashes. The leash matrix is the screen's centre of gravity, because it is where autonomy is actually granted.</p>
+
+  <div class="frame">
+    <div class="chrome"><div class="dots"><i></i><i></i><i></i></div><div class="url">brain.verzdesign.com/dept/maintenance</div></div>
+    <div class="app">
+      <div class="nav">
+        <div class="brand"><img class="mark" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADEAAAArCAYAAADR0WDhAAAAGXRFWHRTb2Z0d2FyZQBBZG9iZSBJbWFnZVJlYWR5ccllPAAAAyBpVFh0WE1MOmNvbS5hZG9iZS54bXAAAAAAADw/eHBhY2tldCBiZWdpbj0i77u/IiBpZD0iVzVNME1wQ2VoaUh6cmVTek5UY3prYzlkIj8+IDx4OnhtcG1ldGEgeG1sbnM6eD0iYWRvYmU6bnM6bWV0YS8iIHg6eG1wdGs9IkFkb2JlIFhNUCBDb3JlIDUuMC1jMDYwIDYxLjEzNDc3NywgMjAxMC8wMi8xMi0xNzozMjowMCAgICAgICAgIj4gPHJkZjpSREYgeG1sbnM6cmRmPSJodHRwOi8vd3d3LnczLm9yZy8xOTk5LzAyLzIyLXJkZi1zeW50YXgtbnMjIj4gPHJkZjpEZXNjcmlwdGlvbiByZGY6YWJvdXQ9IiIgeG1sbnM6eG1wPSJodHRwOi8vbnMuYWRvYmUuY29tL3hhcC8xLjAvIiB4bWxuczp4bXBNTT0iaHR0cDovL25zLmFkb2JlLmNvbS94YXAvMS4wL21tLyIgeG1sbnM6c3RSZWY9Imh0dHA6Ly9ucy5hZG9iZS5jb20veGFwLzEuMC9zVHlwZS9SZXNvdXJjZVJlZiMiIHhtcDpDcmVhdG9yVG9vbD0iQWRvYmUgUGhvdG9zaG9wIENTNSBXaW5kb3dzIiB4bXBNTTpJbnN0YW5jZUlEPSJ4bXAuaWlkOkJDMjlEMzgwRkZGQjExRTdBNDE2OEVGNzI2NDE3NjBEIiB4bXBNTTpEb2N1bWVudElEPSJ4bXAuZGlkOkJDMjlEMzgxRkZGQjExRTdBNDE2OEVGNzI2NDE3NjBEIj4gPHhtcE1NOkRlcml2ZWRGcm9tIHN0UmVmOmluc3RhbmNlSUQ9InhtcC5paWQ6QkMyOUQzN0VGRkZCMTFFN0E0MTY4RUY3MjY0MTc2MEQiIHN0UmVmOmRvY3VtZW50SUQ9InhtcC5kaWQ6QkMyOUQzN0ZGRkZCMTFFN0E0MTY4RUY3MjY0MTc2MEQiLz4gPC9yZGY6RGVzY3JpcHRpb24+IDwvcmRmOlJERj4gPC94OnhtcG1ldGE+IDw/eHBhY2tldCBlbmQ9InIiPz5dK3lzAAAD8ElEQVR42tRYW0hUQRie3T2mi+56SRGMzLSLhBkIGUQZRIZ0oxv0XGhmBUmaoGh21dDQiiJCrd56iEyCeii7WG8RYWYUpqk9ZUJeMsnbbt/UGMNpd87Zc2l3Bz7+PTP/mTPffGe+mbOWlAVJjwghG0gQllCbhRQsD++ygMQQrqOCjUB2YuhkRaZz3DHH8k3CdQ1QFSyDT46USNVq50BqtBSPyzlAPlUiDD/eA0mBPPiIEAspyogY2J5ij7UQYmPVLxzVL7OsPf19P3FREqiDx4DJ7kX20cc7Y0d3pNjjOQJuoHA253eBIs8R1gYSgbS5IVM1a5yDCeG2BA/NN6DCPvpD4iopq1c8MX+VmDArqVzl6F83LzQRl54IjAFlvFqEU+M6wl5B/x+AAmASGDfp3bfi1bkF+1wiSCuDCtWzF5K8kb6CgMPLzamAHevomVkqfC/NzEcQEegD6vkKG38xNDI8FhMV5VLY/FYi5xpyXSYQiES4C4QL0vZDhQ6+wuoh6QLQK+iEztIhk4SoBOIE7dRSb8sr/yGBV2UCoVjpYVg/cQarQCfnsCDlr6UqkmBEmhHaBB3SY8opg1U4D4QI2m9ChdeqSXCW6xa050GNdINUyEbYKkrhLVU1CajRjtAk6JiaQqkBBKhD1imknYUKX3wmwUo5mwV5mWCHxlwDhKCWmiZo72VmI5xNrwU2+gN2Ok1Pvlx1C7ANSt1B+5ROFaKZpdoFablQoVPUj6TiWRfZbNGDYiEG32qwpcYI2ttAoFnNIVGxYAEnI3wGgWkDLXUpQqdgIqmpZIBEu1JfapSgi/yTCRtbncLzm9QQULOwzTof5SBsUrDUcrX9Wf1AQJIf4LxY6oDaPiUDB0edLo+uHQzggSD1IDsNa7ZUTQtbBYEshEvACjaIVBCZ9JBHnagbiBZ0t0uNIxmmBAY1H6EW2MNVLwSOsHp5OaFAoM1XApqVYK9OGTt2eNqoRoHFGNBX7p5lCB2CDdbFLPWNr+PRtLDxoBmELMFO6wROy+rqFU4IjVoI6HWno8CM6LiA2U9nKmxG2CjIpcpV6PlbR8+auIpwQJDyBMhhO7Pou7kEKtRqHYfefeI4MCJoXw80KxDoYecz4hcSmL1BFV94WxTai3k7drvdPsOIHfsy8FHjvU9BoEXvAHSTYLNYrOFWl7cP//9OghG5h+Drd0aj/P8jv5JQabmGWappJDCrbxEaVKaf4XfzQFJi1nKHFXK69VqqqSSY5Z5USCvydMINJCVouQJ0eWlrZSZAApoEBjnFFrm8zHipD0glKJH7CA9l1Q1s8QcHCQ+WO8IWPQkqEpj1dwjnyJ8/3Y6xRW9K+SXAAAhYSe/BcO5cAAAAAElFTkSuQmCC" alt=""><div class="brandtxt">Verz Brain<small>MAINTENANCE</small></div></div>
+        <div class="navsec">Operate</div>
+        <div class="navitem on">Department</div>
+        <div class="navitem">Live runs</div>
+        <div class="navitem">Connectors</div>
+        <div class="navsec">Govern</div>
+        <div class="navitem">People &amp; grants</div>
+        <div class="navitem">Agents &amp; leashes<span class="badge q">2</span></div>
+        <div class="navitem">Knowledge<span class="badge q">4</span></div>
+        <div class="navitem">Skills<span class="badge q">3</span></div>
+        <div class="navitem">Learning<span class="badge q">11</span></div>
+        <div class="navsec">Report</div>
+        <div class="navitem">Gaps</div>
+        <div class="navitem">Usage</div>
+      </div>
+
+      <div class="main">
+        <div class="topbar">
+          <div class="h">Maintenance</div>
+          <div class="filters">
+            <span class="fchip scoped">Scope: Maintenance</span>
+            <span class="fchip">All people</span>
+            <span class="fchip"><b>Last 7 days</b></span>
+          </div>
+        </div>
+
+        <div class="kpis">
+          <div class="kpi"><span class="lab">Questions</span><span class="val">926</span><span class="sub">by 31 of 34 people</span></div>
+          <div class="kpi"><span class="lab">Answered</span><span class="val">91%</span><span class="sub warn">6% no knowledge</span></div>
+          <div class="kpi"><span class="lab">Escalated</span><span class="val">18</span><span class="sub">to a human</span></div>
+          <div class="kpi"><span class="lab">Budget</span><span class="val">S$186</span><span class="sub ok">on pace &middot; 58%</span></div>
+          <div class="kpi"><span class="lab">Waiting on you</span><span class="val">16</span><span class="sub crit">2 over 3 days</span></div>
+        </div>
+
+        <div class="cols">
+          <div class="card">
+            <h3>Agents and leashes</h3>
+            <div class="in">
+              <table class="leash">
+                <thead><tr><th>Agent</th><th>Read</th><th>Draft</th><th>Send / write</th><th style="text-align:right">Runs</th></tr></thead>
+                <tbody>
+                  <tr><td class="name">Site Health Sentinel</td><td><span class="rung au"><i></i>AUTO</span></td><td><span class="rung au"><i></i>AUTO</span></td><td><span class="rung as"><i></i>ASSIST</span></td><td class="n">312</td></tr>
+                  <tr><td class="name">Support Ticket Agent</td><td><span class="rung au"><i></i>AUTO</span></td><td><span class="rung as"><i></i>ASSIST</span></td><td><span class="rung as"><i></i>ASSIST</span></td><td class="n">241</td></tr>
+                  <tr><td class="name">Capacity &amp; Hours</td><td><span class="rung au"><i></i>AUTO</span></td><td><span class="rung as"><i></i>ASSIST</span></td><td><span class="rung sh"><i></i>SHADOW</span></td><td class="n">88</td></tr>
+                  <tr><td class="name">AR &amp; Renewal Chaser</td><td><span class="rung au"><i></i>AUTO</span></td><td><span class="rung sh"><i></i>SHADOW</span></td><td><span class="rung sh"><i></i>SHADOW</span></td><td class="n">54</td></tr>
+                  <tr><td class="name">WordPress Executor</td><td><span class="rung as"><i></i>ASSIST</span></td><td><span class="rung as"><i></i>ASSIST</span></td><td><span class="rung sh"><i></i>SHADOW</span></td><td class="n">19</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3>Your queues</h3>
+            <div class="in att">
+              <div class="aitem"><span class="stripe acc"></span><div><span class="t">2 promotions ready</span><span class="d">Capacity &amp; Hours &middot; send &rarr; Assisted &middot; 41 shadow runs, 96% agreement</span></div></div>
+              <div class="aitem"><span class="stripe warn"></span><div><span class="t">11 things learned this week</span><span class="d">9 applied automatically &middot; 2 need you: both widen scope</span></div></div>
+              <div class="aitem"><span class="stripe warn"></span><div><span class="t">3 skills to review</span><span class="d">SSL Renewal Runbook imported from GitHub 2 days ago</span></div></div>
+              <div class="aitem"><span class="stripe crit"></span><div><span class="t">4 knowledge items stale</span><span class="d">Hosting Escalation SOP &middot; verified 112 days ago by Aaron</span></div></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Questions nobody could answer <a href="#">Export &rarr;</a></h3>
+          <div class="in">
+            <table>
+              <thead><tr><th>Question shape</th><th style="text-align:right">Asked</th><th>Why it failed</th><th>Fix</th></tr></thead>
+              <tbody>
+                <tr><td class="name">&ldquo;What did we quote client X last year?&rdquo;</td><td class="n">23</td><td><span class="pill neu">no source</span></td><td>Connect Xero quotes</td></tr>
+                <tr><td class="name">&ldquo;Who is on call this weekend?&rdquo;</td><td class="n">17</td><td><span class="pill neu">no knowledge</span></td><td>Upload the rota</td></tr>
+                <tr><td class="name">&ldquo;Is this domain on auto-renew?&rdquo;</td><td class="n">14</td><td><span class="pill warn">field missing</span></td><td>Project <code>auto_renew</code></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 3 ============ -->
+<section class="scr">
+  <div class="scrhead">
+    <span class="scrnum">SCREEN 3</span>
+    <h2>Ask</h2>
+    <span class="who">Member &middot; everyone else</span>
+  </div>
+  <p class="scrjob">Nineteen people in twenty only ever see this. One box, no agent picker, no settings. The router chooses the agent; asking the user to choose is the system admitting it cannot route. This screen is also where the product's one distinctive behaviour becomes visible.</p>
+
+  <div class="frame">
+    <div class="chrome"><div class="dots"><i></i><i></i><i></i></div><div class="url">Lark &middot; MIRA</div></div>
+    <div class="chat">
+      <div class="threads">
+        <div class="thread on">SNM hosting renewal<small>now</small></div>
+        <div class="thread">Tomato Glasses SSL<small>Yesterday</small></div>
+        <div class="thread">Q3 maintenance hours<small>Tuesday</small></div>
+        <div class="thread">Who owns momentum.asia<small>Last week</small></div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;min-width:0">
+        <div class="conv">
+          <div class="msg">
+            <div class="av me">RK</div>
+            <div class="bub">
+              <div class="who2">Rupash<span>14:31</span></div>
+              <div class="qtext">When does SNM hosting expire, and how many maintenance hours do they have left?</div>
+            </div>
+          </div>
+
+          <div class="msg">
+            <div class="av ai">M</div>
+            <div class="bub">
+              <div class="who2">MIRA<span>14:31 &middot; 2.4s</span></div>
+              <div class="steps">
+                <div><span class="tick">&#10003;</span> Found SNM Construction Pte Ltd</div>
+                <div><span class="tick">&#10003;</span> Checked hosting and domain records</div>
+                <div><span class="tick">&#10003;</span> Checked the maintenance contract</div>
+              </div>
+              <div class="ans">
+                <strong>SNM hosting expires on 14 November 2026</strong>, in 71 days. Their maintenance contract has <strong>12 hours remaining</strong> of 40, and renews on the same date.
+              </div>
+
+              <div class="rec">
+                <div class="rechead"><span class="rn">SNM Construction Pte Ltd</span><span class="rt">CLIENT &middot; c_0447</span></div>
+                <div class="fields">
+                  <div class="f"><div class="fl">Hosting expires</div><div class="fv">14 Nov 2026</div></div>
+                  <div class="f"><div class="fl">Domain expires</div><div class="fv">14 Nov 2026</div></div>
+                  <div class="f"><div class="fl">Hours remaining</div><div class="fv">12 of 40</div></div>
+                  <div class="f locked"><div class="fl">Contract value</div><div class="fv"><svg width="11" height="12" viewBox="0 0 11 12" aria-hidden="true"><path d="M2 5V3.5a3.5 3.5 0 017 0V5" fill="none" stroke="currentColor" stroke-width="1.4"/><rect x="1" y="5" width="9" height="6.5" rx="1.2" fill="currentColor"/></svg> Restricted</div></div>
+                </div>
+              </div>
+
+              <div class="cites">
+                <div class="cite"><span class="src">Laravel</span> client 4471 &rarr; hosting_expiry &middot; read 14:31</div>
+                <div class="cite"><span class="src">Lark Base</span> Maintenance &rarr; hours_remaining &middot; read 14:31</div>
+                <div class="cite"><span class="src">Knowledge</span> Renewal policy <span class="vbadge">&#10003; Siti &middot; 12 Aug</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="composer">
+          <div class="cinput">Ask about a client, a site, a ticket or a policy&hellip;</div>
+          <div class="cfoot">
+            <span class="scopeline">You can ask about <b>Maintenance</b>, <b>Web projects</b> and <b>your own HR record</b></span>
+            <button class="sendbtn">Send</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="callout">
+    <b>The locked field is the product.</b> Rupash sees hours remaining because he holds <code>read:client.hours_remaining</code>; he does not hold <code>read:client.contract_value</code>, so that field never entered the model's context at all. The lock renders identically for everyone who cannot see it, so its presence discloses nothing about the value &mdash; and the account manager asking the same question in the same thread gets the figure. One agent, one knowledge layer, two different answers, and no configuration to make it so.
+  </div>
+</section>
+
+<!-- ============ 4 ============ -->
+<section class="scr">
+  <div class="scrhead">
+    <span class="scrnum">SCREEN 4</span>
+    <h2>Agents</h2>
+    <span class="who">Super Admin &middot; all departments</span>
+  </div>
+  <p class="scrjob">Every agent in the company on one page, with the two facts that matter about each: its <em>ceiling</em> (the most it could ever reach) and its <em>leash</em> (how far it may act unattended). Neither is a permission granted to the agent. An agent is a lens, never a principal &mdash; what a run can actually touch is the caller's entitlement intersected with the ceiling, which is why the ceiling column is the widest a run can be and never the run itself.</p>
+
+  <div class="pane">
+    <div class="panebar">
+      <span class="crumb"><b>SUPER ADMIN</b> &rsaquo; Govern &rsaquo; <em>Agents &amp; leashes</em></span>
+      <span class="filters"><span class="fchip">All departments</span><span class="fchip"><b>Live only</b></span><span class="act solid">New agent</span></span>
+    </div>
+    <div class="panebody">
+
+      <div class="kpis k4">
+        <div class="kpi"><span class="lab">Live</span><span class="val">14</span><span class="sub">across 5 departments</span></div>
+        <div class="kpi"><span class="lab">In shadow</span><span class="val">3</span><span class="sub">proposing, not acting</span></div>
+        <div class="kpi"><span class="lab">Demoted 7d</span><span class="val">1</span><span class="sub crit">Support Ticket Agent</span></div>
+        <div class="kpi"><span class="lab">Cost 7d</span><span class="val">S$176</span><span class="sub">of S$620 ceiling</span></div>
+      </div>
+
+      <div class="card">
+        <h3>Roster <a href="#">Compare versions &rarr;</a></h3>
+        <div class="in">
+          <table>
+            <thead><tr><th>Agent</th><th>Dept</th><th>Owner</th><th>Ceiling</th><th>Read</th><th>Draft</th><th>Write</th><th style="text-align:right">Runs&nbsp;7d</th><th style="text-align:right">Cost</th></tr></thead>
+            <tbody>
+              <tr><td class="name">Site Health Sentinel</td><td>Maintenance</td><td>Aaron Lim</td><td><code>maintenance.sites</code></td><td><span class="rung au"><i></i>AUTO</span></td><td><span class="rung au"><i></i>AUTO</span></td><td><span class="rung as"><i></i>ASSIST</span></td><td class="n">312</td><td class="n">S$41</td></tr>
+              <tr><td class="name">Support Ticket Agent</td><td>Maintenance</td><td>Aaron Lim</td><td><code>maintenance.tickets</code></td><td><span class="rung au"><i></i>AUTO</span></td><td><span class="rung as"><i></i>ASSIST</span></td><td><span class="rung as"><i></i>ASSIST</span></td><td class="n">241</td><td class="n">S$38</td></tr>
+              <tr><td class="name">Capacity &amp; Hours</td><td>Maintenance</td><td>Aaron Lim</td><td><code>maintenance.*</code></td><td><span class="rung au"><i></i>AUTO</span></td><td><span class="rung as"><i></i>ASSIST</span></td><td><span class="rung sh"><i></i>SHADOW</span></td><td class="n">88</td><td class="n">S$12</td></tr>
+              <tr><td class="name">Business Analyst</td><td>Web</td><td>Siti Rahman</td><td><code>web.projects</code></td><td><span class="rung au"><i></i>AUTO</span></td><td><span class="rung au"><i></i>AUTO</span></td><td><span class="rung sh"><i></i>SHADOW</span></td><td class="n">88</td><td class="n">S$29</td></tr>
+              <tr><td class="name">WordPress Developer</td><td>Web</td><td>Siti Rahman</td><td><code>web.projects + repo</code></td><td><span class="rung as"><i></i>ASSIST</span></td><td><span class="rung as"><i></i>ASSIST</span></td><td><span class="rung sh"><i></i>SHADOW</span></td><td class="n">41</td><td class="n">S$18</td></tr>
+              <tr><td class="name">Quote Drafter</td><td>Sales</td><td>Daniel Ong</td><td><code>sales.pipeline</code></td><td><span class="rung au"><i></i>AUTO</span></td><td><span class="rung as"><i></i>ASSIST</span></td><td><span class="rung sh"><i></i>SHADOW</span></td><td class="n">96</td><td class="n">S$22</td></tr>
+              <tr><td class="name">SEO Agent</td><td>Marketing</td><td>Priya Nair</td><td><code>marketing.*</code></td><td><span class="rung au"><i></i>AUTO</span></td><td><span class="rung as"><i></i>ASSIST</span></td><td><span class="rung sh"><i></i>SHADOW</span></td><td class="n">34</td><td class="n">S$9</td></tr>
+              <tr><td class="name">Accountant Agent</td><td>Finance</td><td>Grace Teo</td><td><code>finance.ar</code></td><td><span class="rung au"><i></i>AUTO</span></td><td><span class="rung sh"><i></i>SHADOW</span></td><td><span class="rung sh"><i></i>SHADOW</span></td><td class="n">27</td><td class="n">S$7</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="two">
+        <div class="card">
+          <h3>Site Health Sentinel &mdash; what it can reach</h3>
+          <div class="in">
+            <div class="kv"><span class="k">Tools granted</span><span class="v">6 of 41</span></div>
+            <div class="kv"><span class="k">Skills attached</span><span class="v">SSL Runbook, Uptime Triage</span></div>
+            <div class="kv"><span class="k">Knowledge scope</span><span class="v">maintenance.sops</span></div>
+            <div class="kv"><span class="k">Surfaces</span><span class="v">browser &middot; read-only</span></div>
+            <div class="kv"><span class="k">Model</span><span class="v">Sonnet 5 &rarr; Haiku 4.5</span></div>
+            <div class="kv"><span class="k">Version</span><span class="v">v2.1 from template</span></div>
+            <div class="hint" style="margin-top:9px"><b>A run never exceeds the caller.</b> Aaron holds 6 of these tools, so his runs use 6. A member holding 3 gets 3 &mdash; same agent, narrower run, nothing to configure.</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Circuit breaker log</h3>
+          <div class="in att">
+            <div class="aitem"><span class="stripe crit"></span><div><span class="t">Support Ticket Agent demoted</span><span class="d">Draft leash Auto &rarr; Assisted &middot; correction rate 18% over 24h against a 10% threshold &middot; 13:47 today</span></div></div>
+            <div class="aitem"><span class="stripe acc"></span><div><span class="t">Site Health Sentinel eligible</span><span class="d">Write leash Assisted &rarr; Auto &middot; 47 clean runs, 0 corrections &middot; awaiting Aaron</span></div></div>
+            <div class="aitem"><span class="stripe ok"></span><div><span class="t">Quote Drafter held at Shadow</span><span class="d">Money boundary &mdash; write leash cannot rise without a second approver</span></div></div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ============ 5 ============ -->
+<section class="scr">
+  <div class="scrhead">
+    <span class="scrnum">SCREEN 5</span>
+    <h2>Agent Templates</h2>
+    <span class="who">Super Admin &middot; catalogue</span>
+  </div>
+  <p class="scrjob">A template is a role someone can install in a minute: prompt, skills, connectors and a starting leash, versioned together. Installing produces an <em>instance</em> that keeps a link back to the template, so a template fix reaches every copy &mdash; and a local edit is recorded as a divergence rather than silently lost at the next update.</p>
+
+  <div class="pane">
+    <div class="panebar">
+      <span class="crumb"><b>SUPER ADMIN</b> &rsaquo; Govern &rsaquo; Skills &amp; templates &rsaquo; <em>Templates</em></span>
+      <span class="filters"><span class="fchip">All roles</span><span class="fchip"><b>Web agency pack</b></span><span class="act">Import</span><span class="act solid">New template</span></span>
+    </div>
+    <div class="panebody">
+
+      <div class="grid3">
+        <div class="tcard up">
+          <div class="tt">Site Health Sentinel <em>v2.1</em></div>
+          <div class="td">Watches uptime, SSL and domain expiry across the estate; opens a ticket before a client notices.</div>
+          <div class="tm"><span class="srcchip">Maintenance</span><b>4 installed</b><span class="pill acc" style="background:var(--acc-wash);color:var(--acc-text);font-family:var(--mono);font-size:9px;padding:1px 5px;border-radius:2px">update ready</span></div>
+        </div>
+        <div class="tcard">
+          <div class="tt">Support Ticket Agent <em>v1.4</em></div>
+          <div class="td">Triages Freshdesk, drafts the first reply, routes anything touching money or scope to a human.</div>
+          <div class="tm"><span class="srcchip">Maintenance</span><b>3 installed</b></div>
+        </div>
+        <div class="tcard">
+          <div class="tt">Business Analyst <em>v1.2</em></div>
+          <div class="td">Turns a client brief into scoped requirements with assumptions and open questions listed separately.</div>
+          <div class="tm"><span class="srcchip">Web</span><b>2 installed</b></div>
+        </div>
+        <div class="tcard">
+          <div class="tt">Pre-Sales Agent <em>v1.1</em></div>
+          <div class="td">Answers capability and reference questions during a pitch from live pricing and past work.</div>
+          <div class="tm"><span class="srcchip">Sales</span><b>1 installed</b></div>
+        </div>
+        <div class="tcard">
+          <div class="tt">Project Manager <em>v1.3</em></div>
+          <div class="td">Tracks milestones, chases blockers, writes the weekly client update from actual task movement.</div>
+          <div class="tm"><span class="srcchip">Web</span><b>2 installed</b></div>
+        </div>
+        <div class="tcard">
+          <div class="tt">WordPress Developer <em>v1.0</em></div>
+          <div class="td">Applies theme and plugin changes on a staging copy, runs the visual check, never touches production.</div>
+          <div class="tm"><span class="srcchip">Web</span><b>1 installed</b></div>
+        </div>
+        <div class="tcard">
+          <div class="tt">SEO Agent <em>v1.2</em></div>
+          <div class="td">Audits a site against the house checklist and reports what changed since the last crawl.</div>
+          <div class="tm"><span class="srcchip">Marketing</span><b>1 installed</b></div>
+        </div>
+        <div class="tcard">
+          <div class="tt">Accountant Agent <em>v1.0</em></div>
+          <div class="td">Reconciles Xero receivables against the maintenance register and flags what is overdue.</div>
+          <div class="tm"><span class="srcchip">Finance</span><b>1 installed</b></div>
+        </div>
+        <div class="tcard">
+          <div class="tt">Content Uploader <em>v1.1</em></div>
+          <div class="td">Places supplied copy and images into the CMS to the house structure, then reports what is missing.</div>
+          <div class="tm"><span class="srcchip">Web</span><b>0 installed</b></div>
+        </div>
+      </div>
+
+      <div class="two">
+        <div class="card">
+          <h3>What a template carries</h3>
+          <div class="in">
+            <div class="kv"><span class="k">System prompt and role</span><span class="v">versioned</span></div>
+            <div class="kv"><span class="k">Skills</span><span class="v">by reference, pinned</span></div>
+            <div class="kv"><span class="k">Tools requested</span><span class="v">a request, not a grant</span></div>
+            <div class="kv"><span class="k">Connectors expected</span><span class="v">named, may be absent</span></div>
+            <div class="kv"><span class="k">Default leash</span><span class="v">shadow on every write</span></div>
+            <div class="kv"><span class="k">Evaluation set</span><span class="v">ships with the template</span></div>
+          </div>
+        </div>
+        <div class="card">
+          <h3>Remaining catalogue <a href="#">See all 16 &rarr;</a></h3>
+          <div class="in">
+            <div class="hint">UI Designer, UX Designer, HTML Developer, Laravel Developer, Shopify Developer, Tester, SEM Agent, SMM Agent. <b>Installing never widens anyone.</b> A template asks for tools; the department admin decides whether the grant exists, and a run is still bounded by whoever called it.</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ============ 6 ============ -->
+<section class="scr">
+  <div class="scrhead">
+    <span class="scrnum">SCREEN 6</span>
+    <h2>Skills</h2>
+    <span class="who">Super Admin &middot; all departments</span>
+  </div>
+  <p class="scrjob">A skill is a folder with instructions and optional scripts, authored anywhere &mdash; Claude, a GitHub repo, a URL, or the built-in Studio &mdash; and imported here. Import is the security boundary: a skill arrives unreviewed, runs against nothing, and only reaches an agent after a named person has read it. The source column is not decoration; it is where you look first when an answer goes wrong.</p>
+
+  <div class="pane">
+    <div class="panebar">
+      <span class="crumb"><b>SUPER ADMIN</b> &rsaquo; Govern &rsaquo; <em>Skills</em></span>
+      <span class="filters"><span class="fchip">All departments</span><span class="fchip"><b>Needs review</b></span><span class="act">Paste URL</span><span class="act">Connect repo</span><span class="act solid">Write in Studio</span></span>
+    </div>
+    <div class="panebody">
+
+      <div class="kpis k4">
+        <div class="kpi"><span class="lab">Skills</span><span class="val">63</span><span class="sub">41 in use</span></div>
+        <div class="kpi"><span class="lab">Awaiting review</span><span class="val">7</span><span class="sub warn">oldest 4 days</span></div>
+        <div class="kpi"><span class="lab">From GitHub</span><span class="val">22</span><span class="sub">3 with drift</span></div>
+        <div class="kpi"><span class="lab">Unused 90d</span><span class="val">9</span><span class="sub">candidates to retire</span></div>
+      </div>
+
+      <div class="card">
+        <h3>Library</h3>
+        <div class="in">
+          <table>
+            <thead><tr><th>Skill</th><th>Source</th><th>Ver</th><th>Scope</th><th>Used by</th><th>Reviewed</th><th>State</th></tr></thead>
+            <tbody>
+              <tr><td class="name">SSL Renewal Runbook</td><td><span class="srcchip">github</span></td><td class="n">1.4</td><td><code>maintenance</code></td><td>2 agents</td><td>Aaron &middot; 2 Sep</td><td><span class="pill ok">approved</span></td></tr>
+              <tr><td class="name">Freshdesk Triage Rules</td><td><span class="srcchip">studio</span></td><td class="n">2.0</td><td><code>maintenance</code></td><td>1 agent</td><td>Aaron &middot; 28 Aug</td><td><span class="pill ok">approved</span></td></tr>
+              <tr><td class="name">Quote Format SG</td><td><span class="srcchip">studio</span></td><td class="n">1.1</td><td><code>sales</code></td><td>2 agents</td><td>Daniel &middot; 19 Aug</td><td><span class="pill ok">approved</span></td></tr>
+              <tr><td class="name">WP Migration Checklist</td><td><span class="srcchip">url</span></td><td class="n">1.0</td><td><code>web</code></td><td>1 agent</td><td>Siti &middot; 14 Aug</td><td><span class="pill ok">approved</span></td></tr>
+              <tr><td class="name">Xero Reconciliation</td><td><span class="srcchip">github</span></td><td class="n">0.9</td><td><code>finance</code></td><td>&mdash;</td><td>&mdash;</td><td><span class="pill warn">needs review</span></td></tr>
+              <tr><td class="name">Brand Tone Guide</td><td><span class="srcchip">claude</span></td><td class="n">1.2</td><td><code>company</code></td><td>7 agents</td><td>Rupash &middot; 11 Aug</td><td><span class="pill ok">approved</span></td></tr>
+              <tr><td class="name">Hosting Escalation Path</td><td><span class="srcchip">github</span></td><td class="n">2.2</td><td><code>maintenance</code></td><td>3 agents</td><td>Aaron &middot; 3 Jun</td><td><span class="pill crit">upstream changed</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="two">
+        <div class="card">
+          <h3>Import review &mdash; Xero Reconciliation</h3>
+          <div class="in">
+            <div class="kv"><span class="k">Repo</span><span class="v">verzdesign/brain-skills</span></div>
+            <div class="kv"><span class="k">Commit</span><span class="v">a41f2c8 &middot; 2 days ago</span></div>
+            <div class="kv"><span class="k">Files</span><span class="v">SKILL.md + 2 scripts</span></div>
+            <div class="kv"><span class="k">Tools it asks for</span><span class="v">xero.read, ledger.write</span></div>
+            <div class="kv"><span class="k">Network calls in scripts</span><span class="v">1 &mdash; flagged</span></div>
+            <div class="in" style="padding:9px 0 0"><span class="act solid">Approve</span> <span class="act">Approve read-only</span> <span class="act quiet">Reject</span></div>
+          </div>
+        </div>
+        <div class="card">
+          <h3>Upstream drift</h3>
+          <div class="in att">
+            <div class="aitem"><span class="stripe crit"></span><div><span class="t">Hosting Escalation Path moved on</span><span class="d">Repo is at 2.4, we run 2.2 &middot; 3 agents affected &middot; diff is 41 lines</span></div></div>
+            <div class="aitem"><span class="stripe warn"></span><div><span class="t">2 more repos ahead of us</span><span class="d">Pinned by design &mdash; a repo push never changes a live agent on its own</span></div></div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ============ 7 ============ -->
+<section class="scr">
+  <div class="scrhead">
+    <span class="scrnum">SCREEN 7</span>
+    <h2>Knowledge</h2>
+    <span class="who">Super Admin &middot; every department</span>
+  </div>
+  <p class="scrjob">Everything uploaded by any department becomes company knowledge, but <em>bounded</em> knowledge: each item carries the scope it is visible in. A Department Admin sees only their own rows; the Super Admin sees every row in the company, which is the only place coverage across departments can be judged. One distinction worth holding: the Super Admin sees the full <em>inventory</em> by role, and opening the contents of another department's document is a separate capability that is granted by default here and written to the audit log every time it is used.</p>
+
+  <div class="pane">
+    <div class="panebar">
+      <span class="crumb"><b>SUPER ADMIN</b> &rsaquo; Govern &rsaquo; <em>Knowledge</em></span>
+      <span class="filters"><span class="fchip">All departments</span><span class="fchip">All types</span><span class="fchip"><b>Review due</b></span><span class="act solid">Upload</span></span>
+    </div>
+    <div class="panebody">
+
+      <div class="kpis k4">
+        <div class="kpi"><span class="lab">Items</span><span class="val">1,204</span><span class="sub">across 5 departments</span></div>
+        <div class="kpi"><span class="lab">Fresh</span><span class="val">84%</span><span class="sub warn">12 past review</span></div>
+        <div class="kpi"><span class="lab">Never retrieved</span><span class="val">147</span><span class="sub">uploaded, never used</span></div>
+        <div class="kpi"><span class="lab">Company-wide</span><span class="val">38</span><span class="sub">visible to everyone</span></div>
+      </div>
+
+      <div class="two">
+        <div class="card">
+          <h3>Coverage by department</h3>
+          <div class="in">
+            <div class="barrow"><span class="bl">Maintenance</span><span class="bar"><span style="width:94%"></span></span><span class="bn">94% &middot; 412</span></div>
+            <div class="barrow"><span class="bl">Sales</span><span class="bar"><span style="width:88%"></span></span><span class="bn">88% &middot; 206</span></div>
+            <div class="barrow"><span class="bl">Web</span><span class="bar"><span class="warn" style="width:61%"></span></span><span class="bn">61% &middot; 388</span></div>
+            <div class="barrow"><span class="bl">Finance</span><span class="bar"><span style="width:79%"></span></span><span class="bn">79% &middot; 94</span></div>
+            <div class="barrow"><span class="bl">Marketing</span><span class="bar"><span class="crit" style="width:34%"></span></span><span class="bn">34% &middot; 104</span></div>
+            <div class="hint" style="margin-top:8px">Coverage is the share of items verified within their own review window, not a count of uploads. <b>Marketing is the gap</b> &mdash; and it is also the department whose questions go unanswered most.</div>
+          </div>
+        </div>
+        <div class="card">
+          <h3>What Super Admin adds over a department view</h3>
+          <div class="in">
+            <div class="kv"><span class="k">Rows visible</span><span class="v">1,204 of 1,204</span></div>
+            <div class="kv"><span class="k">A department admin sees</span><span class="v">their scope only</span></div>
+            <div class="kv"><span class="k">Cross-department duplicates</span><span class="v">23 found</span></div>
+            <div class="kv"><span class="k">Promote to company-wide</span><span class="v">Super Admin only</span></div>
+            <div class="kv"><span class="k">Contents read by admin</span><span class="v">logged, reversible</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Library <a href="#">Export inventory &rarr;</a></h3>
+        <div class="in">
+          <table>
+            <thead><tr><th>Item</th><th>Dept</th><th>Type</th><th>Visible to</th><th>Owner</th><th>Verified</th><th>Review due</th><th style="text-align:right">Used 30d</th></tr></thead>
+            <tbody>
+              <tr><td class="name">Maintenance SLA and response times</td><td>Maintenance</td><td>SOP</td><td><code>company</code></td><td>Aaron Lim</td><td>2 Sep</td><td><span class="pill ok">2 Dec</span></td><td class="n">312</td></tr>
+              <tr><td class="name">Hosting escalation SOP</td><td>Maintenance</td><td>SOP</td><td><code>maintenance</code></td><td>Aaron Lim</td><td>15 May</td><td><span class="pill crit">overdue 112d</span></td><td class="n">88</td></tr>
+              <tr><td class="name">2026 maintenance pricing</td><td>Sales</td><td>Pricing</td><td><code>sales + mgmt</code></td><td>Daniel Ong</td><td>19 Aug</td><td><span class="pill ok">19 Nov</span></td><td class="n">204</td></tr>
+              <tr><td class="name">Web build packages</td><td>Sales</td><td>Package</td><td><code>company</code></td><td>Daniel Ong</td><td>19 Aug</td><td><span class="pill ok">19 Nov</span></td><td class="n">176</td></tr>
+              <tr><td class="name">WordPress house standard</td><td>Web</td><td>Standard</td><td><code>web</code></td><td>Siti Rahman</td><td>1 Jun</td><td><span class="pill warn">due 9d</span></td><td class="n">141</td></tr>
+              <tr><td class="name">Employee handbook 2026</td><td>HR</td><td>Policy</td><td><code>company</code></td><td>Grace Teo</td><td>4 Jul</td><td><span class="pill ok">4 Jan</span></td><td class="n">67</td></tr>
+              <tr><td class="name">Salary bands</td><td>HR</td><td>Policy</td><td><code>hr.leads</code></td><td>Grace Teo</td><td>4 Jul</td><td><span class="pill ok">4 Jan</span></td><td class="n">3</td></tr>
+              <tr><td class="name">SEM budget guidance Q3</td><td>Marketing</td><td>Guide</td><td><code>marketing</code></td><td>Priya Nair</td><td>2 Feb</td><td><span class="pill crit">overdue 94d</span></td><td class="n">12</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ============ 8 ============ -->
+<section class="scr">
+  <div class="scrhead">
+    <span class="scrnum">SCREEN 8</span>
+    <h2>Learning</h2>
+    <span class="who">Super Admin &middot; every department</span>
+  </div>
+  <p class="scrjob">The rule the whole page encodes: learning that <em>narrows, personalises or re-ranks</em> applies by itself; learning that <em>widens, publishes or changes behaviour</em> waits for a person. Tier 1 is already live and listed here so it can be undone, not so it can be approved &mdash; asking a human to sign off on every preference would cost more attention than it saves. Only tier 3 blocks. A Department Admin sees their own department's rows; this view is every department at once.</p>
+
+  <div class="pane">
+    <div class="panebar">
+      <span class="crumb"><b>SUPER ADMIN</b> &rsaquo; Govern &rsaquo; <em>Learning</em></span>
+      <span class="filters"><span class="fchip">All departments</span><span class="fchip"><b>Last 7 days</b></span><span class="act">Weekly digest</span></span>
+    </div>
+    <div class="panebody">
+
+      <div class="kpis k4">
+        <div class="kpi"><span class="lab">Learned 7d</span><span class="val">47</span><span class="sub">company-wide</span></div>
+        <div class="kpi"><span class="lab">Applied automatically</span><span class="val">39</span><span class="sub ok">tier 1 &middot; all reversible</span></div>
+        <div class="kpi"><span class="lab">In shadow</span><span class="val">5</span><span class="sub warn">tier 2 &middot; proving out</span></div>
+        <div class="kpi"><span class="lab">Waiting on a human</span><span class="val">3</span><span class="sub crit">tier 3 &middot; 1 over 3 days</span></div>
+      </div>
+
+      <div class="card">
+        <h3>What changed <a href="#">Full ledger &rarr;</a></h3>
+        <div class="in">
+          <table>
+            <thead><tr><th>What it learned</th><th>Tier</th><th>Dept</th><th>Evidence</th><th>State</th><th></th></tr></thead>
+            <tbody>
+              <tr><td class="name">&ldquo;SNM&rdquo; means SNM Construction, not SNM Trading</td><td><span class="tier t1">1 AUTO</span></td><td>Maintenance</td><td>4 corrections, 2 people</td><td><span class="pill ok">applied</span></td><td><span class="act quiet">Undo</span></td></tr>
+              <tr><td class="name">Aaron wants hours before dates in renewal answers</td><td><span class="tier t1">1 AUTO</span></td><td>Maintenance</td><td>7 reorder edits</td><td><span class="pill ok">applied</span></td><td><span class="act quiet">Undo</span></td></tr>
+              <tr><td class="name">The 2025 pricing sheet is superseded, stop retrieving it</td><td><span class="tier t1">1 AUTO</span></td><td>Sales</td><td>11 negative signals</td><td><span class="pill ok">applied</span></td><td><span class="act quiet">Undo</span></td></tr>
+              <tr><td class="name">Xero &ldquo;ABC Pte&rdquo; is the same client as HubSpot &ldquo;ABC Pte Ltd&rdquo;</td><td><span class="tier t1">1 AUTO</span></td><td>Finance</td><td>UEN match + domain</td><td><span class="pill ok">applied</span></td><td><span class="act quiet">Undo</span></td></tr>
+              <tr><td class="name">Ticket-status questions can skip the model entirely</td><td><span class="tier t2">2 SHADOW</span></td><td>Maintenance</td><td>41 runs, 96% agreement</td><td><span class="pill warn">proving</span></td><td><span class="act">Promote</span></td></tr>
+              <tr><td class="name">Domain-expiry lookups can use the fast path</td><td><span class="tier t2">2 SHADOW</span></td><td>Maintenance</td><td>18 runs, 100%</td><td><span class="pill warn">proving</span></td><td><span class="act quiet">Needs 30</span></td></tr>
+              <tr><td class="name">Widen Web to read maintenance hours</td><td><span class="tier t3">3 GATED</span></td><td>Web</td><td>23 refusals in 30d</td><td><span class="pill crit">waiting 4d</span></td><td><span class="act solid">Decide</span></td></tr>
+              <tr><td class="name">Publish the renewal script as company knowledge</td><td><span class="tier t3">3 GATED</span></td><td>Sales</td><td>reused by 3 depts</td><td><span class="pill crit">waiting 2d</span></td><td><span class="act solid">Decide</span></td></tr>
+              <tr><td class="name">Merge two client records across the money boundary</td><td><span class="tier t3">3 GATED</span></td><td>Finance</td><td>0.91 match score</td><td><span class="pill crit">waiting 1d</span></td><td><span class="act solid">Decide</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="two">
+        <div class="card">
+          <h3>The four tiers</h3>
+          <div class="in">
+            <div class="kv"><span class="k"><span class="srcchip">0</span> Silent &mdash; within one conversation</span><span class="v">dies at session end</span></div>
+            <div class="kv"><span class="k"><span class="tier t1">1</span> Preferences, ranking, entity links, every negative signal</span><span class="v">auto &middot; undoable</span></div>
+            <div class="kv"><span class="k"><span class="tier t2">2</span> Fast-path rules</span><span class="v">shadow, then promote</span></div>
+            <div class="kv"><span class="k"><span class="tier t3">3</span> Scope, publishing, leashes, money merges</span><span class="v">a human decides</span></div>
+          </div>
+        </div>
+        <div class="card">
+          <h3>Notify, do not ask</h3>
+          <div class="in">
+            <div class="hint">Tier 1 lands silently and appears in a Friday digest with one-click undo. Nobody approves 39 preference changes a week; they skim one message and reverse what looks wrong. <b>Negative signals are always tier 1</b> &mdash; forgetting something wrong can never need permission, or the system stays wrong while it waits.</div>
+            <div class="kv" style="margin-top:9px"><span class="k">Undone after the digest, last 90d</span><span class="v">6 of 512</span></div>
+            <div class="kv"><span class="k">Median time a tier 3 waits</span><span class="v">1.4 days</span></div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+
+<!-- ============ 9 ============ -->
+<section class="scr">
+  <div class="scrhead">
+    <span class="scrnum">SCREEN 9</span>
+    <h2>Connectors</h2>
+    <span class="who">Super Admin &middot; company-wide</span>
+  </div>
+  <p class="scrjob">Connectors are wired three ways &mdash; an MCP server where the vendor ships one, a REST adapter where they do not, and a custom adapter for anything in-house. What the table really governs is <em>how little</em> is copied. A connector projects at most twelve fields per entity: identifiers, join keys, enums, timestamps, short labels, and the source's own visibility predicate. Everything else is fetched live at question time and never stored, because the arithmetic leaves no choice: a realistic day would take 15,000 to 60,000 Xero calls against a 5,000 ceiling.</p>
+
+  <div class="pane">
+    <div class="panebar">
+      <span class="crumb"><b>SUPER ADMIN</b> &rsaquo; Operate &rsaquo; <em>Connectors</em></span>
+      <span class="filters"><span class="fchip">All sources</span><span class="fchip"><b>Health</b></span><span class="act solid">Add connector</span></span>
+    </div>
+    <div class="panebody">
+
+      <div class="card">
+        <h3>Sources</h3>
+        <div class="in">
+          <table>
+            <thead><tr><th>Source</th><th>Wiring</th><th>Credential</th><th>Budget used today</th><th>Projected</th><th>Last read</th><th>State</th></tr></thead>
+            <tbody>
+              <tr><td class="name">Xero</td><td><span class="srcchip">REST</span></td><td>OpenBao &middot; expires 12 Dec</td><td><span class="barrow" style="padding:0"><span class="bar"><span class="crit" style="width:97%"></span></span><span class="bn">4,861 / 5,000</span></span></td><td class="n">9 fields</td><td>13:47</td><td><span class="pill crit">throttled</span></td></tr>
+              <tr><td class="name">Lark Base</td><td><span class="srcchip">MCP</span></td><td>OpenBao &middot; no expiry</td><td><span class="barrow" style="padding:0"><span class="bar"><span style="width:41%"></span></span><span class="bn">41 / 100 per min</span></span></td><td class="n">12 fields</td><td>14:31</td><td><span class="pill ok">healthy</span></td></tr>
+              <tr><td class="name">Freshdesk</td><td><span class="srcchip">REST</span></td><td>OpenBao &middot; expires 4 Mar</td><td><span class="barrow" style="padding:0"><span class="bar"><span style="width:58%"></span></span><span class="bn">2,900 / 5,000</span></span></td><td class="n">11 fields</td><td>14:30</td><td><span class="pill ok">healthy</span></td></tr>
+              <tr><td class="name">Laravel (internal)</td><td><span class="srcchip">custom</span></td><td>service token</td><td><span class="barrow" style="padding:0"><span class="bar"><span style="width:12%"></span></span><span class="bn">no ceiling</span></span></td><td class="n">12 fields</td><td>14:31</td><td><span class="pill ok">healthy</span></td></tr>
+              <tr><td class="name">HubSpot</td><td><span class="srcchip">MCP</span></td><td>OpenBao &middot; expires 30 Sep</td><td><span class="barrow" style="padding:0"><span class="bar"><span class="warn" style="width:71%"></span></span><span class="bn">7,100 / 10,000</span></span></td><td class="n">8 fields</td><td>14:22</td><td><span class="pill warn">key expires 26d</span></td></tr>
+              <tr><td class="name">Google Workspace</td><td><span class="srcchip">MCP</span></td><td>OAuth &middot; per user</td><td><span class="barrow" style="padding:0"><span class="bar"><span style="width:23%"></span></span><span class="bn">per-user quota</span></span></td><td class="n">6 fields</td><td>14:29</td><td><span class="pill ok">healthy</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="two">
+        <div class="card">
+          <h3>Xero &mdash; why it is throttled</h3>
+          <div class="in">
+            <div class="kv"><span class="k">Ceiling</span><span class="v">5,000 / day / tenant</span></div>
+            <div class="kv"><span class="k">Refusals in the last 2h</span><span class="v">14</span></div>
+            <div class="kv"><span class="k">Behaviour on refusal</span><span class="v">say so, never guess</span></div>
+            <div class="kv"><span class="k">Backoff</span><span class="v">exponential, resets 00:00 NZT</span></div>
+            <div class="kv"><span class="k">Largest caller</span><span class="v">Accountant Agent &middot; 2,410</span></div>
+            <div class="hint" style="margin-top:9px">A blocked source produces <b>&ldquo;I could not reach Xero&rdquo;</b>, never a stale number presented as current. Freshness is shown on every citation for the same reason.</div>
+          </div>
+        </div>
+        <div class="card">
+          <h3>What we copy, and what we never copy</h3>
+          <div class="in">
+            <div class="kv"><span class="k">Identifiers and join keys</span><span class="v">projected</span></div>
+            <div class="kv"><span class="k">Enums, timestamps, labels &le;120 chars</span><span class="v">projected</span></div>
+            <div class="kv"><span class="k">The source's visibility predicate</span><span class="v">projected</span></div>
+            <div class="kv"><span class="k">A resolved access list</span><span class="v">never</span></div>
+            <div class="kv"><span class="k">Money, contract terms, document bodies</span><span class="v">never &mdash; fetched live</span></div>
+            <div class="hint" style="margin-top:9px">Storing the <b>predicate</b> rather than a resolved list is what keeps permissions honest: move someone between departments and the next query returns a different row set, with no re-crawl and nothing to invalidate.</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ============ 10 ============ -->
+<section class="scr">
+  <div class="scrhead">
+    <span class="scrnum">SCREEN 10</span>
+    <h2>People and Grants</h2>
+    <span class="who">Super Admin &middot; company &rarr; departments &rarr; users</span>
+  </div>
+  <p class="scrjob">The org tree on the left is the company; the panel on the right is one person's entitlement, which is the only thing that decides what any answer contains. Grants are additive capability strings bound to a scope, each carrying who granted it, when, why, and when it lapses. There is no &ldquo;admin sees everything&rdquo; switch: a Super Admin's reach is a set of grants like anyone else's, which is why it can be audited and reduced.</p>
+
+  <div class="pane">
+    <div class="panebar">
+      <span class="crumb"><b>SUPER ADMIN</b> &rsaquo; Govern &rsaquo; <em>People &amp; grants</em></span>
+      <span class="filters"><span class="fchip">126 people</span><span class="fchip"><b>Active</b></span><span class="act">Bulk grant</span><span class="act solid">Invite</span></span>
+    </div>
+    <div class="panebody">
+
+      <div class="cols">
+        <div class="card">
+          <h3>Organisation <a href="#">Joiners, movers, leavers &rarr;</a></h3>
+          <div class="in tree">
+            <div class="tnode"><span class="tl">Verz Design Pte Ltd</span><span class="tr">126 people &middot; 6 departments</span></div>
+            <div class="tnode d1"><span class="tl">Maintenance</span><span class="tr">34 &middot; Aaron Lim</span></div>
+            <div class="tnode d2 sel"><span class="tl">Rupash Kumar</span><span class="tr">Member &middot; 9 grants</span></div>
+            <div class="tnode d2"><span class="tl">Aaron Lim</span><span class="tr">Dept Admin &middot; 24 grants</span></div>
+            <div class="tnode d2"><span class="tl">Wei Ling Tan</span><span class="tr">Member &middot; 7 grants</span></div>
+            <div class="tnode d1"><span class="tl">Web</span><span class="tr">41 &middot; Siti Rahman</span></div>
+            <div class="tnode d1"><span class="tl">Sales</span><span class="tr">18 &middot; Daniel Ong</span></div>
+            <div class="tnode d1"><span class="tl">Marketing</span><span class="tr">12 &middot; Priya Nair</span></div>
+            <div class="tnode d1"><span class="tl">Finance</span><span class="tr">9 &middot; Grace Teo</span></div>
+            <div class="tnode d1"><span class="tl">HR</span><span class="tr">12 &middot; Grace Teo</span></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Rupash Kumar &mdash; entitlement</h3>
+          <div class="in">
+            <table>
+              <thead><tr><th>Capability</th><th>Scope</th><th>By</th><th>Lapses</th></tr></thead>
+              <tbody>
+                <tr><td class="name"><code>read:client.*</code></td><td><code>maintenance</code></td><td>Aaron</td><td>&mdash;</td></tr>
+                <tr><td class="name"><code>read:client.hours_remaining</code></td><td><code>web.projects</code></td><td>Siti</td><td>31 Dec</td></tr>
+                <tr><td class="name"><code>read:ticket.*</code></td><td><code>maintenance</code></td><td>Aaron</td><td>&mdash;</td></tr>
+                <tr><td class="name"><code>read:hr.self</code></td><td><code>self</code></td><td>system</td><td>&mdash;</td></tr>
+                <tr><td class="name"><code>invoke:agent</code></td><td><code>maintenance</code></td><td>Aaron</td><td>&mdash;</td></tr>
+                <tr><td class="name"><code>read:client.contract_value</code></td><td>&mdash;</td><td><span class="pill neu">not granted</span></td><td>&mdash;</td></tr>
+              </tbody>
+            </table>
+            <div class="hint" style="margin-top:9px">The last row is the locked field on screen 3, seen from the other side. <b>Nothing here is negative.</b> Grants only add; a field is hidden because no grant covers it, never because a rule subtracts it.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="two">
+        <div class="card">
+          <h3>Joiners, movers and leavers this month</h3>
+          <div class="in att">
+            <div class="aitem"><span class="stripe ok"></span><div><span class="t">3 joiners provisioned</span><span class="d">Grants derived from the department template &middot; nothing hand-assigned</span></div></div>
+            <div class="aitem"><span class="stripe warn"></span><div><span class="t">1 mover with residue</span><span class="d">Moved Web &rarr; Sales 11 days ago, still holds 2 Web grants &middot; review</span></div></div>
+            <div class="aitem"><span class="stripe ok"></span><div><span class="t">2 leavers revoked</span><span class="d">Sessions killed, tokens rotated, audit trail retained</span></div></div>
+          </div>
+        </div>
+        <div class="card">
+          <h3>Permission canaries</h3>
+          <div class="in">
+            <div class="kv"><span class="k">Synthetic users under test</span><span class="v">34</span></div>
+            <div class="kv"><span class="k">Assertions per run</span><span class="v">198</span></div>
+            <div class="kv"><span class="k">Last run</span><span class="v">06:00 today &middot; all green</span></div>
+            <div class="kv"><span class="k">On a red canary</span><span class="v">deploy blocked</span></div>
+            <div class="hint" style="margin-top:9px">Each canary asks a question whose correct answer is a <b>refusal</b>. A permission bug that returns data is caught by a test that expected nothing.</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ============ 11 ============ -->
+<section class="scr">
+  <div class="scrhead">
+    <span class="scrnum">SCREEN 11</span>
+    <h2>Models</h2>
+    <span class="who">Super Admin &middot; routing and cost</span>
+  </div>
+  <p class="scrjob">Three lanes, each with its own priority and fallback chain. The fast lane is the one worth studying: it answers without a model at all, straight from the local projection, on a database role that has no network grant &mdash; so &ldquo;it cannot call out&rdquo; is enforced by Postgres, not by a prompt. Roughly a third of real questions never reach a model, which is where both the speed and most of the cost saving come from.</p>
+
+  <div class="pane">
+    <div class="panebar">
+      <span class="crumb"><b>SUPER ADMIN</b> &rsaquo; Operate &rsaquo; <em>Models &amp; health</em></span>
+      <span class="filters"><span class="fchip">All providers</span><span class="fchip"><b>Last 7 days</b></span><span class="act">Edit routing</span></span>
+    </div>
+    <div class="panebody">
+
+      <div class="kpis k4">
+        <div class="kpi"><span class="lab">Answered without a model</span><span class="val">31%</span><span class="sub ok">fast lane</span></div>
+        <div class="kpi"><span class="lab">p95 answer</span><span class="val">4.1s</span><span class="sub">target 8s</span></div>
+        <div class="kpi"><span class="lab">Fallbacks fired</span><span class="val">27</span><span class="sub warn">all one provider</span></div>
+        <div class="kpi"><span class="lab">Cost 7d</span><span class="val">S$412</span><span class="sub">S$0.22 per question</span></div>
+      </div>
+
+      <div class="card">
+        <h3>Priority and fallback</h3>
+        <div class="in">
+          <table>
+            <thead><tr><th>Lane</th><th>What it handles</th><th>Primary</th><th>Fallback 1</th><th>Fallback 2</th><th>Budget</th><th style="text-align:right">p95</th></tr></thead>
+            <tbody>
+              <tr><td class="name">Fast</td><td>Lookups, status, expiry</td><td><span class="pill ok">no model</span></td><td>Haiku 4.5</td><td>&mdash;</td><td>S$0</td><td class="n">0.4s</td></tr>
+              <tr><td class="name">Answer</td><td>Questions needing judgement</td><td>Sonnet 5</td><td>Haiku 4.5</td><td>local 8B</td><td>S$0.02 / q</td><td class="n">4.1s</td></tr>
+              <tr><td class="name">Task</td><td>Multi-step and autonomous work</td><td>Opus 5</td><td>Sonnet 5</td><td>queue</td><td>S$0.40 / run</td><td class="n">3m 12s</td></tr>
+              <tr><td class="name">Embedding</td><td>Indexing and retrieval</td><td>local BGE-M3</td><td>&mdash;</td><td>&mdash;</td><td>S$0</td><td class="n">0.1s</td></tr>
+              <tr><td class="name">Redaction check</td><td>Field-level gate</td><td><span class="pill ok">no model</span></td><td>&mdash;</td><td>&mdash;</td><td>S$0</td><td class="n">6ms</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="two">
+        <div class="card">
+          <h3>Provider health</h3>
+          <div class="in">
+            <div class="barrow"><span class="bl">Anthropic</span><span class="bar"><span style="width:99.8%"></span></span><span class="bn">99.8% &middot; 2.1s</span></div>
+            <div class="barrow"><span class="bl">OpenAI</span><span class="bar"><span class="warn" style="width:96.2%"></span></span><span class="bn">96.2% &middot; 3.8s</span></div>
+            <div class="barrow"><span class="bl">Local (Ollama)</span><span class="bar"><span style="width:100%"></span></span><span class="bn">100% &middot; 0.9s</span></div>
+            <div class="hint" style="margin-top:8px">All 27 fallbacks in the window came from one provider's 529s. <b>A fallback is never silent</b> &mdash; the answer records which model produced it, so a quality dip can be traced to a routing event rather than guessed at.</div>
+          </div>
+        </div>
+        <div class="card">
+          <h3>Spend by department</h3>
+          <div class="in">
+            <div class="barrow"><span class="bl">Maintenance</span><span class="bar"><span style="width:58%"></span></span><span class="bn">S$186 &middot; 58%</span></div>
+            <div class="barrow"><span class="bl">Web</span><span class="bar"><span style="width:64%"></span></span><span class="bn">S$102 &middot; 64%</span></div>
+            <div class="barrow"><span class="bl">Sales</span><span class="bar"><span class="warn" style="width:79%"></span></span><span class="bn">S$79 &middot; 79%</span></div>
+            <div class="barrow"><span class="bl">Marketing</span><span class="bar"><span style="width:45%"></span></span><span class="bn">S$45 &middot; 45%</span></div>
+            <div class="hint" style="margin-top:8px">Budgets are enforced at company, department and person. On exhaustion the fast lane keeps working &mdash; <b>a department out of budget can still look things up</b>, it just cannot reason.</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ============ 12 ============ -->
+<section class="scr">
+  <div class="scrhead">
+    <span class="scrnum">SCREEN 12</span>
+    <h2>My Workspace</h2>
+    <span class="who">Member &middot; signed in on the web</span>
+  </div>
+  <p class="scrjob">Members reach the brain through Lark and WhatsApp, but they also sign in here &mdash; because a chat window is a bad place to see what the system holds <em>about you</em>. This is that page: the agents you can call, the knowledge you own, the skills you wrote, what it has learned about your preferences, and which of your accounts are connected. Everything on it is yours or already visible to you; the page shows nothing your entitlement would not already return in an answer.</p>
+
+  <div class="frame">
+    <div class="chrome"><div class="dots"><i></i><i></i><i></i></div><div class="url">brain.verzdesign.com/me</div></div>
+    <div class="app">
+      <div class="nav">
+        <div class="brand"><img class="mark" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADEAAAArCAYAAADR0WDhAAAAGXRFWHRTb2Z0d2FyZQBBZG9iZSBJbWFnZVJlYWR5ccllPAAAAyBpVFh0WE1MOmNvbS5hZG9iZS54bXAAAAAAADw/eHBhY2tldCBiZWdpbj0i77u/IiBpZD0iVzVNME1wQ2VoaUh6cmVTek5UY3prYzlkIj8+IDx4OnhtcG1ldGEgeG1sbnM6eD0iYWRvYmU6bnM6bWV0YS8iIHg6eG1wdGs9IkFkb2JlIFhNUCBDb3JlIDUuMC1jMDYwIDYxLjEzNDc3NywgMjAxMC8wMi8xMi0xNzozMjowMCAgICAgICAgIj4gPHJkZjpSREYgeG1sbnM6cmRmPSJodHRwOi8vd3d3LnczLm9yZy8xOTk5LzAyLzIyLXJkZi1zeW50YXgtbnMjIj4gPHJkZjpEZXNjcmlwdGlvbiByZGY6YWJvdXQ9IiIgeG1sbnM6eG1wPSJodHRwOi8vbnMuYWRvYmUuY29tL3hhcC8xLjAvIiB4bWxuczp4bXBNTT0iaHR0cDovL25zLmFkb2JlLmNvbS94YXAvMS4wL21tLyIgeG1sbnM6c3RSZWY9Imh0dHA6Ly9ucy5hZG9iZS5jb20veGFwLzEuMC9zVHlwZS9SZXNvdXJjZVJlZiMiIHhtcDpDcmVhdG9yVG9vbD0iQWRvYmUgUGhvdG9zaG9wIENTNSBXaW5kb3dzIiB4bXBNTTpJbnN0YW5jZUlEPSJ4bXAuaWlkOkJDMjlEMzgwRkZGQjExRTdBNDE2OEVGNzI2NDE3NjBEIiB4bXBNTTpEb2N1bWVudElEPSJ4bXAuZGlkOkJDMjlEMzgxRkZGQjExRTdBNDE2OEVGNzI2NDE3NjBEIj4gPHhtcE1NOkRlcml2ZWRGcm9tIHN0UmVmOmluc3RhbmNlSUQ9InhtcC5paWQ6QkMyOUQzN0VGRkZCMTFFN0E0MTY4RUY3MjY0MTc2MEQiIHN0UmVmOmRvY3VtZW50SUQ9InhtcC5kaWQ6QkMyOUQzN0ZGRkZCMTFFN0E0MTY4RUY3MjY0MTc2MEQiLz4gPC9yZGY6RGVzY3JpcHRpb24+IDwvcmRmOlJERj4gPC94OnhtcG1ldGE+IDw/eHBhY2tldCBlbmQ9InIiPz5dK3lzAAAD8ElEQVR42tRYW0hUQRie3T2mi+56SRGMzLSLhBkIGUQZRIZ0oxv0XGhmBUmaoGh21dDQiiJCrd56iEyCeii7WG8RYWYUpqk9ZUJeMsnbbt/UGMNpd87Zc2l3Bz7+PTP/mTPffGe+mbOWlAVJjwghG0gQllCbhRQsD++ygMQQrqOCjUB2YuhkRaZz3DHH8k3CdQ1QFSyDT46USNVq50BqtBSPyzlAPlUiDD/eA0mBPPiIEAspyogY2J5ij7UQYmPVLxzVL7OsPf19P3FREqiDx4DJ7kX20cc7Y0d3pNjjOQJuoHA253eBIs8R1gYSgbS5IVM1a5yDCeG2BA/NN6DCPvpD4iopq1c8MX+VmDArqVzl6F83LzQRl54IjAFlvFqEU+M6wl5B/x+AAmASGDfp3bfi1bkF+1wiSCuDCtWzF5K8kb6CgMPLzamAHevomVkqfC/NzEcQEegD6vkKG38xNDI8FhMV5VLY/FYi5xpyXSYQiES4C4QL0vZDhQ6+wuoh6QLQK+iEztIhk4SoBOIE7dRSb8sr/yGBV2UCoVjpYVg/cQarQCfnsCDlr6UqkmBEmhHaBB3SY8opg1U4D4QI2m9ChdeqSXCW6xa050GNdINUyEbYKkrhLVU1CajRjtAk6JiaQqkBBKhD1imknYUKX3wmwUo5mwV5mWCHxlwDhKCWmiZo72VmI5xNrwU2+gN2Ok1Pvlx1C7ANSt1B+5ROFaKZpdoFablQoVPUj6TiWRfZbNGDYiEG32qwpcYI2ttAoFnNIVGxYAEnI3wGgWkDLXUpQqdgIqmpZIBEu1JfapSgi/yTCRtbncLzm9QQULOwzTof5SBsUrDUcrX9Wf1AQJIf4LxY6oDaPiUDB0edLo+uHQzggSD1IDsNa7ZUTQtbBYEshEvACjaIVBCZ9JBHnagbiBZ0t0uNIxmmBAY1H6EW2MNVLwSOsHp5OaFAoM1XApqVYK9OGTt2eNqoRoHFGNBX7p5lCB2CDdbFLPWNr+PRtLDxoBmELMFO6wROy+rqFU4IjVoI6HWno8CM6LiA2U9nKmxG2CjIpcpV6PlbR8+auIpwQJDyBMhhO7Pou7kEKtRqHYfefeI4MCJoXw80KxDoYecz4hcSmL1BFV94WxTai3k7drvdPsOIHfsy8FHjvU9BoEXvAHSTYLNYrOFWl7cP//9OghG5h+Drd0aj/P8jv5JQabmGWappJDCrbxEaVKaf4XfzQFJi1nKHFXK69VqqqSSY5Z5USCvydMINJCVouQJ0eWlrZSZAApoEBjnFFrm8zHipD0glKJH7CA9l1Q1s8QcHCQ+WO8IWPQkqEpj1dwjnyJ8/3Y6xRW9K+SXAAAhYSe/BcO5cAAAAAElFTkSuQmCC" alt=""><div class="brandtxt">Verz Brain<small>RUPASH &middot; MEMBER</small></div></div>
+        <div class="navsec">Use</div>
+        <div class="navitem">Ask</div>
+        <div class="navitem on">My workspace</div>
+        <div class="navitem">My agents</div>
+        <div class="navsec">Mine</div>
+        <div class="navitem">Knowledge I own</div>
+        <div class="navitem">Skills I wrote</div>
+        <div class="navitem">What it learned<span class="badge q">4</span></div>
+        <div class="navitem">Connected accounts</div>
+        <div class="navsec">Me</div>
+        <div class="navitem">My usage</div>
+        <div class="navitem">Channels</div>
+      </div>
+
+      <div class="main">
+        <div class="topbar">
+          <div class="h">Good afternoon, Rupash</div>
+          <div class="filters"><span class="fchip scoped">Maintenance</span><span class="fchip scoped">Web projects</span></div>
+        </div>
+
+        <div class="kpis k4">
+          <div class="kpi"><span class="lab">Questions this month</span><span class="val">143</span><span class="sub">4 corrected</span></div>
+          <div class="kpi"><span class="lab">Agents I can call</span><span class="val">7</span><span class="sub">2 I built</span></div>
+          <div class="kpi"><span class="lab">My budget</span><span class="val">S$18</span><span class="sub ok">of S$40 &middot; 45%</span></div>
+          <div class="kpi"><span class="lab">Learned about me</span><span class="val">4</span><span class="sub">all reversible</span></div>
+        </div>
+
+        <div class="cols">
+          <div class="card">
+            <h3>My agents <a href="#">Browse templates &rarr;</a></h3>
+            <div class="in">
+              <table>
+                <thead><tr><th>Agent</th><th>Source</th><th>Where it runs</th><th style="text-align:right">Used 30d</th></tr></thead>
+                <tbody>
+                  <tr><td class="name">Support Ticket Agent</td><td><span class="srcchip">department</span></td><td>Lark, web</td><td class="n">61</td></tr>
+                  <tr><td class="name">Site Health Sentinel</td><td><span class="srcchip">department</span></td><td>Lark, scheduled</td><td class="n">44</td></tr>
+                  <tr><td class="name">Capacity &amp; Hours</td><td><span class="srcchip">department</span></td><td>Lark, web</td><td class="n">27</td></tr>
+                  <tr><td class="name">Renewal Chaser</td><td><span class="srcchip">mine</span></td><td>web only</td><td class="n">9</td></tr>
+                  <tr><td class="name">Weekly Client Digest</td><td><span class="srcchip">mine</span></td><td>scheduled, Fri 17:00</td><td class="n">4</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3>What it learned about me <a href="#">Undo all &rarr;</a></h3>
+            <div class="in att">
+              <div class="aitem"><span class="stripe ok"></span><div><span class="t">Hours before dates</span><span class="d">You reordered renewal answers 7 times &middot; applied 28 Aug</span></div></div>
+              <div class="aitem"><span class="stripe ok"></span><div><span class="t">&ldquo;SNM&rdquo; means SNM Construction</span><span class="d">You corrected this 4 times &middot; applied 1 Sep</span></div></div>
+              <div class="aitem"><span class="stripe ok"></span><div><span class="t">Skip the 2025 pricing sheet</span><span class="d">You marked it unhelpful twice &middot; applied 2 Sep</span></div></div>
+              <div class="aitem"><span class="stripe ok"></span><div><span class="t">Short answers, no preamble</span><span class="d">Inferred from 19 sessions &middot; applied 15 Aug</span></div></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="cols">
+          <div class="card">
+            <h3>Knowledge I own</h3>
+            <div class="in">
+              <table>
+                <thead><tr><th>Item</th><th>Visible to</th><th>Verified</th><th style="text-align:right">Used 30d</th></tr></thead>
+                <tbody>
+                  <tr><td class="name">Renewal call script</td><td><code>maintenance</code></td><td>2 Sep</td><td class="n">41</td></tr>
+                  <tr><td class="name">Client handover checklist</td><td><code>company</code></td><td>18 Aug</td><td class="n">88</td></tr>
+                  <tr><td class="name">Hosting migration notes</td><td><code>maintenance</code></td><td><span class="pill warn">due 6d</span></td><td class="n">12</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3>Connected accounts</h3>
+            <div class="in">
+              <div class="kv"><span class="k">Lark</span><span class="v">connected &middot; primary</span></div>
+              <div class="kv"><span class="k">WhatsApp</span><span class="v">connected &middot; +65 &hellip;4471</span></div>
+              <div class="kv"><span class="k">Google Workspace</span><span class="v">connected &middot; my mail only</span></div>
+              <div class="kv"><span class="k">Freshdesk</span><span class="v">via department</span></div>
+              <div class="kv"><span class="k">Xero</span><span class="v">not connected to you</span></div>
+              <div class="hint" style="margin-top:9px">Connecting an account of your own <b>never widens what you can see</b> &mdash; it adds a source that is already yours, on your own entitlement.</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>What I can ask about</h3>
+          <div class="in">
+            <div class="hint">Clients, sites, tickets and hours in <b>Maintenance</b>. Projects and hours in <b>Web projects</b>. Your own <b>HR record</b>. Company policies, packages and pricing that are published company-wide. Contract values, salary bands and other departments' client data are not in your entitlement &mdash; you will see a lock, not a wrong answer.</div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</section>
+
+
+<!-- ============ 13 ============ -->
+<section class="scr">
+  <div class="scrhead">
+    <span class="scrnum">SCREEN 13</span>
+    <h2>Inside an Agent</h2>
+    <span class="who">Department Admin &middot; Site Health Sentinel</span>
+  </div>
+  <p class="scrjob">This is the screen your AnyGen reference is really about, and the one my first set was missing. Screens 6, 7 and 9 are the <em>governance</em> view &mdash; every skill, every knowledge item, every connector in the company, which is what you need for coverage and audit. This is the <em>assembly</em> view: one agent opened, with knowledge, connectors, skills and channels attached to it. Both are needed and they are not the same page. The agent is the container; the global pages are the inventory.</p>
+
+  <div class="frame">
+    <div class="chrome"><div class="dots"><i></i><i></i><i></i></div><div class="url">brain.verzdesign.com/agents/site-health-sentinel</div></div>
+    <div class="app">
+      <div class="nav">
+        <div class="brand"><img class="mark" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADEAAAArCAYAAADR0WDhAAAAGXRFWHRTb2Z0d2FyZQBBZG9iZSBJbWFnZVJlYWR5ccllPAAAAyBpVFh0WE1MOmNvbS5hZG9iZS54bXAAAAAAADw/eHBhY2tldCBiZWdpbj0i77u/IiBpZD0iVzVNME1wQ2VoaUh6cmVTek5UY3prYzlkIj8+IDx4OnhtcG1ldGEgeG1sbnM6eD0iYWRvYmU6bnM6bWV0YS8iIHg6eG1wdGs9IkFkb2JlIFhNUCBDb3JlIDUuMC1jMDYwIDYxLjEzNDc3NywgMjAxMC8wMi8xMi0xNzozMjowMCAgICAgICAgIj4gPHJkZjpSREYgeG1sbnM6cmRmPSJodHRwOi8vd3d3LnczLm9yZy8xOTk5LzAyLzIyLXJkZi1zeW50YXgtbnMjIj4gPHJkZjpEZXNjcmlwdGlvbiByZGY6YWJvdXQ9IiIgeG1sbnM6eG1wPSJodHRwOi8vbnMuYWRvYmUuY29tL3hhcC8xLjAvIiB4bWxuczp4bXBNTT0iaHR0cDovL25zLmFkb2JlLmNvbS94YXAvMS4wL21tLyIgeG1sbnM6c3RSZWY9Imh0dHA6Ly9ucy5hZG9iZS5jb20veGFwLzEuMC9zVHlwZS9SZXNvdXJjZVJlZiMiIHhtcDpDcmVhdG9yVG9vbD0iQWRvYmUgUGhvdG9zaG9wIENTNSBXaW5kb3dzIiB4bXBNTTpJbnN0YW5jZUlEPSJ4bXAuaWlkOkJDMjlEMzgwRkZGQjExRTdBNDE2OEVGNzI2NDE3NjBEIiB4bXBNTTpEb2N1bWVudElEPSJ4bXAuZGlkOkJDMjlEMzgxRkZGQjExRTdBNDE2OEVGNzI2NDE3NjBEIj4gPHhtcE1NOkRlcml2ZWRGcm9tIHN0UmVmOmluc3RhbmNlSUQ9InhtcC5paWQ6QkMyOUQzN0VGRkZCMTFFN0E0MTY4RUY3MjY0MTc2MEQiIHN0UmVmOmRvY3VtZW50SUQ9InhtcC5kaWQ6QkMyOUQzN0ZGRkZCMTFFN0E0MTY4RUY3MjY0MTc2MEQiLz4gPC9yZGY6RGVzY3JpcHRpb24+IDwvcmRmOlJERj4gPC94OnhtcG1ldGE+IDw/eHBhY2tldCBlbmQ9InIiPz5dK3lzAAAD8ElEQVR42tRYW0hUQRie3T2mi+56SRGMzLSLhBkIGUQZRIZ0oxv0XGhmBUmaoGh21dDQiiJCrd56iEyCeii7WG8RYWYUpqk9ZUJeMsnbbt/UGMNpd87Zc2l3Bz7+PTP/mTPffGe+mbOWlAVJjwghG0gQllCbhRQsD++ygMQQrqOCjUB2YuhkRaZz3DHH8k3CdQ1QFSyDT46USNVq50BqtBSPyzlAPlUiDD/eA0mBPPiIEAspyogY2J5ij7UQYmPVLxzVL7OsPf19P3FREqiDx4DJ7kX20cc7Y0d3pNjjOQJuoHA253eBIs8R1gYSgbS5IVM1a5yDCeG2BA/NN6DCPvpD4iopq1c8MX+VmDArqVzl6F83LzQRl54IjAFlvFqEU+M6wl5B/x+AAmASGDfp3bfi1bkF+1wiSCuDCtWzF5K8kb6CgMPLzamAHevomVkqfC/NzEcQEegD6vkKG38xNDI8FhMV5VLY/FYi5xpyXSYQiES4C4QL0vZDhQ6+wuoh6QLQK+iEztIhk4SoBOIE7dRSb8sr/yGBV2UCoVjpYVg/cQarQCfnsCDlr6UqkmBEmhHaBB3SY8opg1U4D4QI2m9ChdeqSXCW6xa050GNdINUyEbYKkrhLVU1CajRjtAk6JiaQqkBBKhD1imknYUKX3wmwUo5mwV5mWCHxlwDhKCWmiZo72VmI5xNrwU2+gN2Ok1Pvlx1C7ANSt1B+5ROFaKZpdoFablQoVPUj6TiWRfZbNGDYiEG32qwpcYI2ttAoFnNIVGxYAEnI3wGgWkDLXUpQqdgIqmpZIBEu1JfapSgi/yTCRtbncLzm9QQULOwzTof5SBsUrDUcrX9Wf1AQJIf4LxY6oDaPiUDB0edLo+uHQzggSD1IDsNa7ZUTQtbBYEshEvACjaIVBCZ9JBHnagbiBZ0t0uNIxmmBAY1H6EW2MNVLwSOsHp5OaFAoM1XApqVYK9OGTt2eNqoRoHFGNBX7p5lCB2CDdbFLPWNr+PRtLDxoBmELMFO6wROy+rqFU4IjVoI6HWno8CM6LiA2U9nKmxG2CjIpcpV6PlbR8+auIpwQJDyBMhhO7Pou7kEKtRqHYfefeI4MCJoXw80KxDoYecz4hcSmL1BFV94WxTai3k7drvdPsOIHfsy8FHjvU9BoEXvAHSTYLNYrOFWl7cP//9OghG5h+Drd0aj/P8jv5JQabmGWappJDCrbxEaVKaf4XfzQFJi1nKHFXK69VqqqSSY5Z5USCvydMINJCVouQJ0eWlrZSZAApoEBjnFFrm8zHipD0glKJH7CA9l1Q1s8QcHCQ+WO8IWPQkqEpj1dwjnyJ8/3Y6xRW9K+SXAAAhYSe/BcO5cAAAAAElFTkSuQmCC" alt=""><div class="brandtxt">Site Health<small>SENTINEL &middot; v2.1</small></div></div>
+        <div class="navsec">Agent</div>
+        <div class="navitem on">Profile</div>
+        <div class="navitem">Conversations<span class="badge q">2</span></div>
+        <div class="navitem">Automations</div>
+        <div class="navitem">People</div>
+        <div class="navitem">Knowledge</div>
+        <div class="navitem">Memory</div>
+        <div class="navitem">Artifacts</div>
+        <div class="navsec">Govern</div>
+        <div class="navitem">Leash history</div>
+        <div class="navitem">Runs &amp; cost</div>
+        <div class="navitem">Settings</div>
+      </div>
+
+      <div class="main">
+        <div class="topbar">
+          <div class="h">Site Health Sentinel</div>
+          <div class="filters"><span class="fchip scoped">from template v2.1</span><span class="act">Rehearse</span><span class="act solid">Add to Lark group</span></div>
+        </div>
+
+        <div class="kpis k4">
+          <div class="kpi"><span class="lab">Spend 30d</span><span class="val">S$164</span><span class="sub">of S$250 cap</span></div>
+          <div class="kpi"><span class="lab">Runs 30d</span><span class="val">1,284</span><span class="sub">31 people</span></div>
+          <div class="kpi"><span class="lab">Days live</span><span class="val">47</span><span class="sub">0 corrections in 12d</span></div>
+          <div class="kpi"><span class="lab">Template</span><span class="val">v2.1</span><span class="sub warn">1 local divergence</span></div>
+        </div>
+
+        <div class="card">
+          <h3>Capabilities &mdash; what this agent is assembled from</h3>
+          <div class="in">
+            <table>
+              <tbody>
+                <tr>
+                  <td style="width:104px;color:var(--dim);font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase">Connectors</td>
+                  <td><span class="srcchip">Laravel</span> <span class="srcchip">Lark Base</span> <span class="srcchip">Freshdesk</span> <span class="srcchip">uptime probe</span> <span class="srcchip" style="color:var(--warn);background:var(--warn-w)">Xero &mdash; requested, not granted</span> <span class="act quiet">+</span></td>
+                </tr>
+                <tr>
+                  <td style="color:var(--dim);font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase">Skills</td>
+                  <td><span class="srcchip">ssl-renewal-runbook</span> <span class="srcchip">uptime-triage</span> <span class="srcchip">verz-master-theme</span> <span class="srcchip">hosting-escalation</span> <span class="srcchip">4 more</span> <span class="act quiet">+</span></td>
+                </tr>
+                <tr>
+                  <td style="color:var(--dim);font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase">Knowledge</td>
+                  <td><code>maintenance.sops + company.published</code> &nbsp;<span class="pill neu">matches 431 items</span> <span class="act quiet">Edit predicate</span></td>
+                </tr>
+                <tr>
+                  <td style="color:var(--dim);font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase">Channels</td>
+                  <td><span class="srcchip">Lark</span> <span class="srcchip">web</span> <span class="srcchip">scheduled</span> <span class="act quiet">+</span></td>
+                </tr>
+                <tr>
+                  <td style="color:var(--dim);font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase">Model</td>
+                  <td>Sonnet 5 <span style="color:var(--faint)">&rarr;</span> Haiku 4.5 <span style="color:var(--faint)">&rarr;</span> local 8B &nbsp;<span class="pill ok">31% answered with no model</span></td>
+                </tr>
+              </tbody>
+            </table>
+            <div class="hint" style="margin-top:10px">Every attachment is a <b>reference with a pinned version</b>, never a copy. A skill fix reaches this agent when someone promotes the version; a repository push on its own changes nothing here. The Xero row is the honest case: the template asks for it, the department has not granted it, so it shows as <b>requested</b> rather than quietly missing.</div>
+          </div>
+        </div>
+
+        <div class="two">
+          <div class="card">
+            <h3>Availability &mdash; who can find and call it</h3>
+            <div class="in">
+              <div class="kv"><span class="k">Departments</span><span class="v">Maintenance, Web</span></div>
+              <div class="kv"><span class="k">Users added individually</span><span class="v">3</span></div>
+              <div class="kv"><span class="k">Lark groups</span><span class="v">2 installed</span></div>
+              <div class="kv"><span class="k">Discoverable in search</span><span class="v">yes</span></div>
+              <div class="hint" style="margin-top:9px;border-left-color:var(--lock)"><b>Availability is discovery, never authority.</b> Adding the Web department here lets 41 more people find this agent. It gives them no data they could not already reach. This is the single place most products get wrong, and it is why the two blocks sit side by side and never merge.</div>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3>Ceiling &mdash; the widest any run may reach</h3>
+            <div class="in">
+              <div class="kv"><span class="k">Scope</span><span class="v">maintenance.sites</span></div>
+              <div class="kv"><span class="k">Tools in ceiling</span><span class="v">6 of 41</span></div>
+              <div class="kv"><span class="k">Surfaces</span><span class="v">browser &middot; read-only</span></div>
+              <div class="kv"><span class="k">Money boundary</span><span class="v">pinned closed</span></div>
+              <div class="hint" style="margin-top:9px">A run resolves to <code>E(caller) &cap; ceiling</code>. Aaron holds all 6 tools, so his runs use 6. A member holding 3 gets 3, from the same agent, with nothing configured per person.</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="two">
+          <div class="card">
+            <h3>Preview as a person <a href="#">Change person &rarr;</a></h3>
+            <div class="in">
+              <div class="kv"><span class="k">Previewing as</span><span class="v">Wei Ling Tan &middot; Member</span></div>
+              <div class="kv"><span class="k">Tools this run would hold</span><span class="v">3 of 6</span></div>
+              <div class="kv"><span class="k">Knowledge items reachable</span><span class="v">288 of 431</span></div>
+              <div class="kv"><span class="k">Fields that would redact</span><span class="v">contract_value, margin</span></div>
+              <div class="hint" style="margin-top:9px">Computed by the <b>real gate</b>, not a separate estimator &mdash; a preview that used its own logic would be the thing most likely to lie.</div>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3>Leash <a href="#">Full history &rarr;</a></h3>
+            <div class="in">
+              <table class="leash">
+                <thead><tr><th>Target</th><th>Rung</th><th>Evidence</th><th></th></tr></thead>
+                <tbody>
+                  <tr><td class="name">Read sites and tickets</td><td><span class="rung au"><i></i>AUTO</span></td><td>1,284 runs</td><td></td></tr>
+                  <tr><td class="name">Draft a ticket reply</td><td><span class="rung au"><i></i>AUTO</span></td><td>0 corrections 12d</td><td></td></tr>
+                  <tr><td class="name">Open a ticket</td><td><span class="rung as"><i></i>ASSIST</span></td><td>47 clean runs</td><td><span class="act solid">Promote</span></td></tr>
+                  <tr><td class="name">Email a client</td><td><span class="rung sh"><i></i>SHADOW</span></td><td>outbound &mdash; pinned</td><td></td></tr>
+                  <tr><td class="name">Anything touching money</td><td><span class="rung sh"><i></i>SHADOW</span></td><td>second approver</td><td></td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div class="two">
+          <div class="card">
+            <h3>Memory <a href="#">Change history &rarr;</a></h3>
+            <div class="in">
+              <div class="kv"><span class="k">Curated by Aaron</span><span class="v">1.4 KB &middot; editable</span></div>
+              <div class="kv"><span class="k">Extracted from conversations</span><span class="v">3.1 KB &middot; 11 entries</span></div>
+              <div class="kv"><span class="k">Last revision</span><span class="v">2 Sep &middot; diff available</span></div>
+              <div class="kv"><span class="k">Learning tiers active</span><span class="v">1 and 2</span></div>
+              <div class="hint" style="margin-top:9px">Memory is <b>readable text with a diff per revision</b>, not an opaque store. If the agent believes something wrong about a client, you can see the sentence and delete it.</div>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3>Artifacts it produced <a href="#">All 214 &rarr;</a></h3>
+            <div class="in">
+              <table>
+                <thead><tr><th>Artifact</th><th>For</th><th>When</th></tr></thead>
+                <tbody>
+                  <tr><td class="name">Sept expiry report</td><td>Aaron Lim</td><td>1 Sep</td></tr>
+                  <tr><td class="name">SNM SSL incident note</td><td>Wei Ling Tan</td><td>29 Aug</td></tr>
+                  <tr><td class="name">Estate uptime summary</td><td>Maintenance</td><td>26 Aug</td></tr>
+                </tbody>
+              </table>
+              <div class="hint" style="margin-top:9px">An artifact carries the <b>entitlement of the run that made it</b>, and re-downloading re-checks the requester. A report built for Aaron cannot be forwarded into wider visibility than its contents allow.</div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <div class="callout">
+    <b>What I took from AnyGen, and what I did not.</b> Adopted: the agent as a container you open rather than a row you edit; capabilities as one block of connectors, skills and channels; cost on the agent's front page instead of in a report; memory as a visible file with change history; artifacts as a first-class thing the agent produced. Rejected, with reason: their <em>Adaptive learning</em> is a single on/off toggle, which is exactly the memory-poisoning path &mdash; ours stays four tiers with only tier 3 gated. They have no leash concept at all, which is fine for a productivity tool and not for an agent touching client contracts. And their Browser Operator runs in the user's own authenticated session; an agent riding a human's session inherits everything that human holds and no audit can separate them afterwards, so ours stays in a disposable sandbox with credentials injected at the tool boundary.
+  </div>
+</section>
+
+
+<footer>
+  <div class="swatches">
+    <span class="sw"><i style="background:#F47936"></i><b>#F47936</b> Verz orange</span>
+    <span class="sw"><i style="background:#231F20"></i><b>#231F20</b> Verz black</span>
+    <span class="sw"><i style="background:#14724A"></i><b>#14724A</b> healthy</span>
+    <span class="sw"><i style="background:#8A6410"></i><b>#8A6410</b> attention</span>
+    <span class="sw"><i style="background:#A8231B"></i><b>#A8231B</b> failing</span>
+    <span class="sw"><i style="background:#5F4A9B"></i><b>#5F4A9B</b> restricted</span>
+  </div>
+  <div class="fnote">
+Both brand values are sampled from the logo file. Two build notes follow from them. First, white text on Verz orange measures 2.77:1 and fails WCAG AA, while Verz black on the same orange measures 5.96:1 &mdash; so the orange is used as a fill carrying dark text, and orange text on a white ground darkens to #B75315 to reach 4.96:1. Second, the brand hue sits in the same band as a conventional amber warning, so the brand orange never encodes state: it marks identity, the active rail and the primary action only. Attention is carried by a dark low-chroma ochre that cannot be mistaken for it. Neutrals are warm-biased toward the orange rather than a default grey. Poppins carries the document headings to match the brand; the interface chrome inside each frame is IBM Plex Sans, which holds up at 12px where Poppins does not. Thirteen screens of a build inventory that runs to about forty. The two admin consoles are one build with a scope filter rather than two products, which is why screen 2 looks like screen 1; screens 4 to 11 are shown as content panes because the navigation is already established and repeating it eight times would be noise. Figures are representative of Verz at roughly 3,000 questions a day and are not measurements.
+  </div>
+</footer>
+
+</div>

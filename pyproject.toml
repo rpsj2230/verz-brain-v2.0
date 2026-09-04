@@ -44,12 +44,14 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["ANN", "S105", "S106"]
+"tests/**" = ["ANN", "S105", "S106", "S603", "S607"]  # tests build real git repos
 # N818 wants an Error suffix. These five names ARE the error taxonomy from the
 # architecture (denied / absent / unresolved / degraded / failed), and `raise Denied(...)`
 # is how the design is written down. Renaming them would make the code stop matching the spec.
 "src/brain/core/errors.py" = ["N818"]
 "src/brain/ops/sweeps.py" = ["N818"]  # SweepFailure reads as a result, not an error type
+# docs_routes embeds a complete HTML page; CSS declarations are not wrapped at 100 columns.
+"src/brain/docs_routes.py" = ["E501"]
 
 # ---------------------------------------------------------------- mypy
 [tool.mypy]

@@ -16,3 +16,6 @@ build/
 !.env.example
 *.pem
 *.key
+
+# generated in CI from git history immediately before the image is built
+docs/status.json
