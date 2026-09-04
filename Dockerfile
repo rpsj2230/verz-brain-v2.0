@@ -67,4 +67,7 @@ EXPOSE 8000
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
     CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=4).status==200 else 1)"
 
-CMD ["uvicorn", "brain.app:app", "--host", "0.0.0.0", "--port", "8000"]
+# Started through a launcher that reads the container's own cgroup limits. os.cpu_count()
+# reports the host's cores, not the container's share, so a 1 GiB container on a
+# thirty-two-core host would otherwise start sixty-five workers, each with a pool.
+CMD ["python", "-m", "brain.serve"]
