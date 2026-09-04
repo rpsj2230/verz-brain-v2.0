@@ -83,6 +83,7 @@ async def build_status(request: Request) -> HTMLResponse:
     recent = "".join(
         f"<li><code>{r['sha']}</code> {r['subject']}</li>" for r in s.get("recent", [])[:6]
     )
+    needs = _needs_count()
     return HTMLResponse(f"""<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Company Brain · build status</title>
@@ -122,6 +123,7 @@ code{{font-family:"IBM Plex Mono",monospace;font-size:11.5px;color:var(--brand)}
 <a class="btn pri" href="/build/tracker">Task tracker</a>
 <a class="btn" href="/build/architecture">Architecture</a>
 <a class="btn" href="/build/screens">Key screens</a>
+<a class="btn" href="/build/needs-rupash">Needs you ({needs})</a>
 <a class="btn" href="/api/status.json">status.json</a>
 <h3 style="font-family:Poppins,sans-serif;font-size:15px;margin:30px 0 6px">Recently closed</h3>
 <ul>{recent}</ul>
@@ -251,8 +253,80 @@ becomes the real screen when its wave lands, so a link you save today keeps work
 <tr><td><a href="/build/tracker">/build/tracker</a></td><td>Task tracker</td><td><span class="tag on">live</span></td></tr>
 <tr><td><a href="/build/architecture">/build/architecture</a></td><td>Architecture</td><td><span class="tag on">live</span></td></tr>
 <tr><td><a href="/build/screens">/build/screens</a></td><td>Key screens (designs)</td><td><span class="tag on">live</span></td></tr>
+<tr><td><a href="/build/needs-rupash">/build/needs-rupash</a></td><td>Decisions waiting on you</td><td><span class="tag on">live</span></td></tr>
 </tbody></table>
 <p class="n">{s.get("done", 0)} of {s.get("total", 0)} tasks built &middot; {s.get("percent", 0)}% &middot; commit {s.get("commit", "?")}<br>
 The screens page shows <strong>designs</strong>, not working software. Nothing on this box can
 answer a question yet.</p>
+</div></body></html>""")
+
+
+NEEDS_FILE = "needs-rupash.md"
+
+
+def _needs_count() -> int:
+    """How many items are waiting on a decision. Shown on the status page so it is not
+    something anyone has to remember to go and look for."""
+    path = DOCS / NEEDS_FILE
+    if not path.exists():
+        return 0
+    return sum(
+        1 for line in path.read_text(encoding="utf-8").splitlines() if line.startswith("## ")
+    )
+
+
+@router.get("/build/needs-rupash", response_class=HTMLResponse)
+async def needs_rupash() -> HTMLResponse:
+    """Decisions waiting on a human, rendered from the markdown the repo carries."""
+    path = DOCS / NEEDS_FILE
+    if not path.exists():
+        return HTMLResponse("<h1>Nothing waiting</h1>", status_code=200)
+    import html as _html
+
+    raw = path.read_text(encoding="utf-8")
+    body: list[str] = []
+    in_table = False
+    for line in raw.splitlines():
+        esc = _html.escape(line)
+        if line.startswith("|"):
+            cells = [c.strip() for c in line.strip("|").split("|")]
+            if all(set(c) <= set("-: ") for c in cells):
+                continue
+            tag = "th" if not in_table else "td"
+            in_table = True
+            row = "".join(f"<{tag}>{_html.escape(c)}</{tag}>" for c in cells)
+            body.append(f"<tr>{row}</tr>")
+            continue
+        if in_table:
+            body.append("</table>")
+            in_table = False
+        if line.startswith("## "):
+            body.append(f"<h2>{esc[3:]}</h2>")
+        elif line.startswith("# "):
+            body.append(f"<h1>{esc[2:]}</h1>")
+        elif line.startswith("---"):
+            body.append("<hr>")
+        elif line.strip():
+            body.append(f"<p>{esc}</p>")
+    if in_table:
+        body.append("</table>")
+    html_body = "\n".join(body).replace("<tr><th>", "<table><tr><th>")
+    return HTMLResponse(f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Needs Rupash</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;600&family=Poppins:wght@600&display=swap">
+<style>
+:root{{--brand:#F47936;--ink:#231F20;--ground:#F6F4F1;--line:#E3DDD7;--dim:#7A716C}}
+@media(prefers-color-scheme:dark){{:root{{--ground:#14110F;--line:#332C25;--ink:#F5F1ED;--dim:#948A83}}}}
+body{{margin:0;background:var(--ground);color:var(--ink);font:15px/1.65 "IBM Plex Sans",system-ui,sans-serif}}
+.w{{max-width:760px;margin:0 auto;padding:48px 22px 80px}}
+h1{{font-family:Poppins,sans-serif;font-size:32px;margin:0 0 10px;letter-spacing:-.02em}}
+h2{{font-family:Poppins,sans-serif;font-size:19px;margin:34px 0 8px;letter-spacing:-.01em;border-left:3px solid var(--brand);padding-left:11px}}
+p{{color:var(--dim);max-width:64ch}}
+hr{{border:0;border-top:1px solid var(--line);margin:26px 0}}
+table{{width:100%;border-collapse:collapse;font-size:13px;margin:12px 0 18px}}
+th{{font-family:"IBM Plex Mono",monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);text-align:left;padding:7px 12px 6px 0;border-bottom:1px solid var(--line)}}
+td{{padding:8px 12px 8px 0;border-bottom:1px solid var(--line);vertical-align:top;color:var(--ink)}}
+a{{color:var(--brand);font-weight:600}}
+</style></head><body><div class="w">{html_body}
+<p style="margin-top:34px"><a href="/build">&larr; Build progress</a></p>
 </div></body></html>""")

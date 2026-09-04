@@ -32,21 +32,25 @@ services:
       retries: 3
       start_period: 30s
 
-  # Migrations run to completion before the app takes traffic. As a one-shot service
-  # rather than an app entrypoint step, so two app replicas cannot race the same migration.
-  migrate:
-    image: ${APP_IMAGE:-ghcr.io/rpsj2230/verz-brain-v2.0:latest}
-    restart: "no"
-    depends_on:
-      db:
+  db:
+        condition: service_healthy
+      cache:
         condition: service_healthy
     environment:
       DATABASE_URL: postgresql+psycopg://brain:${POSTGRES_PASSWORD}@db:5432/brain
-    command: ["alembic", "upgrade", "head"]
+      VALKEY_URL: redis://cache:6379/0
+      BRAIN_ENV: ${BRAIN_ENV:-production}
+      BRAIN_COMMIT_SHA: ${BRAIN_COMMIT_SHA:-unknown}
     deploy:
       resources:
         limits:
-          memory: 256M
+          memory: 1024M
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health/ready',timeout=4).status==200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 
   db:
     image: pgvector/pgvector:pg18

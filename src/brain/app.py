@@ -12,6 +12,7 @@ Task ids: M31.1.1, M31.1.2, M31.1.3
 
 from __future__ import annotations
 
+import asyncio
 import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -27,6 +28,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from brain.core.errors import BrainError, Outcome, to_public
 from brain.docs_routes import router as docs_router
+from brain.migrate import run_migrations
 
 log = structlog.get_logger()
 
@@ -40,6 +42,9 @@ class Settings(BaseSettings):
     valkey_url: str = ""
     #: The console and the widget only. Not a wildcard, in any environment.
     cors_origins: tuple[str, ...] = ()
+    #: Off in tests, on everywhere else. A deployment that wants migrations applied
+    #: by hand sets this false and runs `alembic upgrade head` itself.
+    run_migrations: bool = True
     request_timeout_seconds: float = 30.0
 
 
@@ -57,6 +62,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # model registry. Readiness reads app.state.ready, so an unattached dependency shows
     # as not-ready rather than as a working instance.
     app.state.ready = {}
+
+    if settings.database_url and settings.run_migrations:
+        # Before readiness, deliberately: the application must not answer a question
+        # against a schema it does not match. Concurrency between replicas is handled by
+        # an advisory lock inside run_migrations, not by hoping.
+        try:
+            applied = await asyncio.to_thread(run_migrations, settings.database_url)
+            app.state.ready["migrations"] = True
+            if applied:
+                log.info("schema migrated", revisions=applied)
+        except Exception:
+            # Left unready rather than crashed, so the failure is visible on
+            # /health/ready and in the logs instead of a container restart loop that
+            # discards the traceback.
+            log.exception("migrations failed")
+            app.state.ready["migrations"] = False
+
     yield
     log.info("shutting down")
 
