@@ -21,9 +21,16 @@ URL="${DEPLOY_URL:-https://brain.194.233.66.89.sslip.io}"
 
 echo "==> deploying to $HOST ($UUID)"
 
+# The SHA the image was built from, so /health/ready reports what is actually running
+# rather than "unknown". Coolify's .env has no value for it and the compose default fills
+# in "unknown", which makes the health endpoint disagree with the status page.
+SHA="${DEPLOY_SHA:-$(git rev-parse --short HEAD 2>/dev/null || echo unknown)}"
+echo "==> commit $SHA"
+
 ssh -o BatchMode=yes "$HOST" "
   set -eu
   cd '$DIR'
+  export BRAIN_COMMIT_SHA='$SHA'
   echo '--- pulling ---'
   docker compose pull 2>&1 | grep -E 'Pulled|Error' || true
   echo '--- recreating ---'

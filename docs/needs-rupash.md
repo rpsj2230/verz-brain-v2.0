@@ -4,7 +4,7 @@ Decisions and access I cannot resolve alone. Each has options and a recommendati
 can be settled quickly. Nothing here is blocking other work — I have moved on and will
 keep moving.
 
-Served at `/build/needs-rupash`. Last updated 2026-09-04.
+Served at `/build/needs-rupash`. Last updated 2026-09-04, overnight session.
 
 ---
 
@@ -81,7 +81,31 @@ Coolify API token crossing plain HTTP (see item 1) or an SSH key held by GitHub.
 
 ---
 
-## 5. Local PostgreSQL for development
+## 5. Coolify's copy of the compose file is now stale
+
+Coolify stores the compose you pasted in its own database and runs from that. The repo
+version has since changed twice — the Postgres 18 volume path, and removing the `migrate`
+service now that migrations run inside the application.
+
+The volume fix you already applied by hand. The migrate removal has not been, so a
+`migrate` container is still created on every deploy. It exits 0 and does no harm — the
+app migrates itself under an advisory lock and the second attempt finds nothing to do —
+but it will keep showing as a red "Exited" beside three healthy services.
+
+I am blocked from writing to Coolify's database, so I cannot sync it.
+
+| Option | Effort |
+|---|---|
+| **Paste the current compose into Coolify's editor** | 1 min. Removes the red dot for good |
+| Leave it | 0. Harmless, but the red dot stays and will mislead again |
+
+The current file is `brain/docker-compose.yml` in the repo.
+
+**Recommendation: paste it next time you are in there.** Nothing depends on it.
+
+---
+
+## 6. Local PostgreSQL for development
 
 Docker Desktop needs administrator rights and WSL2, which this session does not have.
 
