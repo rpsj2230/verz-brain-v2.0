@@ -56,7 +56,13 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: brain
     volumes:
-      - brain-db:/var/lib/postgresql/data
+      # PostgreSQL 18 changed this. Earlier images took the volume at
+      # /var/lib/postgresql/data; 18+ expects it one level up at /var/lib/postgresql and
+      # keeps data in a major-version subdirectory, so that pg_upgrade --link can work
+      # without crossing a mount boundary. Mounting the old path makes 18 refuse to start
+      # with "there appears to be PostgreSQL data in /var/lib/postgresql/data (unused
+      # mount/volume)" — which reads like corruption but is only a path convention change.
+      - brain-db:/var/lib/postgresql
     # Not published to the host. Nothing outside this compose project reaches the
     # database, which matters more than usual on a box with no firewall.
     expose:
