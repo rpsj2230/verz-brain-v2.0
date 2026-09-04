@@ -81,13 +81,33 @@ def test_migrations_can_be_turned_off(monkeypatch: pytest.MonkeyPatch) -> None:
     assert not called
 
 
-def test_a_successful_migration_marks_the_app_ready(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_successful_migration_is_recorded_separately_from_the_pool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Migrations and reachability are two checks, not one.
+
+    A database that accepted the migration and is now unreachable is a different failure
+    from one that rejected it, and readiness has to be able to say which.
+    """
     monkeypatch.setattr("brain.app.run_migrations", lambda _url: ["0001"])
-    app = create_app(Settings(env="development", database_url="postgresql://u:p@h/d"))
+    app = create_app(Settings(env="development", database_url="postgresql://u:p@127.0.0.1:1/d"))
+    with TestClient(app) as c:
+        checks = c.get("/health/ready").json()["checks"]
+        assert checks["migrations"] is True
+        # the host is deliberately unreachable, so this is the honest answer
+        assert checks["database"] is False
+
+
+def test_an_unreachable_database_fails_readiness(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The check runs a statement rather than only opening a connection: PgBouncer will
+    accept a connection it cannot fulfil, so connecting proves the pooler is alive and
+    nothing about the database behind it."""
+    monkeypatch.setattr("brain.app.run_migrations", lambda _url: [])
+    app = create_app(Settings(env="development", database_url="postgresql://u:p@127.0.0.1:1/d"))
     with TestClient(app) as c:
         r = c.get("/health/ready")
-        assert r.status_code == 200
-        assert r.json()["checks"]["migrations"] is True
+        assert r.status_code == 503
+        assert r.json()["status"] == "degraded"
 
 
 # ------------------------------------------------------------- regression

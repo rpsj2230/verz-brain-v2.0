@@ -29,6 +29,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from brain.core.errors import BrainError, Outcome, to_public
 from brain.docs_routes import router as docs_router
 from brain.migrate import run_migrations
+from brain.session import (
+    check_reachable,
+    dispose,
+    make_app_engine,
+    make_session_factory,
+)
 
 log = structlog.get_logger()
 
@@ -102,8 +108,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             log.exception("migrations failed")
             app.state.ready["migrations"] = False
 
-    yield
-    log.info("shutting down")
+    if settings.database_url:
+        # The pool is attached after migrations, so a replica never serves against a
+        # schema the migration is still changing.
+        app.state.db_engine = make_app_engine(settings.database_url)
+        app.state.db_sessions = make_session_factory(app.state.db_engine)
+        app.state.ready["database"] = await check_reachable(app.state.db_engine)
+    else:
+        app.state.db_engine = None
+        app.state.db_sessions = None
+
+    try:
+        yield
+    finally:
+        # Drain before the socket closes. Uvicorn stops accepting first, so in-flight
+        # requests finish against a live pool rather than a disposed one.
+        log.info("shutting down")
+        await dispose(getattr(app.state, "db_engine", None))
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
