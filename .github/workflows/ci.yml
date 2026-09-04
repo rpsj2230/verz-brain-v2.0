@@ -103,6 +103,13 @@ jobs:
   stack:
     name: The whole stack starts
     runs-on: ubuntu-latest
+    # Job level, not step level. Set per-step, the later `docker compose exec` calls run
+    # without POSTGRES_PASSWORD and compose resolves it to an empty string - which looks
+    # like the migrations never ran rather than like a missing variable.
+    env:
+      APP_IMAGE: brain:ci
+      POSTGRES_PASSWORD: ci-test-password
+      BRAIN_ENV: staging
     steps:
       - uses: actions/checkout@v4
       - name: Build the image the way production builds it
@@ -113,10 +120,6 @@ jobs:
         # never copied the migrations. Both are invisible to lint, types, tests and
         # sweeps, because the compose file is valid YAML pointing at a real image.
         # Only starting it finds them.
-        env:
-          APP_IMAGE: brain:ci
-          POSTGRES_PASSWORD: ci-test-password
-          BRAIN_ENV: staging
         run: |
           docker compose up -d --wait --wait-timeout 180 || {
             echo "::error::stack did not come up"
@@ -136,7 +139,14 @@ jobs:
         # The app reports ready only when migrations succeeded, so this asserts the
         # schema exists rather than trusting the health check alone.
         run: |
-          docker compose exec -T db psql -U brain -d brain -tAc             "select count(*) from pg_namespace where nspname in ('auth','gate','agent','know','mem','obs','proj','er','ops')"             | grep -qx 9 || { echo "::error::expected 9 schemas"; exit 1; }
+          echo "--- schemas present ---"
+          docker compose exec -T db psql -U brain -d brain -tAc             "select nspname from pg_namespace where nspname not like 'pg_%' and nspname <> 'information_schema' order by 1"
+          echo "--- alembic version ---"
+          docker compose exec -T db psql -U brain -d brain -tAc             "select version_num from alembic_version" || echo "(no alembic_version table)"
+          echo "--- app startup log ---"
+          docker compose logs app --tail 25
+          n=$(docker compose exec -T db psql -U brain -d brain -tAc             "select count(*) from pg_namespace where nspname in ('auth','gate','agent','know','mem','obs','proj','er','ops')" | tr -d '[:space:]')
+          [ "$n" = "9" ] || { echo "::error::expected 9 schemas, found $n"; exit 1; }
           echo "9 schemas present"
       - name: The documents are served
         run: |
