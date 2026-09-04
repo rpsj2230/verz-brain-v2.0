@@ -47,11 +47,14 @@ echo "==> live"
 # Split on commas first. Matching commit and percent in one pattern picked up
 # commit_subject instead, because .* is greedy — and it reported 0% while the real
 # figure was 8%, which is exactly the kind of wrong number this script exists to avoid.
+# Only the top-level figures. Every wave object also carries "done" and "percent", so
+# without the head the same fields print nine more times with per-wave values.
 curl -sk --max-time 15 "$URL/api/status.json" \
   | tr ',' '\n' \
   | sed -n -e 's/^"commit":"\([^"]*\)"$/    commit \1/p' \
            -e 's/^"done":\([0-9]*\)$/    \1 tasks done/p' \
-           -e 's/^"percent":\([0-9.]*\)$/    \1% complete/p'
+           -e 's/^"percent":\([0-9.]*\)$/    \1% complete/p' \
+  | head -3
 
 # The migrate container is expected to exit; it runs migrations and stops. Exit 0 is
 # success, anything else is a failed migration and worth seeing immediately.
