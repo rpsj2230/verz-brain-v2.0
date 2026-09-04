@@ -11,21 +11,43 @@
 
 set -e
 
+# Git hooks inherit the environment of whatever shell git was invoked from, which on
+# Windows is often not the one where uv was added to PATH. Resolve it explicitly rather
+# than assuming, or the hook fails for a reason that has nothing to do with the code.
+if command -v uv >/dev/null 2>&1; then
+  UV=uv
+else
+  for candidate in \
+    "$LOCALAPPDATA/Microsoft/WinGet/Links/uv.exe" \
+    "$LOCALAPPDATA/Microsoft/WinGet/Packages/astral-sh.uv_Microsoft.Winget.Source_8wekyb3d8bbwe/uv.exe" \
+    "$HOME/.local/bin/uv" \
+    "$HOME/.cargo/bin/uv"
+  do
+    if [ -x "$candidate" ]; then UV="$candidate"; break; fi
+  done
+fi
+
+if [ -z "$UV" ]; then
+  echo "pre-push: cannot find uv." >&2
+  echo "  Install it, or push with --no-verify and rely on CI." >&2
+  exit 1
+fi
+
 echo "pre-push: format"
-uv run ruff format --check src tests
+"$UV" run ruff format --check src tests
 
 echo "pre-push: lint"
-uv run ruff check src tests
+"$UV" run ruff check src tests
 
 echo "pre-push: types (strict)"
-uv run mypy
+"$UV" run mypy
 
 echo "pre-push: invariants"
 # These encode rules that must never break. If one fails, the push stops here.
-uv run pytest tests/invariants -q
+"$UV" run pytest tests/invariants -q
 
 echo "pre-push: sweeps"
-uv run python -m brain.ops.sweeps tool_registry
-uv run python -m brain.ops.sweeps traceability
+"$UV" run python -m brain.ops.sweeps tool_registry
+"$UV" run python -m brain.ops.sweeps traceability
 
 echo "pre-push: all gates green"
