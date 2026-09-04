@@ -41,14 +41,14 @@ def repo(tmp_path: Path) -> Path:
     git(tmp_path, "commit", "-m", "M0.1.1: first thing")
     (tmp_path / "f.txt").write_text("2")
     git(tmp_path, "add", "-A")
-    git(tmp_path, "commit", "-m", "second thing\n\nAlso closes M0.1.2 and M1.1.1.")
+    git(tmp_path, "commit", "-m", "second thing\n\nCloses: M0.1.2 M1.1.1\n")
     return tmp_path
 
 
 # ------------------------------------------------------------- extraction
 def test_ids_are_read_from_subject_and_body(repo: Path) -> None:
-    """A commit closing eight leaves lists them in the body rather than cramming them
-    into a 72-character subject, so both are read."""
+    """A commit closing eight leaves lists them on a Closes: trailer rather than cramming
+    them into a 72-character subject, so both places are read."""
     found, _ = status.closed_task_ids(repo)
     assert found == {"M0.1.1", "M0.1.2", "M1.1.1"}
 
@@ -154,7 +154,7 @@ def test_a_one_line_commit_message_is_counted(repo: Path) -> None:
 
 def test_a_body_containing_the_separator_does_not_split_the_record(repo: Path) -> None:
     """maxsplit=3 keeps the body whole, so pasted output cannot corrupt the parse."""
-    git(repo, "commit", "--allow-empty", "-m", "M0.2.1: x\n\nlog said a\x1fb about M1.1.2")
+    git(repo, "commit", "--allow-empty", "-m", "M0.2.1: x\n\nlog said a\x1fb\n\nCloses: M1.1.2\n")
     found, _ = status.closed_task_ids(repo)
     assert {"M0.2.1", "M1.1.2"} <= found
 
@@ -223,3 +223,42 @@ def test_docs_pages_are_reachable_in_production(client: TestClient) -> None:
     point is that progress is visible without asking anyone."""
     assert client.get("/build").status_code == 200
     assert client.get("/api/status.json").status_code == 200
+
+
+# ------------------------------------------------------------- regression
+def test_body_prose_does_not_claim_anything(repo: Path) -> None:
+    """Regression, found by reading my own status page on 2026-09-04.
+
+    A commit body listed ten ids under "Deliberately NOT claimed" and the parser counted
+    all ten. It has no concept of negation and cannot be given one: "not M0.6.5",
+    "M0.6.5 is not done" and "blocked: M0.6.5" are identical to a scanner, and the
+    failure is silent and in the direction that flatters.
+
+    The rule is now positional, not semantic.
+    """
+    git(repo, "commit", "--allow-empty", "-m", "tidy up\n\nStill outstanding: M1.1.2 and M0.2.1.")
+    found, _ = status.closed_task_ids(repo)
+    assert "M1.1.2" not in found
+    assert "M0.2.1" not in found
+
+
+def test_a_closes_trailer_claims(repo: Path) -> None:
+    git(repo, "commit", "--allow-empty", "-m", "some work\n\nCloses: M1.1.2, M0.2.1\n")
+    found, _ = status.closed_task_ids(repo)
+    assert {"M1.1.2", "M0.2.1"} <= found
+
+
+def test_the_subject_still_claims(repo: Path) -> None:
+    """The common case stays as it was: one id, in the subject, where it is visible in
+    every log listing."""
+    git(repo, "commit", "--allow-empty", "-m", "M1.1.2: a thing")
+    found, _ = status.closed_task_ids(repo)
+    assert "M1.1.2" in found
+
+
+def test_claimed_ids_reads_subject_and_trailer_only() -> None:
+    ids = status.claimed_ids(
+        "M0.1.1: subject",
+        "Body mentions M9.9.9 in prose.\n\nCloses: M0.1.2 M0.1.3\n",
+    )
+    assert ids == {"M0.1.1", "M0.1.2", "M0.1.3"}

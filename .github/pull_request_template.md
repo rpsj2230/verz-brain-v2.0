@@ -1,9 +1,10 @@
 # What this closes
 
-<!-- Task ids from the tracker, one per line, e.g. M0.2.4. The status page is generated
-     from these, so a task with no id here will not show as done. -->
+<!-- Leaf ids only, e.g. M0.2.4 - a parent id closes nothing. The status page is
+     generated from these, so a task with no id here does not show as done.
+     Mentioning an id anywhere else in this description claims nothing. -->
 
-- M
+Closes: M
 
 ## What changed
 

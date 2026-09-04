@@ -4,9 +4,13 @@ A task is done when a commit closing it is on `main` and CI passed. Nothing is m
 by hand, which is the only way a progress figure stays honest: a ticked checkbox is a
 claim, a merged commit is evidence.
 
-The rule is one line — a task id in a commit subject or body on `main` closes that task —
-and it has one deliberate consequence. Forgetting to write the id means the work does not
-count, which is a nuisance exactly once and then never again.
+The rule: a task id in a commit **subject**, or on a `Closes:` line, closes that task.
+Body prose closes nothing, and an ancestor id closes none of its children. Both of those
+restrictions were added after each let the number read higher than the truth.
+
+The deliberate consequence is that forgetting to write an id means the work does not
+count. That is a nuisance exactly once and then never again, and it fails in the safe
+direction.
 
 Task ids: M38.3.1, M38.3.2, M38.3.3, M38.3.4
 """
@@ -57,6 +61,30 @@ class Status(BaseModel):
     recent: list[dict[str, str]] = []
 
 
+#: Only these lines carry claims. Prose does not.
+CLOSES_RE = re.compile(r"^\s*closes:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
+
+
+def claimed_ids(subject: str, body: str) -> set[str]:
+    """Task ids a commit actually claims.
+
+    Read from the subject line and from `Closes:` lines only — never from body prose.
+
+    That restriction was added after a commit whose body listed ten ids under
+    "Deliberately NOT claimed, with the reason" and thereby claimed all ten. The parser
+    has no concept of negation and cannot be given one reliably: "not M0.6.5", "M0.6.5 is
+    not done" and "blocked: M0.6.5" all read identically to a scanner, and the failure is
+    silent and in the wrong direction.
+
+    So the rule is positional rather than semantic. A commit may discuss any id it likes
+    in its body; only the subject and an explicit trailer count.
+    """
+    ids: set[str] = set(TASK_ID_RE.findall(subject))
+    for line in CLOSES_RE.findall(body):
+        ids.update(TASK_ID_RE.findall(line))
+    return ids
+
+
 def _git(*args: str, cwd: Path | None = None) -> str:
     try:
         return subprocess.run(  # noqa: S603
@@ -72,10 +100,10 @@ def _git(*args: str, cwd: Path | None = None) -> str:
 
 
 def closed_task_ids(repo: Path, ref: str = "HEAD") -> tuple[set[str], list[dict[str, str]]]:
-    """Every task id mentioned by a commit reachable from `ref`, newest first.
+    """Every task id claimed by a commit reachable from `ref`, newest first.
 
-    Reads the whole message, not just the subject, so a commit closing eight leaves can
-    list them in the body instead of cramming them into 72 characters.
+    See claimed_ids for what counts as a claim: the subject line and `Closes:` trailers,
+    never body prose.
     """
     raw = _git("log", ref, "--pretty=format:%H%x1f%ct%x1f%s%x1f%b%x1e", cwd=repo)
     if not raw:
@@ -94,7 +122,7 @@ def closed_task_ids(repo: Path, ref: str = "HEAD") -> tuple[set[str], list[dict[
             continue
         sha, ts, subject = parts[0], parts[1], parts[2]
         body = parts[3] if len(parts) > 3 else ""
-        ids = sorted(set(TASK_ID_RE.findall(f"{subject}\n{body}")))
+        ids = sorted(set(claimed_ids(subject, body)))
         found.update(ids)
         if ids and len(recent) < 20:
             recent.append(
