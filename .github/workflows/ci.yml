@@ -100,6 +100,55 @@ jobs:
           node docs/wbs/render.js
           git diff --exit-code -- docs/tracker.html docs/wbs.json             || { echo "::error::docs/tracker.html is out of date - run node docs/wbs/render.js"; exit 1; }
 
+  stack:
+    name: The whole stack starts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the image the way production builds it
+        run: docker build -t brain:ci .
+      - name: Bring the full stack up
+        # Two bugs reached the server that every other job here passed: a Postgres 18
+        # volume path that only fails when the container starts, and a Dockerfile that
+        # never copied the migrations. Both are invisible to lint, types, tests and
+        # sweeps, because the compose file is valid YAML pointing at a real image.
+        # Only starting it finds them.
+        env:
+          APP_IMAGE: brain:ci
+          POSTGRES_PASSWORD: ci-test-password
+          BRAIN_ENV: staging
+        run: |
+          docker compose up -d --wait --wait-timeout 180 || {
+            echo "::error::stack did not come up"
+            docker compose ps
+            docker compose logs --tail 60
+            exit 1
+          }
+      - name: Readiness, not liveness
+        run: |
+          for i in $(seq 1 30); do
+            code=$(docker compose exec -T app python -c "import urllib.request;print(urllib.request.urlopen('http://127.0.0.1:8000/health/ready',timeout=4).status)" 2>/dev/null || echo 000)
+            [ "$code" = "200" ] && break
+            sleep 3
+          done
+          [ "$code" = "200" ] || { echo "::error::/health/ready returned $code"; docker compose logs --tail 60 app; exit 1; }
+      - name: Migrations actually applied
+        # The app reports ready only when migrations succeeded, so this asserts the
+        # schema exists rather than trusting the health check alone.
+        run: |
+          docker compose exec -T db psql -U brain -d brain -tAc             "select count(*) from pg_namespace where nspname in ('auth','gate','agent','know','mem','obs','proj','er','ops')"             | grep -qx 9 || { echo "::error::expected 9 schemas"; exit 1; }
+          echo "9 schemas present"
+      - name: The documents are served
+        run: |
+          for path in / /build /build/tracker /admin /api/status.json; do
+            code=$(docker compose exec -T app python -c "import urllib.request,sys;print(urllib.request.urlopen('http://127.0.0.1:8000$path',timeout=8).status)" 2>/dev/null || echo 000)
+            echo "$path -> $code"
+            [ "$code" = "200" ] || { echo "::error::$path returned $code"; exit 1; }
+          done
+      - name: Tear down
+        if: always()
+        run: docker compose down -v
+
   supply_chain:
     name: Dependency audit
     runs-on: ubuntu-latest
