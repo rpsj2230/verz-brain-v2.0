@@ -109,7 +109,12 @@ Coolify stores the compose you pasted in its own database and runs from that. Th
 version has since changed twice — the Postgres 18 volume path, and removing the `migrate`
 service now that migrations run inside the application.
 
-The volume fix you already applied by hand. The migrate removal has not been, so a
+Three changes are now outstanding, not one: the `migrate` service removed, PgBouncer
+added in front of the database, and `BRAIN_COMMIT_SHA` dropped so the image can report
+its own build. Until they are pasted across, deploys still create a `migrate` container,
+run without connection pooling, and report `commit: unknown` on /health/ready.
+
+The volume fix you already applied by hand. The rest have not been, so a
 `migrate` container is still created on every deploy. It exits 0 and does no harm — the
 app migrates itself under an advisory lock and the second attempt finds nothing to do —
 but it will keep showing as a red "Exited" beside three healthy services.

@@ -27,7 +27,10 @@ services:
       DATABASE_URL: postgresql+psycopg://brain:${POSTGRES_PASSWORD}@pgbouncer:5432/brain
       VALKEY_URL: redis://cache:6379/0
       BRAIN_ENV: ${BRAIN_ENV:-production}
-      BRAIN_COMMIT_SHA: ${BRAIN_COMMIT_SHA:-unknown}
+      # BRAIN_COMMIT_SHA is deliberately absent. The image bakes it in at build
+      # time, and a runtime environment entry would override that with whatever
+      # the deployment happens to know — which, in Coolify's case, is the literal
+      # string "unknown" resolved once at save time and never updated again.
       APP_ROLE_PASSWORD: ${APP_ROLE_PASSWORD:-}
     deploy:
       resources:
