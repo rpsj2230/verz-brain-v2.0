@@ -1,159 +1,118 @@
 # Needs Rupash
 
-Decisions and access I cannot resolve alone. Each has options and a recommendation so it
-can be settled quickly. Nothing here is blocking other work.
+Decisions and access I cannot resolve alone. Served at `/build/needs-rupash`.
 
-Served at `/build/needs-rupash`.
-
-## Session summary
-
-**Wave 0 is at 66%** — 85 of 129 tasks. The remaining 44 are mostly future-wave work
-(staging, wave-close rituals, the Lark digest) plus six OpenBao tasks that need OpenBao
-deployed and two blocked items listed below.
-
-Five bugs found and fixed, three of them in my own work:
-
-- **The entitlement type never checked expiry.** A contractor whose contract ended
-  yesterday, grants still on file, was granted access. Found by the permission canaries on
-  their first run — the entire reason for writing tests whose correct answer is a refusal.
-- **The app never ran migrations.** `Settings` read `BRAIN_DATABASE_URL` while compose
-  provided `DATABASE_URL`. Found nothing, skipped migrations, reported healthy. Found by
-  the new CI job that starts the whole stack. There is now a configuration check that
-  refuses to bind a port on a missing required setting.
-- **The progress number was inflated, twice.** A parent id closed every leaf beneath it,
-  so `M0.6` claimed connector cassettes that were not written. Then my correction listed
-  ten ids under "deliberately NOT claimed" and claimed all ten. Both rules are strict now:
-  exact leaf ids, and only in the subject or a `Closes:` trailer. The number is lower than
-  it was and it is now true.
-- **The compose was corrupted three times** by substring surgery on YAML — most recently
-  `"  cache:"` matching inside a `depends_on` block. I stopped editing it that way.
-- **The image reported `commit: unknown`.** Coolify resolves `${VAR:-default}` at save
-  time and bakes the literal in, so no runtime variable could override it. The image now
-  carries its own commit as a build argument.
-
-Built: the database layer with PgBouncer, migrations at startup under an advisory lock,
-worker sizing read from the container's own cgroup limits, a request deadline, cursor
-pagination, per-environment configuration checks, the synthetic company with canaries,
-twenty golden questions, ten injection payloads, and nine connector cassettes.
+**All five open items were answered on 5 September.** Four are done; one is deliberately
+left alone. What follows records what changed and why, so the reasoning outlives the
+conversation.
 
 ---
 
-## 1. Coolify's admin panel is on plain HTTP, publicly
+## 1. Coolify on plain HTTP — FIXED
 
-**Severity: highest thing on this list.**
+You said leave it, but fix it if I could. I could.
 
-`http://194.233.66.89:8000/login` answers **200 from the open internet**. Your Coolify
-password crosses the network unencrypted every time you sign in, and Coolify controls
-every container on that box — including the live `verz-brain-platform`.
+**The panel is now at https://coolify.194.233.66.89.sslip.io** with a real Let's Encrypt
+certificate, valid to 3 December. **Plain HTTP on port 8000 is closed.**
 
-This is not about our pipeline; it is true whether or not we automate anything.
+I was wrong about something here, and being wrong changed the answer. I had told you
+sslip.io could not get a real certificate, having tested one of your apps and found
+Traefik's self-signed default. That app was simply configured for `http://`;
+`brain.194.233.66.89.sslip.io` has had a genuine Let's Encrypt certificate all along. No
+domain purchase was needed after all.
 
-| Option | Effort | Result |
-|---|---|---|
-| **Point a domain at Coolify** (e.g. `coolify.verzdesign.com`) | ~15 min, mostly DNS | Real HTTPS via Let's Encrypt. Fixes it properly |
-| Restrict port 8000 in ufw to your IP | ~5 min | Closes public exposure, still plaintext for you |
-| Leave it | 0 | Password keeps crossing in clear |
+Two details worth keeping:
 
-**Recommendation: the domain.** It also lets deploys be automated later over HTTPS, which
-is currently the only reason they are not.
+- **`ufw deny 8000` would have done nothing.** Docker publishes the port to `0.0.0.0` and
+  inserts its own iptables rules ahead of ufw, so the packet never reaches ufw. The block
+  lives in the `DOCKER-USER` chain, which Docker leaves alone for exactly this.
+- **The rule survives a reboot** via a small systemd unit. Worth knowing: the pre-existing
+  block on port 5003, belonging to your other project, does **not** — nothing persists it,
+  so it disappears on the next restart. That is yours to decide about; I left it alone
+  rather than quietly managing another project's firewall.
+
+The ufw rule I removed was labelled `TEMPORARY - Coolify UI, close when GitHub source is
+connected`, so this was always the intent.
+
+To reopen the plain port if you ever need it:
+`iptables -D DOCKER-USER -p tcp -m conntrack --ctorigdstport 8000 -j DROP`
+
+Everything is in `ops/vps/`.
 
 ---
 
-## 2. AnyGen — DECIDED 2026-09-05: replace
+## 2. AnyGen — DECIDED: replace
 
-Answered. The Company Brain replaces AnyGen for Verz internally.
+M37 now carries a second migration. **29 tasks, finish moves 6 Oct to 7 Oct.** One day to
+replace an entire second system.
 
-M37 now carries a second migration, since it previously accounted only for the v1 Company
-Brain. **29 new tasks; the finish moves from 6 Oct to 7 Oct** after splitting M37 across
-three tracks. One day, to replace an entire second system.
-
-What the decision actually changes:
-
-- **The twelve house skills come across, they are not rewritten.** `verz-master-theme`,
-  `verz-doc-letterhead`, `seo-audit` and `website-cro-audit` go first, because they are in
-  daily use and are the real test of whether import works at all.
-- **Agents are rebuilt rather than imported.** AnyGen has no ceiling and no leash, so
-  there is nothing to carry across — and every rebuilt agent starts at Shadow on writes
-  regardless of how it behaved there.
+- **The twelve house skills come across, not rewritten.** `verz-master-theme`,
+  `verz-doc-letterhead`, `seo-audit`, `website-cro-audit` go first — in daily use, and the
+  real test of whether import works at all.
+- **Agents are rebuilt.** AnyGen has no ceiling and no leash, so there is nothing to carry
+  over; each starts at Shadow on writes regardless of how it behaved there.
 - **Their adaptive learning does not transfer.** One toggle over an opaque store has no
-  honest mapping onto four tiers with a review queue. The memory files are read as
-  evidence and tier-one preferences re-derived; anything that would widen a scope is
-  discarded, because nobody approved it under our rules. Worth saying to staff before
-  cutover: the new system starts without what the old one had learned.
+  honest mapping onto four tiers with a review queue. Memory files are read as evidence and
+  tier-one preferences re-derived; anything widening a scope is discarded.
 - **Decommissioning a SaaS is not decommissioning a server.** Cancelling the subscription
-  does not revoke the OAuth grants AnyGen holds on Gmail, Drive, Calendar, Sheets and
-  Docs. Those are revoked explicitly, the app is removed from the Lark tenant rather than
-  just from groups, and anything with retention value is exported and verified restorable
-  *before* billing ends — because access ends with billing.
+  does not revoke the OAuth grants it holds on Gmail, Drive, Calendar, Sheets and Docs.
+  Access ends with billing, so exports are verified restorable first.
 
 ---
 
-## 3. Langfuse is on a box too small for it
+## 3. Langfuse — no action, and a correction
 
-`verz-langfuse-*` is running on the VPS. Langfuse documents a minimum of **11 vCPU and
-25.5 GiB**; the box has **11.7 GiB total** and about 4.5 GiB already in use by 29
-containers.
+You said to go ahead and install it. **It is already installed and running** on the box:
+`verz-langfuse-server` and `verz-langfuse-db`, up several days. My note was not asking
+whether to install it; it was flagging that it runs well under its documented minimum of
+11 vCPU and 25.5 GiB, on a box with 11.7 GiB in total.
 
-It is not falling over, but it is running well under its stated floor, and our stack now
-sits beside it. This is your other project, so I have not touched it.
+You are right that this is fine at your traffic. Nothing to do.
 
-**Recommendation: worth a look independently of this build.** If observability matters
-later, it needs its own host.
+Connecting *our* system to it is separate work and belongs in **M27**, wave 3, with the
+rest of observability. It is in the plan already.
 
 ---
 
-## 4. Should deploys happen automatically on every push?
+## 4. Automatic deploys — NOW GENUINELY ON
 
-Right now I deploy by running `ops/deploy.sh` over SSH after CI goes green. That works and
-needs nothing from you.
+You said "I see you have done this as well". It was not done, and it is worth being precise
+about why it looked done: the Deploy workflow's Coolify step printed `secrets not set` and
+exited **0** by design, so a missing secret would not resemble a broken pipeline. Every
+deploy until today was me running `ops/deploy.sh` by hand. A green run looked like a ship.
 
-Fully automatic would mean GitHub Actions triggering the deploy, which needs either a
-Coolify API token crossing plain HTTP (see item 1) or an SSH key held by GitHub.
+**It is automatic now.** A systemd timer on the VPS checks the registry every three minutes
+and deploys when the published image changes.
 
-| Option | Trade-off |
+Pulled rather than pushed, deliberately: every other route gives something outside the
+server a way in — a Coolify token over plain HTTP, or an SSH key held by GitHub. This way
+nothing new reaches the box and no credential leaves it.
+
+It compares the digest the registry serves against what the container is running. Comparing
+tags is useless, since `:latest` always equals `:latest`, and comparing build times trusts
+a clock.
+
+**cosign is installed and the signature is verified before the container starts** — a
+signature checked after the thing is live is checked too late. Verified by hand: the
+certificate binds the running image to
+`.github/workflows/deploy.yml@refs/heads/main` in your repository.
+
+History: `ssh verz-vps journalctl -u brain-deploy -n 50`
+
+---
+
+## 5. Coolify's stale compose — LEFT AS IS, as you asked
+
+Three changes remain unapplied there: the `migrate` service removed, PgBouncer added, and
+`BRAIN_COMMIT_SHA` dropped.
+
+The consequences while it stays stale, so they are not a surprise later:
+
+| What happens | Why it does not matter yet |
 |---|---|
-| **Keep as is** — I deploy after each wave | No credentials anywhere. Needs me to be running |
-| Watcher on the VPS polling the registry | No inbound access, no secrets in GitHub. Few minutes' delay |
-| GitHub Actions over SSH with a forced command | Immediate. GitHub holds a key to your server |
+| A `migrate` container is created on every deploy | Exits 0. The app migrates itself under an advisory lock |
+| The app talks to Postgres directly | No connection pooling. Fine at this scale, and the code is ready for the pooler |
+| `/health/ready` reports `commit: unknown` | The image knows its own commit; the stale compose overrides it |
 
-**Recommendation: keep as is until item 1 is fixed**, then revisit. Waves are days apart.
-
----
-
-## 5. Coolify's copy of the compose file is now stale
-
-Coolify stores the compose you pasted in its own database and runs from that. The repo
-version has since changed twice — the Postgres 18 volume path, and removing the `migrate`
-service now that migrations run inside the application.
-
-Three changes are now outstanding, not one: the `migrate` service removed, PgBouncer
-added in front of the database, and `BRAIN_COMMIT_SHA` dropped so the image can report
-its own build. Until they are pasted across, deploys still create a `migrate` container,
-run without connection pooling, and report `commit: unknown` on /health/ready.
-
-The volume fix you already applied by hand. The rest have not been, so a
-`migrate` container is still created on every deploy. It exits 0 and does no harm — the
-app migrates itself under an advisory lock and the second attempt finds nothing to do —
-but it will keep showing as a red "Exited" beside three healthy services.
-
-I am blocked from writing to Coolify's database, so I cannot sync it.
-
-| Option | Effort |
-|---|---|
-| **Paste the current compose into Coolify's editor** | 1 min. Removes the red dot for good |
-| Leave it | 0. Harmless, but the red dot stays and will mislead again |
-
-The current file is `brain/docker-compose.yml` in the repo.
-
-**Recommendation: paste it next time you are in there.** Nothing depends on it.
-
----
-
-## 6. Local PostgreSQL for development
-
-Docker Desktop needs administrator rights and WSL2, which this session does not have.
-
-Currently worked around: CI runs Postgres 18 as a service container, and I test migrations
-against a throwaway container on the VPS. That has been sufficient so far.
-
-**Recommendation: no action needed yet.** Raise it if local iteration gets slow.
+None of it blocks anything. The current file is `docker-compose.yml` in the repo whenever
+you want to paste it across.

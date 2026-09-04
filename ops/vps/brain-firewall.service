@@ -1,0 +1,14 @@
+[Unit]
+Description=Block Docker-published ports that should not be public
+# Docker flushes and rebuilds its chains on start, so this has to run afterwards or the
+# rules are wiped by the thing they are meant to constrain.
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/brain-firewall
+
+[Install]
+WantedBy=multi-user.target

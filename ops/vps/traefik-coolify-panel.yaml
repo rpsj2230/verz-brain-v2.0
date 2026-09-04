@@ -1,0 +1,33 @@
+# Serves the Coolify panel over HTTPS on a hostname, instead of plain HTTP on port 8000.
+#
+# Added as a dynamic file rather than by setting Coolify instance FQDN, because that is a
+# write to Coolify own database. Traefik loads this directory additively and watches it,
+# so this adds a route and touches no existing one.
+#
+# Port 8000 stays open; closing it is a firewall decision, not this file.
+http:
+  routers:
+    coolify-panel-https:
+      rule: "Host(`coolify.194.233.66.89.sslip.io`)"
+      entryPoints:
+        - https
+      service: coolify-panel
+      tls:
+        certResolver: letsencrypt
+    coolify-panel-http:
+      rule: "Host(`coolify.194.233.66.89.sslip.io`)"
+      entryPoints:
+        - http
+      middlewares:
+        - coolify-panel-to-https
+      service: coolify-panel
+  services:
+    coolify-panel:
+      loadBalancer:
+        servers:
+          - url: "http://coolify:8080"
+  middlewares:
+    coolify-panel-to-https:
+      redirectScheme:
+        scheme: https
+        permanent: true
