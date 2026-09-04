@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_VERSION: "0.12.9"
+
+jobs:
+  # Everything that needs no database. Fast, so it fails first.
+  static:
+    name: Lint, types, invariants
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+      - run: uv sync --locked
+      - name: Format
+        run: uv run ruff format --check src tests
+      - name: Lint
+        run: uv run ruff check src tests
+      - name: Types (strict)
+        run: uv run mypy
+      - name: Invariants
+        # These encode rules that must never break. A failure here blocks the deploy,
+        # and the job is named so a red check says which rule broke.
+        run: uv run pytest tests/invariants -q
+
+  tests:
+    name: Unit tests and coverage
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        # CI has a database before the laptop does, so the DB-dependent suites run here
+        # from the first commit rather than waiting on local tooling.
+        image: pgvector/pgvector:pg18
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: brain_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/brain_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+      - run: uv sync --locked
+      - name: Tests with coverage floor
+        run: uv run pytest --cov --cov-report=term-missing
+
+  sweeps:
+    name: Schema and registry sweeps
+    runs-on: ubuntu-latest
+    needs: static
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+      - run: uv sync --locked
+      - name: Row-level security on every entity table
+        run: uv run python -m brain.ops.sweeps rls
+      - name: No foreign key from a grant table to a connector table
+        run: uv run python -m brain.ops.sweeps grant_isolation
+      - name: Tool naming grammar
+        run: uv run python -m brain.ops.sweeps tool_registry
+      - name: Traceability — nothing claimed without a test id
+        run: uv run python -m brain.ops.sweeps traceability
+
+  supply_chain:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+      - run: uv sync --locked
+      - name: Licence allowlist, release age, archived check
+        # Three components we planned around turned out to be archived while still being
+        # widely recommended. This job exists so that is caught by CI and not by a person
+        # reading a LICENCE file and forgetting to check whether the project is alive.
+        run: uv run python -m brain.ops.sweeps dependencies

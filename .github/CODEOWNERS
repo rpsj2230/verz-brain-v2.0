@@ -1,0 +1,14 @@
+# Three files decide what every answer is allowed to contain. A change to any of them
+# gets a second pair of eyes, always — not because the author is untrusted, but because
+# a permission bug here is silent: it returns a plausible answer that is simply too wide.
+
+/src/brain/core/entitlement.py   @rupashverz
+/src/brain/core/scope.py         @rupashverz
+/src/brain/gate/                 @rupashverz
+
+# The invariant suite is the only thing standing between a refactor and a leak.
+# Weakening a test must be as deliberate as weakening the code it guards.
+/tests/invariants/               @rupashverz
+
+# CI is where the sweeps and the deploy gate live.
+/.github/workflows/              @rupashverz

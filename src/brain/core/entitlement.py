@@ -128,8 +128,6 @@ class EntitlementSet(BaseModel):
         it order-independent; without that, the same entitlement built in a different
         order would miss the cache and, worse, look like a different principal in traces.
         """
-        parts = sorted(
-            f"{g.capability.value}|{g.scope.model_dump_json()}" for g in self.grants
-        )
+        parts = sorted(f"{g.capability.value}|{g.scope.model_dump_json()}" for g in self.grants)
         digest = hashlib.sha256("\n".join(parts).encode()).hexdigest()
         return digest[:32]

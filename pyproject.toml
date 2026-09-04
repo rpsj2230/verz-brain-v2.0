@@ -49,6 +49,7 @@ ignore = [
 # architecture (denied / absent / unresolved / degraded / failed), and `raise Denied(...)`
 # is how the design is written down. Renaming them would make the code stop matching the spec.
 "src/brain/core/errors.py" = ["N818"]
+"src/brain/ops/sweeps.py" = ["N818"]  # SweepFailure reads as a result, not an error type
 
 # ---------------------------------------------------------------- mypy
 [tool.mypy]
