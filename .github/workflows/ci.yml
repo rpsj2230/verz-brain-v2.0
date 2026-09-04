@@ -113,7 +113,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build the image the way production builds it
-        run: docker build -t brain:ci .
+        run: docker build --build-arg COMMIT_SHA=ci-test -t brain:ci .
       - name: Bring the full stack up
         # Two bugs reached the server that every other job here passed: a Postgres 18
         # volume path that only fails when the container starts, and a Dockerfile that

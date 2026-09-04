@@ -71,6 +71,8 @@ jobs:
         with:
           context: .
           push: true
+          build-args: |
+            COMMIT_SHA=${{ steps.meta.outputs.sha }}
           tags: |
             ${{ env.IMAGE }}:${{ steps.meta.outputs.sha }}
             ${{ env.IMAGE }}:latest

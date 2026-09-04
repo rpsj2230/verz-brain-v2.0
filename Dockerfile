@@ -34,6 +34,14 @@ FROM python:3.13-slim-bookworm AS runtime
 RUN groupadd --system --gid 1001 brain \
  && useradd --system --uid 1001 --gid brain --shell /usr/sbin/nologin --no-create-home brain
 
+# The image carries its own identity rather than being told at runtime. Coolify resolves
+# ${VAR:-default} at save time and bakes the literal into its stored compose, so a runtime
+# variable could not be overridden by the deploy at all — /health/ready reported "unknown"
+# while the status page reported the truth. An image knowing what it is is also simply
+# more correct: the answer cannot depend on how it was started.
+ARG COMMIT_SHA=unknown
+ENV BRAIN_COMMIT_SHA=${COMMIT_SHA}
+
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
