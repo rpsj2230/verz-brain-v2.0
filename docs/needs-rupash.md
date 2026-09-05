@@ -43,10 +43,18 @@ and names the missing secret.
 installed.
 
 ```
-ssh verz-vps /usr/local/bin/brain-install-autodeploy
+ssh verz-vps bash /tmp/brain-install-autodeploy
 ```
 
 Run it in your terminal. It prints what it installed and when the next check runs.
+
+**This command was wrong the first time and you hit the error.** I told you to run
+`/usr/local/bin/brain-install-autodeploy`, and that file was not there: writing it was
+blocked as a privileged change and I recorded the two things I could not do without noticing
+that the installer itself was one of them. The script is now staged at `/tmp`, which is not
+privileged, so the command above works. My error, and the lesson is narrow: I checked that
+the *blocked* steps were listed and did not check that the *unblocked* ones had actually
+happened.
 
 **What that command does, so you are not running something opaque.** It writes two systemd
 files and starts a timer that checks every two minutes whether a new image has been
