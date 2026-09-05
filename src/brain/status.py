@@ -70,6 +70,29 @@ class Status(BaseModel):
 #: Only these lines carry claims. Prose does not.
 CLOSES_RE = re.compile(r"^\s*closes:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
 
+#: How a mistaken claim is taken back. A trailer only, never the subject line, because a
+#: subject mention is what causes the mistake this exists to correct.
+#:
+#: `M0.4.2` is the case that prompted it. A commit whose subject read "M0.4.2: mount the
+#: Postgres volume at the path 18 expects" closed that leaf. The commit was about a volume
+#: path; the leaf is `docker-compose.full.yml`, which deliberately does not exist, and an
+#: earlier commit had said in its body that it was NOT claiming it. So the plan showed a
+#: leaf as delivered because an id appeared in a sentence about something else.
+#:
+#: The alternative was to stop reading ids from subject lines at all. Measured before
+#: choosing: exactly three leaves rest on a subject-line claim, and two of them are
+#: deliberate ("M0.4.4: a seed command that refuses to run somewhere real"). Dropping the
+#: rule would have un-closed two true claims to fix one false one.
+REOPENS_RE = re.compile(r"^\s*reopens:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
+
+
+def reopened_ids(body: str) -> set[str]:
+    """Task ids a commit takes back. Trailer only; the subject cannot reopen anything."""
+    ids: set[str] = set()
+    for line in REOPENS_RE.findall(body):
+        ids.update(TASK_ID_RE.findall(line))
+    return ids
+
 
 def claimed_ids(subject: str, body: str) -> set[str]:
     """Task ids a commit actually claims.
@@ -116,6 +139,8 @@ def closed_task_ids(repo: Path, ref: str = "HEAD") -> tuple[set[str], list[dict[
         return set(), []
 
     found: set[str] = set()
+    #: Ids already settled by a newer commit. See the loop below.
+    decided: set[str] = set()
     recent: list[dict[str, str]] = []
     for entry in raw.split("\x1e"):
         # Strip line endings only, never str.strip(). Python counts \x1c through \x1f as
@@ -128,8 +153,18 @@ def closed_task_ids(repo: Path, ref: str = "HEAD") -> tuple[set[str], list[dict[
             continue
         sha, ts, subject = parts[0], parts[1], parts[2]
         body = parts[3] if len(parts) > 3 else ""
-        ids = sorted(set(claimed_ids(subject, body)))
-        found.update(ids)
+        closes = set(claimed_ids(subject, body))
+        reopens = reopened_ids(body)
+        # The most recent statement about an id wins, and `git log` walks newest first, so
+        # the first commit to mention an id decides it. Without `decided`, an old `Closes:`
+        # would put back what a newer `Reopens:` took away, and the correction would appear
+        # to work on the day it was written and silently stop working afterwards.
+        for tid in reopens - decided:
+            decided.add(tid)
+        for tid in closes - decided:
+            decided.add(tid)
+            found.add(tid)
+        ids = sorted(closes - reopens)
         if ids and len(recent) < 20:
             recent.append(
                 {

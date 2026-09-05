@@ -536,3 +536,98 @@ def test_every_leaf_appears_exactly_once_on_the_tracker() -> None:
     expected = sum(len(m["leaf_ids"]) for m in wbs["modules"])
 
     assert sum(_tracker_leaves_per_wave().values()) == expected
+
+
+# ------------------------------------------------- taking back a claim that was not true
+#
+# A leaf can be closed by mistake, because an id mentioned in a subject line closes it and a
+# subject line is a sentence about something else. `M0.4.2` is the case: a commit whose
+# subject read "M0.4.2: mount the Postgres volume at the path 18 expects" closed the leaf for
+# `docker-compose.full.yml`, a file that deliberately does not exist.
+
+
+def _message(subject: str, trailer: str) -> str:
+    """A commit message with a real blank line between subject and trailer.
+
+    Built with an explicit newline rather than written as a literal, because these
+    messages reach the file through a shell heredoc and a backslash-n has been eaten
+    three separate times in this repository. The trap is in the tooling, not the test."""
+    return subject + chr(10) + chr(10) + trailer
+
+
+def test_a_reopens_trailer_takes_an_id_back() -> None:
+    """Without this there is no way to correct a false claim except rewriting history, and
+    the plan shows work as delivered that nobody did."""
+    assert status.reopened_ids("Reopens: M0.4.2") == {"M0.4.2"}
+
+
+def test_a_subject_line_cannot_reopen_anything() -> None:
+    """Trailer only, and deliberately asymmetric with closing. A subject mention is what
+    causes the mistake this exists to correct, so letting a subject reopen would hand the
+    same loose mechanism the power to un-deliver work as well.
+
+    Delete this and "Reopens: ..." in a subject silently starts removing leaves."""
+    assert status.reopened_ids("") == set()
+    assert status.claimed_ids("Reopens: M0.4.2", "") == {"M0.4.2"}
+
+
+def test_the_newest_statement_about_an_id_is_the_one_that_counts(tmp_path: Path) -> None:
+    """`git log` walks newest first, so the first commit to mention an id settles it.
+
+    Without that, an older `Closes:` puts back what a newer `Reopens:` took away, and the
+    correction works on the day it is written and silently stops working the moment anybody
+    looks further back. That is the failure mode worth testing, because it is invisible: the
+    count is simply wrong again, with nothing saying so.
+
+    A real repository rather than a fake, because the ordering being tested is git's."""
+    import subprocess
+
+    repo = tmp_path / "r"
+    repo.mkdir()
+
+    def run(*args: str) -> None:
+        subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+
+    run("init", "-q")
+    run("config", "user.email", "t@example.com")
+    run("config", "user.name", "T")
+    (repo / "a").write_text("1", encoding="utf-8")
+    run("add", "-A")
+    run("commit", "-q", "-m", "M1.1.1: the original claim")
+    (repo / "a").write_text("2", encoding="utf-8")
+    run("add", "-A")
+    run("commit", "-q", "-m", _message("Take it back", "Reopens: M1.1.1"))
+
+    closed, _ = status.closed_task_ids(repo)
+
+    assert "M1.1.1" not in closed, "a newer Reopens was overridden by an older claim"
+
+
+def test_a_claim_after_a_reopen_closes_it_again(tmp_path: Path) -> None:
+    """The other direction, so reopening cannot become permanent. Work that was wrongly
+    marked done and is then genuinely done has to be closeable, or the correction becomes a
+    worse error than the one it fixed."""
+    import subprocess
+
+    repo = tmp_path / "r2"
+    repo.mkdir()
+
+    def run(*args: str) -> None:
+        subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+
+    run("init", "-q")
+    run("config", "user.email", "t@example.com")
+    run("config", "user.name", "T")
+    (repo / "a").write_text("1", encoding="utf-8")
+    run("add", "-A")
+    run("commit", "-q", "-m", "M1.1.1: the original claim")
+    (repo / "a").write_text("2", encoding="utf-8")
+    run("add", "-A")
+    run("commit", "-q", "-m", _message("Take it back", "Reopens: M1.1.1"))
+    (repo / "a").write_text("3", encoding="utf-8")
+    run("add", "-A")
+    run("commit", "-q", "-m", _message("Actually build it", "Closes: M1.1.1"))
+
+    closed, _ = status.closed_task_ids(repo)
+
+    assert "M1.1.1" in closed
