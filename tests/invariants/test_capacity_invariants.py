@@ -263,6 +263,49 @@ def test_an_unbudgeted_resource_is_never_admitted() -> None:
 
 
 # --------------------------------------------------- 3. per principal and per connector
+def test_a_connector_stays_usable_by_several_people_and_not_merely_by_one_more() -> None:
+    """The stronger half, and the reason it is a separate test.
+
+    `principal_share_of` clamps to `connector_limit - 1`, so "one caller cannot exhaust the
+    connector" stays literally true however large the fair share is set: at 100% the hog
+    takes everything but a single slot. The test above then passes, because it asks whether
+    one other caller gets through, and exactly one does.
+
+    One slot a minute for the rest of the company is exhaustion by any reading that matters.
+    So this asks the question the property is actually about: after a hog has used its whole
+    share, can several distinct people still be served? At the real share of a quarter, yes.
+    At 100% with the clamp, no - and that is the mutation the pair above did not catch, found
+    by setting the constant to 1.0 and watching only the constant's own test fail.
+
+    Three rather than a proportion, because it must hold for the smallest verified ceiling
+    too, and a proportion would silently become "one" there and stop testing anything.
+    """
+    for source in SOURCE_CEILINGS:
+        hog = source_limits(source.name, principal_id="p_hog")
+        share = next(limit for limit in hog if limit.scope is LimitScope.PRINCIPAL_CONNECTOR)
+        connector = next(limit for limit in hog if limit.scope is LimitScope.CONNECTOR)
+        if connector.limit < 4:
+            # A ceiling this small serialises the company whatever the share is. That is a
+            # fact about the connector, not something a fair-share rule can fix, and
+            # asserting otherwise here would only pin the arithmetic of a degenerate case.
+            continue
+
+        state = LimiterState()
+        for offset in range(share.limit):
+            state = state.record(NOW + timedelta(seconds=offset * 0.5), hog)
+
+        at = NOW + timedelta(seconds=share.limit * 0.5)
+        served = 0
+        for i in range(3):
+            other = source_limits(source.name, principal_id=f"p_other_{i}")
+            if check(now=at, limits=other, state=state).allowed:
+                served += 1
+                state = state.record(at, other)
+        assert served == 3, (
+            f"{source.name}: one caller's share left room for only {served} other people"
+        )
+
+
 def test_one_principal_cannot_exhaust_a_connector_for_everybody() -> None:
     """The first half of the pair, over every verified source.
 
