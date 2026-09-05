@@ -36,6 +36,7 @@ from brain.session import (
     make_app_engine,
     make_session_factory,
 )
+from brain.tools.startup import build_registry
 
 log = structlog.get_logger()
 
@@ -74,6 +75,11 @@ class Settings(BaseSettings):
     langfuse_host: str = ""
     langfuse_public_key: str = ""
     langfuse_secret_key: str = ""
+    #: Which system the built-in row tools read from, and therefore the first half of every
+    #: tool name in the catalogue. `RowTool` refuses an empty source, because two systems'
+    #: record ids collide by coincidence of integers, so this carries a real default rather
+    #: than an empty string that would fail startup on a fresh install.
+    tool_source: str = "local"
     #: The console and the widget only. Not a wildcard, in any environment.
     cors_origins: tuple[str, ...] = ()
     #: Off in tests, on everywhere else. A deployment that wants migrations applied
@@ -168,6 +174,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     else:
         app.state.db_engine = None
         app.state.db_sessions = None
+
+    # Built and frozen here, and this is the first process that has ever built one. Every
+    # rule in `brain.tools.registry` runs at registration and `freeze` runs the ones that
+    # need the whole set, so a registry nobody constructs is a set of rules that has never
+    # refused anything. See `brain.tools.startup`.
+    #
+    # It raises rather than degrading, which is the opposite of how everything else in this
+    # lifespan handles a failure, and deliberately: an unreachable database leaves an
+    # instance that answers what it can, whereas a catalogue that failed its own checks is
+    # a set of tools nobody validated being offered to a model.
+    app.state.tools = build_registry(source=settings.tool_source)
+    app.state.ready["tools"] = True
+    log.info("tool registry frozen", tools=len(app.state.tools))
 
     try:
         yield
