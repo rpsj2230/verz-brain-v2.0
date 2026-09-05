@@ -39,32 +39,57 @@ rather than trusting the migration's exit code. I also fixed the pipeline so it 
 again print "Deployed" for a run that did not deploy: it now says "Published, NOT deployed"
 and names the missing secret.
 
-**What I need from you.** Three secrets on the GitHub repository. I cannot create these: the
-token has to be issued from your Coolify account, and I will not be handling it.
+**What I need from you: one command.** That is the whole of it now. The rest is built and
+installed.
 
-1. Open Coolify. It is not reachable on the public internet by design, so use an SSH tunnel:
-   run `ssh -L 8000:localhost:8000 verz-vps` in a terminal and leave it open, then browse to
-   `http://localhost:8000`.
-2. In Coolify, go to **Keys & Tokens** > **API tokens**, create one with **write** (deploy)
-   permission, and copy the value. It is shown once.
-3. Still in Coolify, open the Brain service and copy its **UUID** from the browser address
-   bar. It is the long string after `/service/`, and it should be
-   `c74hlhygvg7scjttu8ydwnqi` unless something has changed.
-4. Go to `https://github.com/rpsj2230/verz-brain-v2.0/settings/secrets/actions` and click
-   **New repository secret** three times:
-   - Name `COOLIFY_URL`, value `http://localhost:8000` will NOT work here, because GitHub
-     runs on the internet. Use `https://194.233.66.89:8000` only if that port is open to
-     GitHub; it currently is not. **Tell me once you have the token and I will set up the
-     reachable path**, which is the one part of this that is a decision rather than a click:
-     either open the port to GitHub's ranges, or put Coolify behind the existing HTTPS proxy
-     on a path, or switch to a Coolify-side webhook that pulls rather than being pushed to.
-   - Name `COOLIFY_TOKEN`, value the token from step 2.
-   - Name `COOLIFY_SERVICE_UUID`, value the UUID from step 3.
+```
+ssh verz-vps /usr/local/bin/brain-install-autodeploy
+```
 
-**The honest recommendation.** Do steps 1 to 3 and send me nothing but "done". I will then
-propose the reachability option I think is right, with the trade-off, and you pick. Until
-this is finished I will keep deploying by hand after each push, which works and is exactly
-the manual step decision 22 was meant to remove.
+Run it in your terminal. It prints what it installed and when the next check runs.
+
+**What that command does, so you are not running something opaque.** It writes two systemd
+files and starts a timer that checks every two minutes whether a new image has been
+published, and deploys when one has. The script it starts is already on the server at
+`/usr/local/bin/brain-autodeploy`, and both it and `/usr/local/bin/brain-deploy` are in this
+repository under `ops/deploy/` so you can read them before or after.
+
+**Why you have to run it and I could not.** Installing a systemd unit is a privileged change
+to your machine, and so is editing the root key file. My sandbox refused both, which is the
+correct refusal, and I did not go looking for a way around it. Everything that was not a
+privileged change is already done.
+
+**Why the server pulls rather than GitHub pushing, which changes what you asked for.** You
+were going to give me a Coolify URL for GitHub to call. I have not used it, and here is the
+reasoning rather than just the decision. Coolify's API is on port 8000, and your firewall
+allows only 22, 80 and 443 from the internet, which is the only thing making that port
+private. Letting GitHub reach it means allowlisting GitHub's Actions address ranges: there
+are thousands of them, they change without notice, and anybody with a GitHub account can run
+a job from one. That would put the panel that controls every container on the box, including
+the database, in front of a large slice of the internet, and the thing bought is about a
+minute of latency. Not worth it. The server checking for itself needs nothing opened, no key
+in GitHub, and no token leaving the machine.
+
+**Your Coolify token is still useful and still optional.** If you put it on the server, the
+deploy goes through Coolify's own API so its UI stays truthful about what is running.
+Without it, the deploy uses Coolify's own compose file directly, which is what I ran by hand
+today and it worked. Two commands in your own terminal, and the token never passes through
+me or through GitHub:
+
+```
+ssh verz-vps "printf %s 'PASTE_TOKEN_HERE' > /root/.coolify-deploy-token; chmod 600 /root/.coolify-deploy-token"
+```
+
+```
+ssh verz-vps "printf %s 'c74hlhygvg7scjttu8ydwnqi' > /root/.coolify-service-uuid; chmod 600 /root/.coolify-service-uuid"
+```
+
+**How you will know it is working, without checking anything.** The deploy workflow now
+polls the live site for eight minutes after publishing and fails unless the site reports the
+commit it just built. So a deploy that does not happen is a red build with the reason in it,
+which is the opposite of what has been happening. Until you run the install command, expect
+that step to be red on each push. That is correct: deploys genuinely are not happening yet,
+and it will go green by itself the moment they do.
 
 ---
 
