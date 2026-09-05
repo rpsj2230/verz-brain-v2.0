@@ -184,7 +184,12 @@ def test_a_parser_cannot_be_reached_without_verification() -> None:
 
     The same argument `ProjectedCatalogue` makes with its constructor token."""
     parsed: list[bytes] = []
-    handle = verified_handler(SECRET, lambda b: parsed.append(b) or b, seen=SeenNonces())
+
+    def record(body: bytes) -> bytes:
+        parsed.append(body)
+        return body
+
+    handle = verified_handler(SECRET, record, seen=SeenNonces())
 
     with pytest.raises(WebhookRefusedError):
         handle(BODY, "0" * 64, STAMP, "n1", NOW)
@@ -196,8 +201,15 @@ def test_a_parser_cannot_be_reached_without_verification() -> None:
 
 def test_verify_raises_rather_than_returning_a_boolean() -> None:
     """A function returning False is one whose result can be ignored by writing
-    `verify(...)` on a line by itself, and that line reads as a check."""
-    assert verify(**_ok()) is None  # type: ignore[arg-type]
+    `verify(...)` on a line by itself, and that line reads as a check.
+
+    Asserted on the annotation rather than on a call: mypy can already prove the call
+    returns None, so `assert verify(...) is None` is a statement the type checker rejects as
+    pointless - and it would keep passing if the return type changed to `bool` with a
+    `return True` at the end."""
+    import inspect
+
+    assert inspect.signature(verify).return_annotation in (None, "None")
 
 
 def test_a_real_platform_timestamp_shape_is_accepted() -> None:

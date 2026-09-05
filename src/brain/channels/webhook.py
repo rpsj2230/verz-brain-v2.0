@@ -97,6 +97,30 @@ def sign(secret: str, timestamp: str, body: bytes) -> str:
     return hmac.new(secret.encode("utf-8"), material, hashlib.sha256).hexdigest()
 
 
+def assert_raw_bytes(body: object) -> None:
+    """Refuse anything that is not the bytes that arrived.
+
+    Takes `object` rather than `bytes` on purpose. Written inline inside `verify`, whose
+    parameter is annotated `bytes`, mypy proves the check dead and asks for it to be
+    deleted - and it is very much alive: the caller is a web framework handing over
+    whatever arrived, and that untyped call site is the only one an attacker can reach.
+    Widening the parameter here makes the check something the type checker can see the
+    point of, rather than something suppressed with an ignore comment that the next person
+    removes.
+
+    The check itself is the important half. The signature covers the raw bytes, so
+    verifying a parsed object verifies something the sender never signed: JSON has no
+    canonical form, and an attacker who can make the parse and the re-serialisation differ
+    has a body that verifies as one thing and is read as another.
+    """
+    if not isinstance(body, bytes | bytearray):
+        msg = (
+            "the signature covers the raw bytes, not a parsed object; verifying a "
+            "re-serialisation verifies something the sender never signed"
+        )
+        raise TypeError(msg)
+
+
 def verify(
     *,
     secret: str,
@@ -118,12 +142,7 @@ def verify(
     Raises rather than returning a bool. A function returning False is one whose result can
     be ignored by writing `verify(...)` on a line by itself, and that line reads as a check.
     """
-    if not isinstance(body, bytes | bytearray):
-        msg = (
-            "the signature covers the raw bytes, not a parsed object; verifying a "
-            "re-serialisation verifies something the sender never signed"
-        )
-        raise TypeError(msg)
+    assert_raw_bytes(body)
 
     try:
         sent_at = datetime.fromtimestamp(int(timestamp), tz=now.tzinfo)
