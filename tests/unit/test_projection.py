@@ -694,5 +694,12 @@ def test_the_table_is_in_the_package_tuple() -> None:
     from brain.db import Base
     from brain.tables import TABLES_IN_DEPENDENCY_ORDER
 
-    assert TABLES_IN_DEPENDENCY_ORDER[-1] == "proj.record"
+    # Membership and position relative to what it depends on, not an index. This asserted
+    # `[-1] == "proj.record"`, which means "last" and broke the moment the next table was
+    # appended, in a test about the projection that had nothing to say about the new one. The
+    # order matters because a downgrade runs it backwards; being at the end does not.
+    assert "proj.record" in TABLES_IN_DEPENDENCY_ORDER
+    assert TABLES_IN_DEPENDENCY_ORDER.index("proj.record") > TABLES_IN_DEPENDENCY_ORDER.index(
+        "auth.principal"
+    ), "a projected record is keyed by a source and must be built after the principals it maps to"
     assert set(TABLES_IN_DEPENDENCY_ORDER) == set(Base.metadata.tables)

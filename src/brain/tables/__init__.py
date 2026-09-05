@@ -42,6 +42,10 @@ Task ids: M0.2.3, M1.1.5, M1.2.1, M1.2.2, M1.4.1, M1.4.3, M4.2.1, M24.1.1, M31.3
 
 from __future__ import annotations
 
+# Imported for its side effect: `know.chunk` is declared in the module that reasons about
+# how it is searched, so importing the package has to be what registers it. Without this
+# line the table is absent from `Base.metadata` and autogenerate proposes dropping it.
+from brain.knowledge import search as _search  # noqa: F401
 from brain.tables.audit import AuditEntryRow
 from brain.tables.chat import ConversationRow, MessageRole, MessageRow
 from brain.tables.config import SettingRow, SettingType
@@ -102,6 +106,9 @@ TABLES_IN_DEPENDENCY_ORDER: tuple[str, ...] = (
     "auth.directory_role_grant",
     # 0008_projection
     "proj.record",
+    # Last, because it references nothing and nothing references it: a chunk names its
+    # document by id and the document plane owns no foreign key into the row plane.
+    "know.chunk",
 )
 
 __all__ = [

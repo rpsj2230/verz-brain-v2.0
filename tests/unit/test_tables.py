@@ -77,6 +77,7 @@ MIGRATION_REGISTRY = VERSIONS / "0004_capability_registry_and_config.py"
 MIGRATION_CHAT = VERSIONS / "0005_chat.py"
 MIGRATION_DIRECTORY = VERSIONS / "0006_directory_role_grant.py"
 MIGRATION_PROJECTION = VERSIONS / "0008_projection.py"
+MIGRATION_SEARCH = VERSIONS / "0009_search.py"
 
 #: The seven tables 0002 built, in the order it builds them. Written out here rather than
 #: read from `brain.tables.TABLES_IN_DEPENDENCY_ORDER`, which now covers all eighteen: a
@@ -119,6 +120,10 @@ DIRECTORY_TABLES: tuple[str, ...] = ("auth.directory_role_grant",)
 #: a bounded copy of somebody else's record, capped at twelve fields.
 PROJECTION_TABLES: tuple[str, ...] = ("proj.record",)
 
+#: The document plane. One table, declared in `brain.knowledge.search` beside the
+#: reasoning about how it is searched rather than in this package with the other models.
+KNOWLEDGE_TABLES: tuple[str, ...] = ("know.chunk",)
+
 ALL_TABLES = (
     CORE_TABLES
     + RESOLVER_TABLES
@@ -126,6 +131,7 @@ ALL_TABLES = (
     + CHAT_TABLES
     + DIRECTORY_TABLES
     + PROJECTION_TABLES
+    + KNOWLEDGE_TABLES
 )
 
 
@@ -810,12 +816,14 @@ def test_the_migration_creates_exactly_the_tables_the_models_declare() -> None:
     chat = migration_module(MIGRATION_CHAT)
     directory = migration_module(MIGRATION_DIRECTORY)
     projection = migration_module(MIGRATION_PROJECTION)
+    search = migration_module(MIGRATION_SEARCH)
     assert core.TABLES == CORE_TABLES
     assert resolver.TABLES == RESOLVER_TABLES
     assert registry.TABLES == REGISTRY_TABLES
     assert chat.TABLES == CHAT_TABLES
     assert directory.TABLES == DIRECTORY_TABLES
     assert projection.TABLES == PROJECTION_TABLES
+    assert search.TABLES == KNOWLEDGE_TABLES
     # The package tuple is the migrations end to end. Stated as an equality rather than as a
     # set comparison, because the order is what a downgrade depends on.
     end_to_end = (
@@ -825,6 +833,7 @@ def test_the_migration_creates_exactly_the_tables_the_models_declare() -> None:
         + tuple(chat.TABLES)
         + tuple(directory.TABLES)
         + tuple(projection.TABLES)
+        + tuple(search.TABLES)
     )
     assert end_to_end == tables.TABLES_IN_DEPENDENCY_ORDER
     # Every table has a migration and every migration has a model. The union is the check
@@ -836,6 +845,7 @@ def test_the_migration_creates_exactly_the_tables_the_models_declare() -> None:
         set(chat.TABLES),
         set(directory.TABLES),
         set(projection.TABLES),
+        set(search.TABLES),
     )
     assert set().union(*every) == set(metadata.tables)
     assert sum(len(s) for s in every) == len(set().union(*every)), "a table is created twice"
