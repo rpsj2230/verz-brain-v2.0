@@ -585,6 +585,30 @@ they are, and it belongs with the approval work rather than here.
 
 ---
 
+**FIXED (2026-09-06), not merely deferred.** The card-building code is written and this gap
+is closed by its shape rather than by a check somebody has to remember.
+
+The obvious design was the bug. `card_for(suspension)` rendering the suspended action's
+artefact is exactly the leak: that artefact was built from what the *asker* could see and it
+carries values. So the builder takes no suspension at all. It takes a body plus the
+*approver's* own entitlements, and refuses unless the body was built at the approver's
+reach. What survives of the original request is a suspension id and an action digest: two
+identifiers, and no value from anybody's data.
+
+Two further guards fell out of it. The card records who it was rendered for and refuses a
+press from anybody else, which closes the same leak in the other direction: a card
+forwarded to a colleague is inert. And a structural test pins the card's field list, so an
+`artefact` field cannot quietly return later for a caller who wants a richer card.
+
+I verified this myself rather than accepting the report: I broke the approver-reach
+comparison and confirmed the named test fails.
+
+**What is still true from the original note.** Approvals are still not wired to a screen, so
+nothing was ever exposed. The difference is that when they are wired, the leak cannot be
+reintroduced by writing the natural code.
+
+---
+
 ## 13. Can a leash rule say "supervise everywhere except maintenance"? — DECIDED: strictest wins
 
 **The plain problem: today it cannot, and the safe choice I made is probably not the one
