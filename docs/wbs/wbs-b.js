@@ -63,7 +63,7 @@ module.exports = [
  {n:"Abuse detection",s:["Anomalous volume detection per principal","Repeated permission-denied pattern alerting","Automated traffic identification and exclusion from metrics"]}
 ]},
 {id:"M24",name:"Audit, compliance, legal hold",wave:1,tasks:[
- {n:"Audit log",s:["Hash-chained append-only audit table","Verification job proving the chain is unbroken","Every grant, deny, leash change, merge, publish and break-glass recorded","Actor, timestamp, before and after state, reason","Client-visible audit view with filters","Export in a defensible format"]},
+ {n:"Audit log",s:["Hash-chained append-only audit table","Verification job proving the chain is unbroken","Every grant, deny, leash change, merge, publish and break-glass recorded","Actor, timestamp, changed field names, reason code; never field values","Client-visible audit view with filters","Export in a defensible format"]},
  {n:"Compliance surfaces",s:["Legal hold flag suspending deletion","Sensitive-topic interception for HR, grievance and whistleblowing","Data processing record per connector","PDPA breach assessment workflow with the correct clock"]}
 ]},
 {id:"M25",name:"Retention, deletion, export, DSAR",wave:4,tasks:[

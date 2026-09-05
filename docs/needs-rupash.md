@@ -2,7 +2,7 @@
 
 Decisions and access I cannot resolve alone. Served at `/build/needs-rupash`.
 
-**Seven new items are open, numbered 6 to 12 below.** They came out of building the audit
+**Five of the seven were decided on 5 September and are marked below.** Two remain open: **8** and **9**, both rewritten in plainer words because the first versions led with the mechanism rather than with what is at stake, which is not a decidable thing to put in front of somebody. They came out of building the audit
 ledger, the routing matrix and the redaction walker, where the specification asks for two
 things that cannot both be true. Each one has my recommendation attached, so most should
 take you a minute.
@@ -20,7 +20,7 @@ later, which is why they are here rather than in a footnote.
 
 # Open
 
-## 6. The audit ledger cannot record before-and-after values
+## 6. The audit ledger cannot record before-and-after values — DECIDED: field names only
 
 **The conflict.** M24.1.4 asks the ledger to record "actor, timestamp, before and after
 state, reason". But before-and-after state *is* field values, and the architecture says
@@ -46,7 +46,7 @@ retention and its own access rules, which is real work and belongs in M25, not M
 
 ---
 
-## 7. The audit view will want to show a capability, and the ledger redacts it
+## 7. The audit view will want to show a capability, and the ledger redacts it — DECIDED: capabilities allowed in the ledger
 
 **The conflict.** The ledger's redaction rule is an allowlist: a value survives only if it
 is a field name, a list of field names, a digest, or a boolean. A capability string like
@@ -72,61 +72,84 @@ the ledger or a screen that reads two sources and hopes they agree.
 
 ## 8. Where does the audit anchor live?
 
-**The problem, plainly.** The ledger is a hash chain: each entry carries a digest of the
-one before, so altering an old entry breaks every entry after it. That catches tampering.
+**The plain problem: someone could delete the last few days of the security log and nothing
+would notice.**
 
-It does **not** catch deletion from the end. Remove the newest three entries and what
-remains verifies perfectly, because a chain has no idea how long it was meant to be.
+The audit log records who gave whom access to what, and who looked at what. It is the thing
+you would hand a client or a regulator to prove the system behaved.
 
-**The fix** is to write the newest digest somewhere the database administrator does not
-control, on a schedule. Then "the ledger ends at entry 900 but the anchor from Tuesday says
-it reached 1,240" is a detectable fact rather than an invisible one.
+It is built so **old entries cannot be edited**. Think of a receipt book where every page
+writes down a summary of the page before it. Tear out page 50 and page 51 no longer matches,
+so the tampering is obvious.
 
-**The code is ready** — `covers_anchor()` exists and there is a test showing it closing the
-gap. What does not exist is the place to put the anchor.
+**But you can still tear off the last few pages.** If someone deletes the newest twenty
+entries, everything remaining still matches perfectly. The book has no idea how long it was
+meant to be. And the newest entries are exactly the ones someone covering their tracks would
+want gone.
 
-**Options, cheapest first:**
+**The fix is simple.** Every so often, write down "we are up to entry 1,240" somewhere the
+person who administers the database cannot reach. Later, if the log only goes up to 1,220,
+you know twenty entries went missing. Without that note, there is no way to tell.
+
+**What you are deciding: where that note gets written.**
 
 | Where | Cost | What it protects against |
 |---|---|---|
-| A second server you control, over SSH | Nothing, we have one | A compromised application or database |
-| An object store with write-once retention (S3 Object Lock or equivalent) | A few dollars a month | The above, plus you |
-| A public timestamping authority | Free, adds a dependency | The above, plus disputes about *when* |
+| **A second server you already own** (recommended to start) | Nothing | Someone who compromises the app or the database |
+| A write-once cloud storage bucket | A few dollars a month | The above, plus a rogue administrator, plus you |
+| A public timestamping service | Free | The above, plus arguments about *when* something happened |
 
-**My recommendation:** start with the second server, since it exists and costs nothing.
-Move to write-once storage before any client contract makes a compliance promise about the
-ledger. Until an anchor exists, the verification job proves continuity but not
-completeness, and M24.1.2 stays open rather than being claimed as done.
+**My recommendation:** start with the second server, because you already have one and it
+costs nothing. Move to write-once storage before signing any client contract that makes a
+promise about audit records.
 
----
-
-## 9. Should a content-policy refusal trigger a fallback?
-
-**The architecture says yes** — it lists content-policy refusal in the closed set of things
-that cause the chain to try the next model. **I built it as no**, and this is the one place
-the code knowingly departs from the document, so it needs your ruling.
-
-**Why I excluded it.** A refusal is a property of the *request*, not of the provider's
-health. Every other trigger means "this provider is unwell, try another one". A refusal
-means "this question was asked". So the next model in the chain reproduces the refusal, at
-full cost and full latency, and the person waits longer for the same answer.
-
-And in the case where a different provider *does* answer, the chain has shopped around
-until something said yes. That is quality-based fallback, which the architecture rejects
-emphatically elsewhere for exactly the right reason: it makes the system's behaviour depend
-on which model happened to be up.
-
-**Where it belongs instead:** the abstention path in M8. A refusal should produce an honest
-"I will not answer that", not a quieter search for a model that will.
-
-**My recommendation:** accept the exclusion, and I will update the architecture table.
-The table currently carries an "open question" note pointing here.
-
-**If you disagree**, it is a one-line change to add it back.
+**Where this stands today:** the log can prove nobody edited it. It cannot prove nobody
+deleted the recent part. The code for checking against a note is already written and tested;
+what does not exist is the place to keep the note.
 
 ---
 
-## 10. What happens when even the largest model runs out of room?
+## 9. Should a refusal make the system try a different AI model?
+
+**The plain problem: if one AI says "I will not answer that", should we keep asking other
+AIs until one says yes?**
+
+The system uses several AI models. When one fails, it automatically tries the next. The
+reasons to try the next one are all versions of *"this model is unwell right now"*: it did
+not respond, it timed out, it was overloaded, it crashed.
+
+The original design listed one more reason: **the model refused on its own content rules.**
+I deliberately left that one out, and this is the one place the code knowingly departs from
+the design document.
+
+**Why. Two reasons.**
+
+**First, it usually just wastes the person's time.** A refusal is not about the model being
+unwell, it is about the question. So the next model refuses too, and the next. The person
+waits three times as long for the same no.
+
+**Second, and this is the real issue: when a different model does say yes, what actually
+happened is that the system shopped around until something agreed.**
+
+A concrete example. Someone asks the system to draft a letter about a staff member that
+touches on their medical leave. Model A declines. If we automatically try B, then C, then D,
+the answer your company gives depends on which AI happened to be running well that
+afternoon. Same question on Tuesday and Thursday, different answers, and nobody can explain
+why.
+
+That is the same problem the design already rejects elsewhere: never retry simply because
+you did not like the answer.
+
+**What happens instead in my version:** the system says "I will not answer that", once,
+honestly, and it is recorded.
+
+**My recommendation:** keep it excluded. If you would rather it tried other models, it is a
+one-line change.
+
+---
+
+
+## 10. What happens when even the largest model runs out of room? — DECIDED: trim retrieval and retry
 
 **The gap.** Tier escalation is defined as upward only: a request too large for `small`
 moves to `main`, and one too large for `main` moves to `heavy`. The specification never says
@@ -150,7 +173,7 @@ so nothing silently truncates. Something has to own the path before M8 ships.
 
 ---
 
-## 11. A hidden count can still be worked out by subtraction
+## 11. A hidden count can still be worked out by subtraction — DECIDED: add the policy column
 
 **This is a hole in a rule we already promise**, so it needs an owner rather than a
 preference.
@@ -183,7 +206,7 @@ projections.
 
 ---
 
-## 12. The opaque escape hatch depends on a promise the redaction module cannot keep
+## 12. The opaque escape hatch depends on a promise the redaction module cannot keep — DECIDED: the rule goes in M16
 
 M4.1.6 allows a payload to skip redaction entirely, for genuinely untypeable data. It is
 guarded three ways: it needs its own capability, it flags the trace, and the answer is

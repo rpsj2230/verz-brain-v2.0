@@ -325,12 +325,52 @@ def test_the_ledger_records_an_entitlement_hash_and_never_the_capabilities() -> 
         details={"capability": "read:client.contract_value"},
     )
 
-    dumped = entry.model_dump_json()
-    for grant in entitlement.grants:
-        assert grant.capability.value not in dumped, f"{grant.capability.value} reached the ledger"
-    assert entry.details["capability"] == REDACTED
+    # Rupash decided on 5 September that a single capability may be recorded, because an
+    # audit view that cannot say what was granted is not an audit view. The invariant that
+    # survives is the one that mattered: the actor's *whole reach* is never written down.
+    assert entry.details["capability"] == "read:client.contract_value"
     assert entry.ent_hash == entitlement.ent_hash()
     assert len(entry.ent_hash) == 32
+
+    dumped = entry.model_dump_json()
+    named = {"read:client.contract_value"}
+    for grant in entitlement.grants:
+        if grant.capability.value in named:
+            continue  # deliberately the subject of this entry
+        assert grant.capability.value not in dumped, f"{grant.capability.value} reached the ledger"
+
+
+def test_a_list_of_capabilities_is_still_refused() -> None:
+    """The exception admits one capability, not a permission map. A list is the map: it is
+    the whole reach written down in the longest-retained table in the system, which is the
+    document the strict rule existed to prevent."""
+    entry = AuditChain().append(
+        action=AuditAction.GRANT,
+        actor_id="u_rupash",
+        subject="principal:u_weiling",
+        ent_hash=person("u_weiling").entitlement().ent_hash(),
+        trace_id="trace1",
+        at=NOW,
+        details={"capabilities": ["read:client.name", "read:client.contract_value"]},
+    )
+    assert entry.details["capabilities"] == REDACTED
+
+
+def test_a_value_cannot_arrive_disguised_as_a_capability() -> None:
+    """The grammar is narrow on purpose: a known verb, a colon, dotted lowercase names, no
+    spaces and no digits. Without the verb check, `notice:the_client_is_overdue` would pass
+    for a capability and carry a sentence into the ledger."""
+    entry = AuditChain().append(
+        action=AuditAction.GRANT,
+        actor_id="u_rupash",
+        subject="principal:u_weiling",
+        ent_hash=person("u_weiling").entitlement().ent_hash(),
+        trace_id="trace1",
+        at=NOW,
+        details={"note": "notice:the_client_is_overdue", "amount": "SGD 48,000"},
+    )
+    assert entry.details["note"] == REDACTED
+    assert entry.details["amount"] == REDACTED
 
 
 def test_a_wider_actor_and_a_narrower_one_are_distinguishable_without_naming_either() -> None:

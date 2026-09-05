@@ -31,7 +31,7 @@ module.exports = [
 ]},
 {id:"M4",name:"Redaction and data protection",wave:1,tasks:[
  {n:"The walker",s:["Recursive depth-first walk over the typed result","Mask computation from the field policy","Delete keys outside the mask at any nesting depth","Drop and log objects lacking an entity tag, failing closed","Handle arrays, nested entities and mixed shapes","Opaque escape hatch requiring its own capability, flagging the trace and labelling the answer"]},
- {n:"Field policy",s:["field_policy: entity type, field, required capability, classification","Default-deny for unclassified fields","Simulate mode logging what would be withheld","Policy epoch bump on any field policy change"]},
+ {n:"Field policy",s:["field_policy: entity type, field, required capability, classification","Default-deny for unclassified fields","Simulate mode logging what would be withheld","Policy epoch bump on any field policy change","Count fields declared against the collection they count, and withheld when it is filtered"]},
  {n:"User-facing presentation",s:["Structural lock rendering, identical for every viewer","Never emit a count of hidden items","Permission-denied indistinguishable from nothing-found at record level","Request-access route where the owner sees the question and the asker learns nothing"]},
  {n:"Serialization safety",s:["Authorization-aware serializer as the only path to a channel","Structural prevention of returning an untyped shape from a tool","Property-based tests over nested shapes","Redaction counts and field names recorded, values never"]}
 ]},
@@ -65,7 +65,7 @@ module.exports = [
  {n:"Answer composition",s:["Answer assembly from typed results","Locked-field rendering","Follow-up handling with retained context","Correction handling that feeds the learning signal"]}
 ]},
 {id:"M10",name:"Channels",wave:2,tasks:[
- {n:"Adapter contract",s:["Channel adapter interface with normalise, send, capabilities","Capability declaration per channel: ephemeral, cards, streaming, attachments","Per-channel sensitivity policy: which classes may be carried","Registration and health check per adapter"]},
+ {n:"Adapter contract",s:["Channel adapter interface with normalise, send, capabilities","Capability declaration per channel: ephemeral, cards, streaming, attachments","Per-channel sensitivity policy: which classes may be carried","Registration and health check per adapter","An adapter must render a payload label or refuse to send, so the opaque escape hatch cannot lose its warning"]},
  {n:"Lark",s:["Webhook receipt and signature verification","Message and mention handling","Interactive cards for approvals","Card patching within the rate limit, with a text fallback","Ephemeral messages for per-viewer bodies","Group and direct-message handling"]},
  {n:"Identity binding",s:["Outward-only binding: nonce minted in an authenticated web session","Binding expiry and single use","Unbound identity behaviour","Unbinding and rebinding on device change"]},
  {n:"Group-chat safety",s:["Room envelope computed at the floor of everyone present","Per-viewer body via the channel's ephemeral mechanism","Degradation ladder ending at a web link where the gate re-runs","Room membership change invalidating a pending render","Async delivery re-running entitlement at send time"]},

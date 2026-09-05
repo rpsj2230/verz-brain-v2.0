@@ -47,6 +47,8 @@ from datetime import UTC, datetime
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from brain.core.entitlement import CAPABILITY_RE, VERBS
+
 # --------------------------------------------------------------------- grammars
 
 #: What a field name looks like: `contract_value`, `client.contract_value`. This is the
@@ -148,7 +150,35 @@ def _is_recordable(value: str) -> bool:
         return True
     if _RECORDABLE_DIGEST_RE.match(value):
         return True
+    if _is_capability(value):
+        # A named exception, decided on 5 September, rather than a loosening of the rule.
+        #
+        # The strict version was defensible and unusable: an audit view that cannot say
+        # *what* was granted is not an audit view, and "Aaron granted Wei Ling something"
+        # is not a sentence anyone can act on. A capability is not personal data, it names
+        # a permission rather than a person or a value, and it is already legible in the
+        # grant table to anyone who can read this ledger.
+        #
+        # The exception is narrow on purpose. It admits the capability grammar and nothing
+        # adjacent to it, so a value cannot arrive disguised as one: the grammar is a known
+        # verb, a colon, and dotted lowercase names, with no spaces and no digits.
+        return True
     return all(_FIELD_NAME_RE.match(part) for part in value.split(","))
+
+
+def _is_capability(value: str) -> bool:
+    """A capability string, by the same grammar the rest of the system uses.
+
+    Imported rather than copied. Two definitions of one grammar drift, and the drift here
+    would be silent in the direction that matters: a ledger admitting a shape the
+    capability type rejects is a ledger admitting something that is not a capability.
+
+    The verb is checked as well as the shape, so `notice:the_client_is_overdue` does not
+    slip through by happening to look like one.
+    """
+    if not CAPABILITY_RE.match(value):
+        return False
+    return value.split(":", 1)[0] in VERBS
 
 
 def _redact_value(value: object) -> str:
