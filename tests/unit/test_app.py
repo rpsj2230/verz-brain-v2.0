@@ -6,6 +6,8 @@ Task ids: M31.1.1, M31.1.2, M31.1.3
 from __future__ import annotations
 
 from collections.abc import Iterator
+from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 from fastapi import FastAPI
@@ -13,6 +15,7 @@ from fastapi.testclient import TestClient
 
 from brain.app import Settings, create_app
 from brain.core.errors import Absent, Degraded, Denied, Unresolved
+from brain.ops.release_manifest import ReleaseManifest
 
 
 @pytest.fixture
@@ -31,6 +34,66 @@ def test_liveness_reports_the_running_commit(client: TestClient) -> None:
     r = client.get("/health/live")
     assert r.status_code == 200
     assert r.json() == {"status": "ok", "commit": "abc1234", "checks": {}}
+
+
+def test_the_running_commit_comes_from_the_image_when_the_environment_says_unknown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Measured on the live server rather than imagined. The image carried
+    `BRAIN_COMMIT_SHA=724cf3f` and the container was created with `BRAIN_COMMIT_SHA=unknown`,
+    because Coolify keeps its own copy of the compose file, that copy had resolved a
+    `${COMMIT_SHA:-unknown}` default to the literal string at save time, and an explicit
+    environment entry in compose beats an image's ENV. `/health/live` answered "unknown"
+    while the status page beside it reported the truth.
+
+    Baking the value into the image was the previous fix and was not enough, for the same
+    reason: compose can override anything ENV sets. A file cannot be overridden by an
+    environment variable.
+
+    Deleting this leaves the endpoint answering "unknown" on a server nobody can then
+    identify, which is a deployment nobody can roll back with confidence."""
+    manifest = tmp_path / "RELEASE.json"
+    manifest.write_text(
+        ReleaseManifest(commit="c" * 40, built_at=datetime(2026, 9, 5, tzinfo=UTC)).to_json(),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("brain.ops.release_manifest.MANIFEST_PATH", manifest)
+
+    app = create_app(Settings(env="development", commit_sha="unknown"))
+    with TestClient(app) as c:
+        assert c.get("/health/live").json()["commit"] == "c" * 7
+
+
+def test_an_environment_that_names_a_commit_is_believed_over_the_image(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A developer running `BRAIN_COMMIT_SHA=wip` means it. Only the default value - the
+    thing a variable says when nobody set it - falls through to the file."""
+    manifest = tmp_path / "RELEASE.json"
+    manifest.write_text(
+        ReleaseManifest(commit="c" * 40, built_at=datetime(2026, 9, 5, tzinfo=UTC)).to_json(),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("brain.ops.release_manifest.MANIFEST_PATH", manifest)
+
+    app = create_app(Settings(env="development", commit_sha="wip"))
+    with TestClient(app) as c:
+        assert c.get("/health/live").json()["commit"] == "wip"
+
+
+def test_a_broken_manifest_does_not_stop_the_health_check_answering(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The honest answer is then still "unknown", which is what the caller already had. A
+    liveness endpoint that raises because a metadata file is malformed turns a cosmetic
+    problem into a restart loop."""
+    manifest = tmp_path / "RELEASE.json"
+    manifest.write_text("{ not json", encoding="utf-8")
+    monkeypatch.setattr("brain.ops.release_manifest.MANIFEST_PATH", manifest)
+
+    app = create_app(Settings(env="development", commit_sha="unknown"))
+    with TestClient(app) as c:
+        assert c.get("/health/live").json()["commit"] == "unknown"
 
 
 def test_readiness_is_ok_when_nothing_has_registered_a_check(client: TestClient) -> None:

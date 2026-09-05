@@ -43,6 +43,8 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="BRAIN_", extra="ignore")
 
     env: Literal["development", "staging", "production"] = "development"
+    #: Read from the environment, and corrected from the image's own manifest when the
+    #: environment lies. See `resolved_commit`.
     commit_sha: str = "unknown"
 
     # DATABASE_URL and VALKEY_URL are read under their plain names as well as the
@@ -66,6 +68,42 @@ class Settings(BaseSettings):
     run_migrations: bool = True
     request_timeout_seconds: float = 30.0
 
+    def resolved_commit(self) -> str:
+        """Which commit this process is running, believing the image over the environment.
+
+        The environment is not trustworthy for this, measured rather than assumed. On the
+        live server the image carries `BRAIN_COMMIT_SHA=724cf3f` and the container was
+        created with `BRAIN_COMMIT_SHA=unknown`: Coolify stores its own copy of the compose
+        file, that copy resolved a `${COMMIT_SHA:-unknown}` default to the literal string
+        at save time, and an explicit environment entry in compose beats an image's ENV.
+        So `/health/live` answered "unknown" while the status page beside it reported the
+        truth, and a deployment nobody could identify is a deployment nobody can roll back
+        with confidence.
+
+        Baking the value into the image was the previous fix for this and it was not
+        enough, because compose can override anything the image sets. A file cannot be
+        overridden by an environment variable, so the manifest wins: it is written by CI
+        into the image immediately before the build, from the same git repository that
+        produced the code.
+
+        The environment is still preferred when it says something, because a developer
+        running `BRAIN_COMMIT_SHA=wip` locally means it, and because the manifest is absent
+        outside a built image. Only the specific value "unknown" - which is the default,
+        the thing a variable says when nobody set it - falls through to the file.
+        """
+        if self.commit_sha and self.commit_sha != "unknown":
+            return self.commit_sha
+        try:
+            from brain.ops.release_manifest import read_manifest
+
+            manifest = read_manifest()
+        except Exception:
+            # A malformed manifest must not stop the process answering health checks. The
+            # honest answer to "which commit is this" is then still "unknown", which is
+            # what the caller already had.
+            return self.commit_sha
+        return manifest.commit[:7] if manifest else self.commit_sha
+
 
 class Health(BaseModel):
     status: Literal["ok", "degraded"]
@@ -76,7 +114,7 @@ class Health(BaseModel):
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings: Settings = app.state.settings
-    log.info("starting", env=settings.env, commit=settings.commit_sha)
+    log.info("starting", env=settings.env, commit=settings.resolved_commit())
     # Dependency handles attach here as they land: database pool, cache, secret store,
     # model registry. Readiness reads app.state.ready, so an unattached dependency shows
     # as not-ready rather than as a working instance.
@@ -212,7 +250,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/health/live", response_model=Health, tags=["health"])
     async def live() -> Health:
         """The process is running. Says nothing about whether it can answer anything."""
-        return Health(status="ok", commit=settings.commit_sha)
+        return Health(status="ok", commit=settings.resolved_commit())
 
     @app.get("/health/ready", response_model=Health, tags=["health"])
     async def ready(response: Response) -> Health:
@@ -221,7 +259,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ok = all(checks.values()) if checks else True
         if not ok:
             response.status_code = 503
-        return Health(status="ok" if ok else "degraded", commit=settings.commit_sha, checks=checks)
+        return Health(
+            status="ok" if ok else "degraded",
+            commit=settings.resolved_commit(),
+            checks=checks,
+        )
 
     return app
 
