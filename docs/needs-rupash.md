@@ -2,9 +2,10 @@
 
 Decisions and access I cannot resolve alone. Served at `/build/needs-rupash`.
 
-**One item is open: 17, who holds the keys to the secrets vault.** It needs answering
-before that vault is deployed, not before the next piece of work, so nothing is waiting on
-it. Everything else on this page is decided.
+**Four items are open: 17, 19, 20 and 21.** None of them blocks anything today. 17 needs
+answering before the secrets vault is deployed; 19 is two numbers to confirm; 20 and 21 are
+design contradictions I have resolved one way and would rather you saw than inherited.
+Everything else on this page is decided.
 
 The rest is kept as a record. Each item states what the problem was, what I built, and why,
 so the reasoning outlives the conversation it happened in.
@@ -362,13 +363,75 @@ now. Nothing is blocked.
 
 ---
 
-## 18. Nothing is waiting on you right now
+## 19. How long should somebody stay signed in?
 
-Items 1 to 16 are all decided. Item 17 is the only open one, and it is not blocking: it
-needs answering before the vault is deployed, not before the next piece of work.
+**A number I picked, and nobody has confirmed.**
 
-Everything else on this page is kept as a record of what was decided and why, so the
-reasoning outlives the conversation it happened in.
+A session expires two ways. It ends after a period of no activity, and it ends absolutely
+after a fixed time no matter how active somebody is, because a session that renews forever
+is a permanent credential.
+
+I set the absolute limit to **10 hours** and the idle limit to **30 minutes**. Ten hours
+covers a working day with room, so almost nobody is signed out mid-task; thirty minutes
+idle means a laptop left open in a cafe is not an open door for the afternoon.
+
+**What it costs if it is wrong.** Too short and people re-authenticate several times a day,
+which trains them to click through anything that asks. Too long and a stolen laptop is
+useful for as long as the number says.
+
+**What I need:** confirm 10 hours and 30 minutes, or give me two other numbers.
+
+**One caution.** The absolute limit is written in two places: the code and the Keycloak realm
+configuration. They have to stay in step, or people get logouts that look random. When you
+change it, tell me rather than editing one of them.
+
+---
+
+## 20. Two designs for what a person's ID is, and they contradict each other
+
+**Not urgent, but it gets expensive the moment the identity provider is wired in.**
+
+The architecture says a person's ID in the Brain *is* the ID Keycloak gives them. It also
+specifies a separate table mapping identities to people. Those cannot both be load-bearing:
+if the ID is the Keycloak one, the mapping table has nothing to do.
+
+**Why it matters.** If a person's ID is the one Keycloak issued, then replacing Keycloak, or
+migrating a client onto their own identity provider, rewrites every ID in the system, and
+every audit row and every grant that references one.
+
+**What I built:** the indirection. The Brain gives people its own IDs, and a table says which
+external identity maps to which person. A token says which record to look up rather than
+being the record.
+
+**My recommendation:** keep the indirection and correct the architecture line. The cost is
+one join. The alternative's cost is a migration nobody can do safely once there is audit
+history.
+
+**No action needed if you agree.**
+
+---
+
+## 21. Where do role grants that came from the directory live?
+
+**A smaller decision inside the same area, recorded so it is not made by accident.**
+
+Roles can be granted two ways: a person gives somebody a role, or the role arrives because
+of a group they are in, synced from the company directory.
+
+Every role grant currently requires a named grantor and a reason, because the review of those
+two fields is the only thing that ever removes a grant that should not have been made. A row
+that arrived from a directory has no human grantor.
+
+**What I did:** recorded the grantor as the identity provider itself. It satisfies the field
+and it quietly puts unreviewed rows in the same table as reviewed ones, where a person
+scanning for mistakes cannot tell them apart.
+
+**The options:** keep them together and add a column saying where each came from, or keep
+directory-sourced grants in their own table that the sync owns and can also remove from.
+
+**My recommendation:** the second. The sync needs to be able to take a role away when
+somebody leaves a group, and a process that can delete rows a person created is a worse
+thing to build than a process that owns its own table.
 
 ---
 
