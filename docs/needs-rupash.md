@@ -2,10 +2,12 @@
 
 Decisions and access I cannot resolve alone. Served at `/build/needs-rupash`.
 
-**2 items are open: 24 and 25.** Neither blocks
-anything today, and neither is urgent this week. 24 is a disclosure trade-off that starts to
+**3 items are open: 24, 25 and 26.** None blocks
+anything today, and none is urgent this week. 24 is a disclosure trade-off that starts to
 matter when people with narrow permissions begin using the system, which is wave 4. 25 is a
-measured capacity limit that needs a decision before wave 4 rather than during it.
+measured capacity limit that needs a decision before wave 4 rather than during it. 26 is a
+product question about the website widget, and the machinery around it is being built
+either way.
 
 Everything else on this page is decided. It is kept as a record: each item states what the
 problem was, what was built, and why, so the reasoning outlives the conversation it happened
@@ -14,6 +16,58 @@ in.
 ---
 
 # Open
+
+## 26. The chat widget on a client's marketing site: what may a stranger ask it?
+
+**Nothing is blocked.** The plumbing is being built either way, and it is safe by default
+today: an anonymous visitor currently holds nothing, so the widget can mint a session and
+that session can ask nothing. Your answer decides what, if anything, that session is allowed
+to reach.
+
+**The situation.** The plan has a chat widget embedded on a client's public website. Whoever
+loads that page is a stranger: not signed in, not an employee, possibly a competitor, a
+bot, or a journalist. The rest of this system answers "what may this person see" by looking
+up what they hold. A stranger holds nothing, and the way this platform is built, nothing
+means nothing: entitlements are additive only, so an anonymous caller sees exactly what has
+been explicitly granted to anonymous callers, and no such grant exists.
+
+**So the widget works and answers nothing, unless you decide otherwise.** That is a
+deliberate safe default rather than an oversight, and it is where it will stay until you
+choose.
+
+**The three shapes it could take, and what each costs:**
+
+1. **Lead capture only.** The widget collects a question and a contact address and creates
+   a task for a human. It answers nothing itself. Cost: it is a contact form with a chat
+   interface. Benefit: no exposure of any kind, and it is the only option with no way to be
+   wrong.
+2. **Public knowledge only.** A specific, small, explicitly published set of content is
+   granted to anonymous callers: opening hours, service descriptions, published pricing. The
+   agent may answer from that and nothing else. Cost: somebody has to decide, per client,
+   what is public, and be right. The risk is not the answer, it is the *retrieval*: a
+   question is a probe, and an answer that says "I cannot find that" for one product and
+   answers for another has told a competitor which products exist.
+3. **Identify first, then answer.** The widget asks who they are and verifies it, typically
+   by emailing a link. After that they are an ordinary principal with ordinary entitlements
+   and nothing here is special. Cost: friction on a marketing site, which is where friction
+   costs the most.
+
+**My recommendation: 1 for the first client, with 2 available per client afterwards.** The
+reason is not caution for its own sake. Option 2 needs a person to correctly classify a body
+of content as public, on a page where being wrong is visible to everybody including
+competitors, and the first client is the worst place to learn what that classification
+process needs to be. Option 3 is a real product and belongs in a later wave.
+
+**What I need:** which of the three, and for option 2, who at the client decides what is
+public.
+
+**What is being built meanwhile:** the session minting and its abuse guard (M10.5.5,
+M23.1.4), which are needed under all three options. A widget on a public site is an
+unauthenticated endpoint that mints credentials, so it is rate-limited per origin and capped
+on live sessions per origin, and an anonymous session expires much sooner than a signed-in
+one.
+
+---
 
 ## 24. When a source is down, should the answer name it?
 
@@ -333,6 +387,44 @@ it is holding the keys to your client data.
 **What happens meanwhile:** I am building everything around the vault that does not need
 it running, and the tasks that need real keys are already scheduled for go-live rather than
 now. Nothing is blocked.
+
+**BUILT (2026-09-05).** `src/brain/ops/vault_quorum.py` holds the split, and
+`ops/openbao/UNSEAL.md` now derives its `bao operator init` command from that module rather
+than repeating the numbers. Both directions of drift are tested: changing the module without
+the runbook fails, and editing the runbook without the module fails.
+
+**One disagreement with your wording, stated rather than quietly ignored.** You asked for the
+setting to be "in the backend as well where we can select the options". It is a reviewed
+constant in source, not a database row a screen can save, and here is why. The split is
+fixed at `bao operator init`; changing it afterwards is `bao operator rekey` with three of
+the current five people present. A save button would therefore report success for a change
+that did not happen. Second, a row would put the policy governing the vault that holds the
+database password inside that database, which makes it unreadable during exactly the
+incident that needs it. A console screen can read and display this policy; what it cannot
+honestly offer is a save button.
+
+**Seven refusals at construction, and one of them is not in your list.** Beyond the
+arithmetic (threshold above shares, of one, or equal to shares) and the holder count, the
+policy refuses a list where every holder is on call. Your point 2 asked for at least one
+holder outside the on-call group; that was prose, and it is now a refusal.
+
+**A hole found in the duplicate-holder check, after it had been written and tested.** It
+compared holder ids exactly, which is the right field and the wrong comparison: `r.jones`
+beside `R.Jones` is one pair of hands and two strings, so five slots were accepted and a
+declared three-of-five was really a two-of-four. Ids are now compared stripped and
+case-folded.
+
+**Root token: revoked, as recommended.** The rejected alternative is recorded in the module.
+A sealed envelope protects the paper and not the token: it still bypasses every policy, the
+audit device logs its use as an ordinary accessor with no field marking it root, and it was
+already in the scrollback when init printed it. `bao operator generate-root` covers the
+emergency, needs the same three people, and leaves a record.
+
+**Still needs you, and it is not blocking anything.** The five holder slots read UNASSIGNED.
+Naming them is one edit to a list in that module, and until it happens the setup command
+exits non-zero rather than initialising a vault whose five pieces belong to nobody in
+particular. Tell me five names and whether each is in the on-call rotation, and I will fill
+them in; or fill them in yourself at the top of `vault_quorum.py`.
 
 ---
 
