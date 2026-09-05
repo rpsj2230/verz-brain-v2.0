@@ -135,6 +135,35 @@ class FieldRule(BaseModel):
     #: onto the record that carries the collection.
     counts: str = Field(default="", max_length=120)
 
+    #: Sibling fields on this same record that together reconstruct this one (M7.5.2).
+    #:
+    #: Classifying `cost` as restricted achieves nothing while `sell_price` and `margin` are
+    #: both visible, because cost is the subtraction. Declaring the derivation lets the mask
+    #: withhold an input rather than pretending the output is protected.
+    #:
+    #: **This lives here rather than in the caller, and that placement is the whole point.**
+    #: It was first written in `brain.knowledge.columns`, driving the mask from outside, and
+    #: the consequence was immediate: anything handing a price-list row straight to
+    #: `brain.core.redaction.redact` bypassed the closure entirely and the cost was derivable
+    #: again. A guard that only applies on the path that remembers to call it is a guard on
+    #: one path. The agent that wrote the first version reported this as a gap rather than
+    #: leaving it, which is why it is fixed here.
+    #:
+    #: Siblings only, for the same reason `counts` is: the walker sees one record at a time,
+    #: so a declaration pointing anywhere else is a declaration nothing can check, and an
+    #: unchecked declaration reads as a control while being a comment.
+    derived_from: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def _a_field_is_not_derived_from_itself(self) -> Self:
+        if self.field in self.derived_from:
+            msg = (
+                f"{self.entity}.{self.field} is declared as derived from itself, which would "
+                "make the closure withhold it to protect it"
+            )
+            raise ValueError(msg)
+        return self
+
     @field_validator("counts")
     @classmethod
     def _counts_names_a_field(cls, v: str) -> str:

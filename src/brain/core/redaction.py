@@ -310,7 +310,73 @@ def compute_mask(
 
         allowed.add(name)
 
+    # The closure runs last, over what survived the per-field checks. Running it earlier
+    # would be asking whether a derivation resolves out of columns that may themselves be
+    # about to be withheld, and the answer would change depending on iteration order.
+    _close_over_derivations(entity, allowed, withheld, policy)
+
     return Mask(entity=entity, allowed=frozenset(allowed), withheld=tuple(sorted(withheld)))
+
+
+def _close_over_derivations(
+    entity: str,
+    allowed: set[str],
+    withheld: list[tuple[str, RedactionReason]],
+    policy: FieldPolicy,
+) -> None:
+    """Remove visible fields that together reconstruct a withheld one (M7.5.2).
+
+    Classifying `cost` as restricted achieves nothing while `sell_price` and `margin` are
+    both visible, because cost is the subtraction. The caller withholds the *output* and the
+    inputs quietly put it back.
+
+    **Iterated to a fixed point rather than swept once.** Withholding one field can make a
+    second derivation resolvable that was not before, and a single pass leaves the second
+    one standing while every test about the first passes. Termination is structural: each
+    round removes at least one field from a finite set and nothing is ever added back.
+
+    **The most sensitive input is the one withheld**, not the first or the cheapest. Any
+    single input breaks the derivation, so the choice is free, and taking the most sensitive
+    keeps the field the company actually needs - the sell price stays and the margin goes.
+
+    Modifies in place, which is unusual here and deliberate: returning a new mask would let
+    a caller use the un-closed one, and there would then be two masks in scope differing in
+    exactly the way that matters.
+    """
+    already = {name for name, _ in withheld}
+    changed = True
+    while changed:
+        changed = False
+        for rule in policy.rules:
+            if rule.entity != entity or not rule.derived_from:
+                continue
+            if rule.field in allowed or rule.field not in already:
+                # Only a *withheld* field's derivation is worth closing over. A field the
+                # caller may see is one they can read directly, so protecting its inputs
+                # would withhold something for no reason.
+                continue
+            if not set(rule.derived_from) <= allowed:
+                continue
+            victim = _most_sensitive(entity, rule.derived_from, policy)
+            allowed.discard(victim)
+            withheld.append((victim, RedactionReason.OUT_OF_SCOPE))
+            already.add(victim)
+            changed = True
+
+
+def _most_sensitive(entity: str, fields: Iterable[str], policy: FieldPolicy) -> str:
+    """Whichever of these is classified highest, breaking ties by name.
+
+    The tiebreak is by name rather than by declaration order, because a rule list reordered
+    in a merge would otherwise change which field a caller loses - a silent, invisible
+    difference in what an answer contains.
+    """
+
+    def rank(name: str) -> tuple[int, str]:
+        rule = policy.rule_for(entity, name)
+        return ((rule.classification.rank if rule else 0), name)
+
+    return max(sorted(fields), key=rank)
 
 
 # ------------------------------------------------------------------- the trace

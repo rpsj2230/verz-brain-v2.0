@@ -36,6 +36,7 @@ import random
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from brain.core import access_route as access_route_module
 from brain.core import redaction as redaction_module
@@ -933,3 +934,139 @@ def test_a_tool_returning_a_typed_result_of_entities_is_admitted() -> None:
     """The opposite failure again. A check nothing passes is a check somebody deletes, and
     the deletion looks like a cleanup rather than a permission change."""
     assert_tool_returns_typed_result(returns_a_typed_result)
+
+
+# ------------------------------- a visible field may not rebuild a withheld one (M7.5.2)
+def test_a_withheld_field_cannot_be_reconstructed_from_visible_siblings() -> None:
+    """Classifying `cost` as restricted achieves nothing while `sell_price` and `margin` are
+    both visible, because cost is the subtraction. The caller withholds the output and the
+    inputs quietly put it back.
+
+    This lives on the mask rather than in a caller, and that placement is the whole point.
+    It was first written one layer up, driving the mask from outside, and anything handing a
+    row straight to `redact` bypassed it entirely - a guard that only applies on the path
+    that remembers to call it is a guard on one path.
+
+    Deleting this test makes a restricted field derivable by arithmetic, which is invisible
+    in the answer: every field shown is one the caller was entitled to."""
+    policy = FieldPolicy(
+        rules=(
+            FieldRule.of("item", "sell_price", "read:item.sell_price", Classification.INTERNAL),
+            FieldRule.of("item", "margin", "read:item.margin", Classification.CONFIDENTIAL),
+            FieldRule(
+                entity="item",
+                field="cost",
+                required_capability=Capability(value="read:item.cost"),
+                classification=Classification.RESTRICTED,
+                derived_from=("sell_price", "margin"),
+            ),
+        )
+    )
+    # Holds both inputs and not the output, which is exactly the shape that leaks.
+    holder = EntitlementSet(
+        principal_id="u_weiling",
+        grants=(
+            Grant(capability=Capability(value="read:item.sell_price"), scope=Scope.unrestricted()),
+            Grant(capability=Capability(value="read:item.margin"), scope=Scope.unrestricted()),
+        ),
+    )
+    mask = compute_mask(
+        "item",
+        ["sell_price", "margin", "cost"],
+        entitlement=holder,
+        policy=policy,
+        row={"sell_price": 100, "margin": 40, "cost": 60},
+    )
+    assert "cost" not in mask.allowed
+    # The most sensitive input goes, so the field the company needs survives.
+    assert "sell_price" in mask.allowed
+    assert "margin" not in mask.allowed
+
+
+def test_the_closure_keeps_going_until_nothing_is_derivable() -> None:
+    """Withholding one field can make a second derivation resolvable that was not before. A
+    single sweep leaves the second standing while every test about the first passes, which
+    is the shape of a guard that looks like it works."""
+    policy = FieldPolicy(
+        rules=(
+            FieldRule.of("item", "a", "read:item.a", Classification.PUBLIC),
+            FieldRule.of("item", "b", "read:item.b", Classification.INTERNAL),
+            FieldRule(
+                entity="item",
+                field="c",
+                required_capability=Capability(value="read:item.c"),
+                classification=Classification.RESTRICTED,
+                derived_from=("a", "b"),
+            ),
+            FieldRule(
+                entity="item",
+                field="d",
+                required_capability=Capability(value="read:item.d"),
+                classification=Classification.RESTRICTED,
+                derived_from=("a",),
+            ),
+        )
+    )
+    holder = EntitlementSet(
+        principal_id="u_weiling",
+        grants=(
+            Grant(capability=Capability(value="read:item.a"), scope=Scope.unrestricted()),
+            Grant(capability=Capability(value="read:item.b"), scope=Scope.unrestricted()),
+        ),
+    )
+    mask = compute_mask(
+        "item",
+        ["a", "b", "c", "d"],
+        entitlement=holder,
+        policy=policy,
+        row={"a": 1, "b": 2, "c": 3, "d": 4},
+    )
+    # `c` costs `b`; `d` then still resolves from `a` alone, so `a` goes too.
+    assert mask.allowed == frozenset()
+
+
+def test_a_derivation_of_a_field_the_caller_may_see_withholds_nothing() -> None:
+    """Only a *withheld* field's derivation is worth closing over. Protecting the inputs of
+    something the caller can read directly withholds data for no reason at all, and a
+    redactor that removes what it did not need to is one people route around."""
+    policy = FieldPolicy(
+        rules=(
+            FieldRule.of("item", "sell_price", "read:item.sell_price", Classification.INTERNAL),
+            FieldRule.of("item", "margin", "read:item.margin", Classification.CONFIDENTIAL),
+            FieldRule(
+                entity="item",
+                field="cost",
+                required_capability=Capability(value="read:item.cost"),
+                classification=Classification.RESTRICTED,
+                derived_from=("sell_price", "margin"),
+            ),
+        )
+    )
+    everything = EntitlementSet(
+        principal_id="u_rupash",
+        grants=tuple(
+            Grant(capability=Capability(value=v), scope=Scope.unrestricted())
+            for v in ("read:item.sell_price", "read:item.margin", "read:item.cost")
+        ),
+    )
+    mask = compute_mask(
+        "item",
+        ["sell_price", "margin", "cost"],
+        entitlement=everything,
+        policy=policy,
+        row={"sell_price": 100, "margin": 40, "cost": 60},
+    )
+    assert mask.allowed == frozenset({"sell_price", "margin", "cost"})
+
+
+def test_a_field_cannot_be_declared_as_derived_from_itself() -> None:
+    """The closure would then withhold it in order to protect it, which is a rule that reads
+    as working and removes the field from every answer."""
+    with pytest.raises(ValidationError, match="derived from itself"):
+        FieldRule(
+            entity="item",
+            field="cost",
+            required_capability=Capability(value="read:item.cost"),
+            classification=Classification.RESTRICTED,
+            derived_from=("cost", "margin"),
+        )
