@@ -64,13 +64,15 @@ from brain.tables.identity import (
     SessionRow,
     one_of,
 )
+from brain.tables.projection import ProjectedRecordRow
 from brain.tables.routing import ModelAttemptRow, RoutingRungRow, RoutingTierRow
 
 #: Every table, in the order a migration must create them: a table appears after everything
 #: it points at. The order is the migrations' own tuples end to end - 0002's seven, 0003's
-#: nine, 0004's two, 0005's two, 0006's one - so `tests/unit/test_tables.py` can compare
-#: this against their concatenation rather than against a hand-maintained second copy. Each
-#: migration's downgrade reverses its own slice.
+#: nine, 0004's two, 0005's two, 0006's one, 0008's one - so `tests/unit/test_tables.py` can
+#: compare this against their concatenation rather than against a hand-maintained second
+#: copy. Each migration's downgrade reverses its own slice. 0007 built no table: it widened
+#: two check constraints, which is why there is no slice for it here.
 TABLES_IN_DEPENDENCY_ORDER: tuple[str, ...] = (
     # 0002_core_tables
     "auth.principal",
@@ -98,6 +100,8 @@ TABLES_IN_DEPENDENCY_ORDER: tuple[str, ...] = (
     "chat.message",
     # 0006_directory_role_grant
     "auth.directory_role_grant",
+    # 0008_projection
+    "proj.record",
 )
 
 __all__ = [
@@ -118,6 +122,7 @@ __all__ = [
     "PolicyEpochRow",
     "PrincipalIdentityRow",
     "PrincipalRow",
+    "ProjectedRecordRow",
     "RoutingRungRow",
     "RoutingTierRow",
     "ScopeRow",
