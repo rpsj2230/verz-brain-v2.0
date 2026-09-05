@@ -2,7 +2,7 @@
 
 Decisions and access I cannot resolve alone. Served at `/build/needs-rupash`.
 
-**Five of the seven were decided on 5 September and are marked below.** **Item 9 was decided on 5 September.** Open: **8**, rewritten in plainer words because the first versions led with the mechanism rather than with what is at stake, which is not a decidable thing to put in front of somebody. They came out of building the audit
+**Five of the seven were decided on 5 September and are marked below.** **Item 9 was decided on 5 September.** **Everything is now decided.** Items 8 and 9 were rewritten in plainer words because the first versions led with the mechanism rather than with what is at stake, which is not a decidable thing to put in front of somebody. Nothing here is waiting on anyone. They came out of building the audit
 ledger, the routing matrix and the redaction walker, where the specification asks for two
 things that cannot both be true. Each one has my recommendation attached, so most should
 take you a minute.
@@ -70,7 +70,7 @@ the ledger or a screen that reads two sources and hopes they agree.
 
 ---
 
-## 8. Where does the audit anchor live?
+## 8. Where does the audit anchor live? — DECIDED: a private GitHub repo
 
 **The plain problem: someone could delete the last few days of the security log and nothing
 would notice.**
@@ -205,7 +205,7 @@ projections.
 
 ---
 
-## 12. The opaque escape hatch depends on a promise the redaction module cannot keep — DECIDED: the rule goes in M16
+## 12. The opaque escape hatch depends on a promise the redaction module cannot keep — DECIDED: the rule goes to the channel adapters (M10.1.5)
 
 M4.1.6 allows a payload to skip redaction entirely, for genuinely untypeable data. It is
 guarded three ways: it needs its own capability, it flags the trace, and the answer is
@@ -226,7 +226,7 @@ invisible from either side.
 
 ---
 
-## 13. Can a leash rule say "supervise everywhere except maintenance"?
+## 13. Can a leash rule say "supervise everywhere except maintenance"? — DECIDED: strictest wins
 
 **The plain problem: today it cannot, and the safe choice I made is probably not the one
 you would expect.**
@@ -255,7 +255,7 @@ configured, because changing it later silently loosens every rule already writte
 
 ---
 
-## 14. An approval card can show the approver something they are not allowed to see
+## 14. An approval card can show the approver something they are not allowed to see — ACCEPTED: fix with the approval work
 
 **Not a decision, a gap I am recording so it is not forgotten.**
 
@@ -272,7 +272,7 @@ they are, and it belongs with the approval work rather than here.
 
 ---
 
-## 15. How long should an emergency access session last?
+## 15. How long should an emergency access session last? — DECIDED: 4 hours, set per grant
 
 **The plain problem: someone needs to get into something urgently, out of hours, and we
 need to let them without leaving the door open afterwards.**
@@ -299,7 +299,7 @@ forgotten has expired before anyone starts work the next morning.
 
 ---
 
-## 16. Two different things both mean "can approve", and nothing says which wins
+## 16. Two different things both mean "can approve", and nothing says which wins — DECIDED: the permission decides
 
 **The plain problem: a person can look approved and not be, or be approved and not look it.**
 
