@@ -1,15 +1,24 @@
 """The application shell: health, tracing, error mapping, headers.
 
-Task ids: M31.1.1, M31.1.2, M31.1.3
+Task ids: M31.1.1, M31.1.2, M31.1.3, M31.1.1.1, M31.1.1.4, M31.1.3.1, M31.1.3.2,
+M31.1.3.3, M31.1.3.4, M31.1.3.5, M31.2.2.1
+
+Deliberately not claimed here: M31.1.1.2 and M31.1.1.5, which ask for the lifespan to
+attach Valkey, OpenBao and the model registry and for readiness to gate on all three.
+Only the database is attached today. The cache client exists and is untested against a
+live server; nothing wires it. Claiming those two would mark as done the exact thing
+that makes a half-connected instance answer from whatever it can still reach.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, MutableMapping
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import pytest
+import structlog
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -268,6 +277,86 @@ def test_an_untagged_route_is_absent_from_the_public_schema() -> None:
 
 def test_docs_are_available_outside_production(client: TestClient) -> None:
     assert client.get("/docs").status_code == 200
+
+
+def test_a_configured_origin_is_the_only_one_allowed() -> None:
+    """The other half of the CORS rule, and the half that matters. "Closed by default" is
+    worth nothing if configuring one origin opens all of them, which is what a wildcard in
+    the allow list would do.
+
+    Also asserts the methods and headers, because a permissive `allow_methods=["*"]` beside
+    a strict origin list is the usual way this ends up open: the origin looks tight and the
+    surface behind it is not."""
+    app = create_app(Settings(cors_origins=("https://console.example.com",)))
+    with TestClient(app) as c:
+        allowed = c.options(
+            "/health/live",
+            headers={
+                "Origin": "https://console.example.com",
+                "Access-Control-Request-Method": "GET",
+            },
+        )
+        assert allowed.headers.get("access-control-allow-origin") == "https://console.example.com"
+
+        refused = c.options(
+            "/health/live",
+            headers={
+                "Origin": "https://somewhere-else.example.com",
+                "Access-Control-Request-Method": "GET",
+            },
+        )
+        assert refused.headers.get("access-control-allow-origin") is None
+
+
+def test_the_trace_id_reaches_every_log_line_and_not_only_the_response() -> None:
+    """The response header is for the person reporting the problem; the log line is for
+    whoever then has to find it. A trace id on one and not the other means an id somebody
+    can quote and nobody can search for.
+
+    Bound in a contextvar rather than passed as an argument, so a log call five frames deep
+    in the gate carries it without every function in between taking a parameter it does not
+    use. Asserted by capturing what structlog actually emitted during a request, because the
+    binding is the kind of thing a refactor drops without any test noticing."""
+    captured: list[dict[str, object]] = []
+
+    def capture(_logger: Any, _name: str, event_dict: MutableMapping[str, Any]) -> str:
+        # Returns a string because structlog hands the last processor's return value to the
+        # underlying logger, and a dict arrives there as keyword arguments PrintLogger has
+        # no parameters for. Swallowing the line also keeps test output readable.
+        captured.append(dict(event_dict))
+        return ""
+
+    app = create_app(Settings(env="development", commit_sha="abc1234"))
+
+    @app.get("/_log_something")
+    async def _log_something() -> dict[str, str]:
+        # A stand-in for any code the gate runs five frames deeper. It takes no trace id
+        # as an argument, which is the property being tested.
+        structlog.get_logger().info("did a thing")
+        return {"ok": "yes"}
+
+    original = structlog.get_config()["processors"]
+    structlog.configure(processors=[structlog.contextvars.merge_contextvars, capture])
+    try:
+        with TestClient(app) as c:
+            r = c.get("/_log_something", headers={"x-trace-id": "tr_findme"})
+    finally:
+        structlog.configure(processors=original)
+
+    assert r.headers["x-trace-id"] == "tr_findme"
+
+    during_request = [e for e in captured if e.get("event") == "did a thing"]
+    assert during_request, f"the route's own log line never appeared: {captured}"
+    assert all(e.get("trace_id") == "tr_findme" for e in during_request), during_request
+    assert all(e.get("path") == "/_log_something" for e in during_request), during_request
+
+    # And the lines that belong to no request carry no trace id, which is right rather than
+    # a gap: startup and shutdown happen outside any request, and inventing an id for them
+    # would put a searchable identifier on a line no report will ever quote. The contextvar
+    # is cleared in a `finally`, so a leaked id from a previous request cannot appear here.
+    lifecycle = [e for e in captured if e.get("event") in {"starting", "shutting down"}]
+    assert lifecycle, "the lifespan logged nothing, so this half asserts nothing"
+    assert all("trace_id" not in e for e in lifecycle), lifecycle
 
 
 def test_cors_is_closed_unless_origins_are_configured() -> None:

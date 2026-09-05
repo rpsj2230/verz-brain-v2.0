@@ -228,6 +228,40 @@ def sweep_traceability() -> None:
         raise SweepFailure(findings)
     print(f"ok: {len(claimed)} task id(s) claimed, all traceable")
 
+    # And the other direction, which this sweep did not ask about at all.
+    #
+    # A source docstring is one way to claim a task. The other, and the one the status page
+    # actually counts, is a `Closes:` line in a commit. This sweep only ever read the first,
+    # so a leaf closed by a commit with no test anywhere passed silently - and 38 of them
+    # had, which is why the count is printed rather than left implied.
+    #
+    # Reported, not raised, and that is a judgement rather than a dodge. Raising would fail
+    # CI today on a backlog that predates the check, and a gate that goes red on arrival is
+    # a gate somebody switches off. Printed on every run, it cannot be forgotten, and it
+    # goes to zero by being worked down rather than by being ignored.
+    print(f"note: {_commit_claims_without_tests()} leaf/leaves closed by commit have no test")
+
+
+def _commit_claims_without_tests() -> int:
+    """How many leaves a commit has closed that no test names.
+
+    Zero when git or the WBS is unavailable, because this is an advisory line on a sweep
+    that must not fail for want of a repository.
+    """
+    try:
+        from brain.status import closed_task_ids, load_wbs
+
+        closed, _ = closed_task_ids(REPO)
+        leaves = {
+            leaf for m in load_wbs(REPO / "docs" / "wbs.json")["modules"] for leaf in m["leaf_ids"]
+        }
+        named: set[str] = set()
+        for path in TESTS.rglob("*.py"):
+            named.update(TASK_ID_RE.findall(path.read_text(encoding="utf-8")))
+    except Exception:
+        return 0
+    return len((closed & leaves) - named)
+
 
 # ------------------------------------------------------------ dependencies
 def sweep_dependencies() -> None:
