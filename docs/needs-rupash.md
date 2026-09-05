@@ -2,9 +2,13 @@
 
 Decisions and access I cannot resolve alone. Served at `/build/needs-rupash`.
 
-**Five new items are open, numbered 6 to 10 below.** They came out of building the audit
-ledger and the routing matrix, where the specification asks for two things that cannot both
-be true. Each one has my recommendation attached, so most should take you a minute.
+**Seven new items are open, numbered 6 to 12 below.** They came out of building the audit
+ledger, the routing matrix and the redaction walker, where the specification asks for two
+things that cannot both be true. Each one has my recommendation attached, so most should
+take you a minute.
+
+Items 6 to 10 are choices. **Item 11 is different: it is a gap in a rule we already
+promise**, and it needs a yes rather than a preference.
 
 Nothing is blocked on them. I have built the version I think is right in every case, and
 the code says so in a comment. If you disagree, the change is small now and expensive
@@ -143,6 +147,60 @@ layer to paper over it.
 
 **For now** the classifier surfaces `context_overflows` as a fact rather than acting on it,
 so nothing silently truncates. Something has to own the path before M8 ships.
+
+---
+
+## 11. A hidden count can still be worked out by subtraction
+
+**This is a hole in a rule we already promise**, so it needs an owner rather than a
+preference.
+
+The system must never tell anyone how many things it hid from them. "3 results hidden" is
+precisely the fact a person is not entitled to. The redaction walker enforces that
+strictly: no placeholder, no null, no shortened list carrying its old length.
+
+**But a count can survive as an ordinary field.** Imagine a client record showing
+`ticket_count: 40` beside a list of tickets, where the asker may only see the 12 in their
+own department. The list arrives correctly filtered to 12. The count says 40. The asker
+subtracts and knows there are 28 tickets they cannot see, which is the number we said we
+would never tell them.
+
+Nothing inside the walker can catch this. It sees two fields, both legitimately visible on
+their own, and cannot know that one counts the other.
+
+**My recommendation:** a rule in the field policy rather than in code. A field that counts
+a collection is marked as counting it, and becomes invisible whenever that collection is
+filtered for this asker. It costs one column in the policy and a check at mask time.
+
+**The alternative** is to accept it, on the grounds that the asker learns a number and not
+a record. I do not think that holds: the whole point of the rule is that the number itself
+is the disclosure, and a person who can see "28 hidden" for every client can map the shape
+of the business without reading a single record they are not entitled to.
+
+**What I need from you:** agreement that this is worth the column, and I will add the task.
+It is roughly a day, and it is much cheaper now than after connectors start defining
+projections.
+
+---
+
+## 12. The opaque escape hatch depends on a promise the redaction module cannot keep
+
+M4.1.6 allows a payload to skip redaction entirely, for genuinely untypeable data. It is
+guarded three ways: it needs its own capability, it flags the trace, and the answer is
+labelled as unredacted.
+
+**The label is the part that protects the person reading it**, and the redaction module
+cannot make it survive. It attaches a label to the payload; a channel adapter that simply
+does not render that label reintroduces the whole risk, silently, and every test in M4 goes
+on passing.
+
+**My recommendation:** make it a rule in M16, where the channel adapters live, that a
+payload carrying a label renders that label or refuses to send. That turns "the adapter
+remembered" into "the adapter cannot forget".
+
+**No decision needed if you agree** — I will write it into M16 when I get there. It is here
+because it is the kind of dependency that gets lost between two modules, and the failure is
+invisible from either side.
 
 ---
 
