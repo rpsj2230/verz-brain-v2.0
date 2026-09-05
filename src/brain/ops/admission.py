@@ -265,6 +265,11 @@ class RefusalKind(enum.StrEnum):
     CAPACITY = "capacity"
     #: The caller is over an allowance that belongs to them, not to the machine.
     QUOTA = "quota"
+    #: Something this decision needed could not be reached, and the safe answer was no.
+    #: Distinct from CAPACITY because the operator action is different and mutually
+    #: exclusive: capacity says buy more, a dependency says repair the thing that is down.
+    #: Folding the two together is how an outage gets answered by a bigger server.
+    DEPENDENCY = "dependency"
 
 
 #: One action per kind, and no two the same. This is the whole of the "distinguishable to
@@ -274,6 +279,7 @@ OPERATOR_ACTION: Mapping[RefusalKind, str] = MappingProxyType(
         RefusalKind.PERMISSION: "nothing; the permission model is working",
         RefusalKind.CAPACITY: "add capacity or raise the budget row",
         RefusalKind.QUOTA: "raise this principal's limit, or leave it and let them wait",
+        RefusalKind.DEPENDENCY: "restore the named dependency; nothing here is over its limit",
     }
 )
 

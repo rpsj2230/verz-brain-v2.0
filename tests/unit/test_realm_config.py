@@ -186,3 +186,103 @@ def test_the_script_does_not_carry_a_password() -> None:
         assert "password=" not in line.lower().replace(" ", "") or "$" in line, (
             f"a literal password in the setup script: {line.strip()[:60]}"
         )
+
+
+# ------------------------------------------- how long somebody stays signed in
+#
+# The confirmed policy is ten hours absolute and thirty minutes idle. It is written twice:
+# as `timedelta` constants the registry enforces, and as seconds in the realm above. The
+# tests below are the only thing that keeps the two copies equal.
+#
+# Rejected: generating this JSON from the Python constants. The realm export is
+# version-sensitive and Keycloak owns the field names, so a generator would have to model a
+# schema that changes underneath it, and a wrong field name would be silently ignored on
+# import rather than caught. A test that reads both and compares needs no such model, and it
+# fails on the machine of whoever edits one side.
+#
+# The failure being prevented is not a security hole; it is worse in one particular way.
+# Whichever copy is shorter wins, and neither end says why, so people are signed out at
+# times that match no stated policy. That reads as flakiness, and flakiness in a sign-in is
+# how a team learns to click through whatever the login page asks them.
+
+
+def test_the_realm_and_the_registry_agree_on_the_longest_a_session_may_live() -> None:
+    """Delete this and the two copies of the ten-hour ceiling drift apart at the first edit.
+
+    Compared in seconds because that is the realm's unit; `SESSION_ABSOLUTE_MAX` is the
+    stated policy and the realm is a second implementation of it."""
+    from brain.identity.sessions import SESSION_ABSOLUTE_MAX
+
+    assert _realm()["ssoSessionMaxLifespan"] == SESSION_ABSOLUTE_MAX.total_seconds()
+
+
+def test_the_realm_and_the_registry_agree_on_the_idle_window() -> None:
+    """The other half of the same drift. Thirty minutes is the number the console tells
+    people about; the realm is what actually ends the session."""
+    from brain.identity.sessions import SESSION_IDLE
+
+    assert _realm()["ssoSessionIdleTimeout"] == SESSION_IDLE.total_seconds()
+
+
+def test_a_client_session_cannot_outlive_the_sign_in_it_belongs_to() -> None:
+    """Keycloak keeps a per-client session inside the SSO session, with its own two
+    timeouts. Raising those past the SSO ones does nothing, which is why somebody would
+    raise them: it looks like the setting that is not working.
+
+    Asserted as ceilings rather than equalities so a deliberately shorter client session
+    stays legal. Shorter is always safe here; longer is the edit worth stopping."""
+    realm = _realm()
+    assert realm["clientSessionMaxLifespan"] <= realm["ssoSessionMaxLifespan"]
+    assert realm["clientSessionIdleTimeout"] <= realm["ssoSessionIdleTimeout"]
+
+
+def test_an_offline_session_is_bounded_at_all() -> None:
+    """`offlineSessionMaxLifespanEnabled` defaults to false, and false means an offline
+    token never expires. That is a permanent credential wearing the same word as everything
+    else on this page, and it is one boolean away at all times.
+
+    Delete this and the ten-hour ceiling holds for every session except the one kind that
+    outlives the laptop it was issued to."""
+    realm = _realm()
+    assert realm["offlineSessionMaxLifespanEnabled"] is True
+    assert realm["offlineSessionMaxLifespan"] <= realm["ssoSessionMaxLifespan"]
+    assert realm["offlineSessionIdleTimeout"] <= realm["ssoSessionIdleTimeout"]
+
+
+def test_an_access_token_expires_well_inside_the_idle_window() -> None:
+    """The stated idle window is a lie by exactly one token lifetime. A token minted just
+    before somebody walks away keeps working until it expires, so the real time between the
+    last action and the last possible request is idle plus token lifespan.
+
+    So the quantity to bound is that sum, not the token lifespan on its own. Thirty-five
+    minutes against a stated thirty is a rounding error; a token lifespan near the idle
+    window would nearly double it, and nothing in the realm would say so.
+
+    A quarter is the tolerance: the true window still rounds to the stated one at the
+    granularity anybody reasons about. Note this is strictly tighter than the 900-second
+    ceiling asserted above, which on its own would permit a fifty percent overshoot - the
+    two tests bound different things and neither implies the other."""
+    realm = _realm()
+    effective = realm["ssoSessionIdleTimeout"] + realm["accessTokenLifespan"]
+    assert effective <= realm["ssoSessionIdleTimeout"] * 1.25, (
+        f"the real idle window is {effective}s against a stated "
+        f"{realm['ssoSessionIdleTimeout']}s"
+    )
+
+
+def test_remember_me_cannot_extend_a_session_past_the_ceiling() -> None:
+    """Remember-me is off, and if it is ever turned on it carries its own pair of lifespans
+    that override the ones above. Zero means inherit, which is the safe value and the one
+    set here.
+
+    Written as a conditional rather than asserting the feature stays off, because turning it
+    on is a reasonable product decision and losing the ten-hour ceiling to it is not. Delete
+    this and the ceiling has an off switch labelled with a convenience feature."""
+    realm = _realm()
+    if realm["rememberMe"] is True:
+        for key in ("ssoSessionMaxLifespanRememberMe", "ssoSessionIdleTimeoutRememberMe"):
+            override = realm[key]
+            base = realm[key.removesuffix("RememberMe")]
+            assert override == 0 or override <= base, (
+                f"{key} lets remember-me outlive the confirmed ceiling"
+            )

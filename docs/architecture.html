@@ -379,7 +379,7 @@
       <caption>Primitives · never granted directly</caption>
       <thead><tr><th>Term</th><th>Definition</th><th>Representation</th></tr></thead>
       <tbody>
-        <tr><td class="k">Principal</td><td>An authenticated identity — person, service or partner.</td><td class="m">uuid from Keycloak</td></tr>
+        <tr><td class="k">Principal</td><td>An authenticated identity — person, service or partner.</td><td class="m">opaque id minted here; the IdP subject maps to it</td></tr>
         <tr><td class="k">Scope</td><td>A <strong>predicate over rows</strong>. This is what a department actually is.</td><td class="m">jsonb {"department":"web"}</td></tr>
         <tr><td class="k">Capability</td><td>An atomic permission. Authorisation is set membership over these.</td><td class="m">read:client.contract_value</td></tr>
         <tr><td class="k">Entitlement set</td><td>Computed per request: every (capability, scope) pair held now. Its hash keys the cache.</td><td class="m">E(principal) → ent_hash</td></tr>

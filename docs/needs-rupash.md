@@ -228,6 +228,18 @@ history.
 
 **No action needed if you agree.**
 
+**BUILT (2026-09-05).** The line is corrected in two places, because the wrong idea was
+written twice. `docs/architecture.html` gave a principal's representation as "uuid from
+Keycloak"; it now says the id is minted here and the provider's subject maps to it. The
+comment on `PrincipalRow.id` claimed the id "arrives from the identity provider" while
+giving `c_0447` as the example, which is not a Keycloak subject: that comment now states
+the indirection and the migration it protects.
+
+The code was already right and already proved right. `test_a_known_subject_resolves_to_the
+_principal_the_directory_holds` uses a Keycloak-shaped uuid for the subject and `u_priya`
+for the principal id, so an implementation that shortcut the lookup and returned the
+subject fails that test today. Nothing to change beyond the two comments.
+
 ---
 
 ---
@@ -253,6 +265,37 @@ useful for as long as the number says.
 **One caution.** The absolute limit is written in two places: the code and the Keycloak realm
 configuration. They have to stay in step, or people get logouts that look random. When you
 change it, tell me rather than editing one of them.
+
+**BUILT (2026-09-05).** That caution is now a gate rather than a request. Six tests in
+`tests/unit/test_realm_config.py` read the realm export and the Python constants and refuse
+to let them drift, and I broke each one to check it bites:
+
+| What I changed | Caught by |
+| --- | --- |
+| Realm alone extended to a full day | the ten-hour agreement test |
+| Realm alone doubles the idle window | the thirty-minute agreement test |
+| Code alone extended to twelve hours | the ten-hour agreement test |
+| Code alone relaxes idle to 45 minutes | the thirty-minute agreement test |
+| Offline sessions lose their bound | the offline-session test |
+| A client session set to outlive its sign-in | the client-session test |
+| Token lifespan doubled to ten minutes | the effective-window test |
+| Remember-me switched on with a week of its own | the remember-me test |
+
+Three findings worth your time.
+
+**The stated thirty minutes was never the true number.** A token minted just before somebody
+walks away keeps working until it expires, so the real gap between the last action and the
+last possible request is idle plus token lifespan: 35 minutes, not 30. That is a rounding
+error and I have left it, but the test now bounds the *effective* window rather than the
+token lifespan on its own.
+
+**The existing token test did not catch a doubled token lifespan.** It caps the lifespan at
+900 seconds, and 600 passes it. That ceiling alone would permit a fifty percent overshoot on
+the idle policy. The two tests bound different things and neither implies the other.
+
+**Offline sessions had one boolean between them and never expiring.**
+`offlineSessionMaxLifespanEnabled` defaults to false, and false means an offline token
+outlives the laptop it was issued to. It is set correctly and is now asserted.
 
 ---
 
