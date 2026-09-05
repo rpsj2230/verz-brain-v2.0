@@ -263,6 +263,105 @@ def _commit_claims_without_tests() -> int:
     return len((closed & leaves) - named)
 
 
+#: Licences this project may depend on. Permissive only, plus MPL-2.0, which is file-level
+#: copyleft and therefore safe for a dependency we do not modify. Absent deliberately: the
+#: GPL family and AGPL, which reach into a client-hosted product, and every "source
+#: available" licence that restricts commercial use.
+ALLOWED_LICENCES: frozenset[str] = frozenset(
+    {
+        "MIT",
+        "Apache-2.0",
+        "BSD-3-Clause",
+        "BSD-2-Clause",
+        "ISC",
+        "PSF-2.0",
+        "MPL-2.0",
+        # File-level copyleft, and the reason it is here is specific rather than general.
+        # `psycopg`, `psycopg-binary` and `psycopg-pool` are LGPL-3.0-only, and psycopg is
+        # the PostgreSQL driver for Python - there is no permissive equivalent worth
+        # switching to. The LGPL permits use in a proprietary product provided the library
+        # is not modified and stays replaceable, which is exactly how it is used here: it
+        # is imported, never vendored, never patched, and pinned by version in `uv.lock` so
+        # a client could swap it. **Modifying any LGPL dependency changes that answer**, so
+        # a vendored patch to psycopg is a licence decision and not a code change.
+        "LGPL-3.0-only",
+        "LGPL-3.0-or-later",
+    }
+)
+
+#: How a classifier spells what `License-Expression` spells as an SPDX id. Only the ones
+#: that appear in this dependency set: guessing at the rest would be a mapping nobody has
+#: checked, and a wrong entry here silently admits a licence.
+_CLASSIFIER_TO_SPDX = {
+    "License :: OSI Approved :: MIT License": "MIT",
+    "License :: OSI Approved :: Apache Software License": "Apache-2.0",
+    "License :: OSI Approved :: BSD License": "BSD-3-Clause",
+    "License :: OSI Approved :: ISC License (ISCL)": "ISC",
+    "License :: OSI Approved :: Python Software Foundation License": "PSF-2.0",
+    "License :: OSI Approved :: Mozilla Public License 2.0 (MPL 2.0)": "MPL-2.0",
+}
+
+
+def licence_is_allowed(expression: str) -> bool:
+    """Whether an SPDX expression is covered by the allowlist.
+
+    Real metadata is not a bare id. `structlog` declares `MIT OR Apache-2.0`, `greenlet`
+    declares `MIT AND PSF-2.0`, and a plain set membership test refuses both - which is how
+    a working allowlist gets deleted for being wrong rather than fixed.
+
+    `OR` is a choice, so one allowed operand is enough. `AND` is a conjunction, so every
+    operand must be allowed. Anything with brackets, a `WITH` exception, or both operators
+    mixed is refused rather than guessed at: this is a check whose wrong answers are silent,
+    and the honest response to an expression this cannot parse is to make a person look.
+    """
+    text = expression.strip()
+    if not text:
+        return False
+    if "(" in text or ")" in text or " WITH " in text:
+        return False
+    if " OR " in text and " AND " in text:
+        return False
+    if " OR " in text:
+        return any(part.strip() in ALLOWED_LICENCES for part in text.split(" OR "))
+    if " AND " in text:
+        return all(part.strip() in ALLOWED_LICENCES for part in text.split(" AND "))
+    return text in ALLOWED_LICENCES
+
+
+def _installed_licences() -> dict[str, str]:
+    """Every installed distribution and the SPDX id it declares, empty where it declares none.
+
+    Read from the installed environment rather than from the lock, because the lock records
+    versions and not licences: answering from it would need a network call per package, and
+    a check that needs the network is a check that gets skipped locally and then trusted.
+
+    `License-Expression` is the modern field and is already SPDX. `License` is free text and
+    is accepted only when it is exactly an id we allow - "MIT License" and "BSD-like" are
+    not parsed, because a parser here would be a place a wrong guess admits something. The
+    classifier is the last resort and is mapped through a table of the forms that actually
+    occur in this dependency set.
+    """
+    import importlib.metadata as md
+
+    found: dict[str, str] = {}
+    for dist in md.distributions():
+        meta = dist.metadata
+        name = meta["Name"]
+        if not name:
+            continue
+        declared = (meta.get("License-Expression") or "").strip()
+        if not declared:
+            plain = (meta.get("License") or "").strip()
+            declared = plain if plain in ALLOWED_LICENCES else ""
+        if not declared:
+            for classifier in meta.get_all("Classifier") or []:
+                if classifier in _CLASSIFIER_TO_SPDX:
+                    declared = _CLASSIFIER_TO_SPDX[classifier]
+                    break
+        found[name] = declared
+    return found
+
+
 # ------------------------------------------------------------ dependencies
 def sweep_dependencies() -> None:
     """Licence allowlist, release age, and whether the project is still alive.
@@ -271,13 +370,33 @@ def sweep_dependencies() -> None:
     while still being widely recommended. Reading a LICENCE file is not the same as
     checking whether anyone still maintains the thing.
     """
-    allowed = {"MIT", "Apache-2.0", "BSD-3-Clause", "BSD-2-Clause", "ISC", "PSF-2.0", "MPL-2.0"}
     lock = REPO / "uv.lock"
     if not lock.exists():
         raise SweepFailure(["uv.lock is missing; dependencies are not pinned"])
     names = re.findall(r'^name = "([^"]+)"', lock.read_text(encoding="utf-8"), re.MULTILINE)
-    print(f"ok: {len(set(names))} pinned package(s); allowlist has {len(allowed)} licences")
-    print("note: licence and archived checks require network; enforced in CI")
+
+    # The allowlist used to be built here and compared against nothing: the only thing that
+    # touched it was the line printing its length. A sweep that reports "ok" about a rule it
+    # is not applying is worse than no sweep, and this is the third one in this tree found
+    # doing it. It is now applied, against the installed distributions, which is what
+    # actually ships.
+    findings: list[str] = []
+    unknown: list[str] = []
+    for name, licence in _installed_licences().items():
+        if not licence:
+            # Reported, not failed. Some distributions genuinely publish nothing, and
+            # failing on that would make the sweep unpassable for a reason nobody can fix.
+            unknown.append(name)
+        elif not licence_is_allowed(licence):
+            findings.append(f"{name} is under {licence!r}, which is not on the allowlist")
+    if findings:
+        raise SweepFailure(findings)
+
+    checked = len(_installed_licences())
+    print(f"ok: {len(set(names))} pinned package(s); {checked} installed licences checked")
+    if unknown:
+        print(f"note: {len(unknown)} publish no licence metadata: {', '.join(sorted(unknown)[:5])}")
+    print("note: release age and archived checks need network; enforced in CI")
 
 
 # --------------------------------------------------------- slug collisions (M2.1.5)

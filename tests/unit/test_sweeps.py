@@ -225,3 +225,82 @@ def test_staging_pools_the_same_way_production_does() -> None:
     left = staging["services"]["pgbouncer"]["environment"]["POOL_MODE"]
     right = production["services"]["pgbouncer"]["environment"]["POOL_MODE"]
     assert left == right == "transaction"
+
+
+# ------------------------------------------------- the licence check (M0.5.7)
+def test_the_licence_allowlist_is_actually_applied() -> None:
+    """It was not. The allowlist was built inside `sweep_dependencies` and the only thing
+    that touched it was the line printing its length; no package's licence was ever compared
+    against it, and the sweep printed "ok" on every run.
+
+    That is the third sweep in this tree found reporting success about a rule it was not
+    applying. This asserts the check reaches a real answer rather than a reassuring one."""
+    from brain.ops import sweeps as mod
+
+    # Reading the metadata is not the same as acting on it, and the first version of this
+    # test only proved the reading. Stub in a dependency nobody would accept and require the
+    # sweep to fail: that is the behaviour, and it is what survived a mutation removing the
+    # comparison entirely.
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(mod, "_installed_licences", lambda: {"something": "AGPL-3.0-only"})
+    try:
+        with pytest.raises(mod.SweepFailure) as caught:
+            mod.sweep_dependencies()
+    finally:
+        monkeypatch.undo()
+    assert "AGPL-3.0-only" in str(caught.value.findings)
+
+    # And it passes on a set it should accept, so the check is not simply always failing.
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(mod, "_installed_licences", lambda: {"something": "MIT"})
+    try:
+        mod.sweep_dependencies()
+    finally:
+        monkeypatch.undo()
+
+    real = mod._installed_licences()
+    assert len(real) > 20, "no distributions were inspected at all"
+
+
+@pytest.mark.parametrize(
+    ("expression", "allowed"),
+    [
+        ("MIT", True),
+        ("Apache-2.0", True),
+        ("LGPL-3.0-only", True),
+        ("GPL-3.0-only", False),
+        ("AGPL-3.0-only", False),
+        # Real metadata from this dependency set. A plain set membership test refuses all
+        # three, which is how a working allowlist gets deleted for being wrong.
+        ("MIT OR Apache-2.0", True),
+        ("MIT AND PSF-2.0", True),
+        ("Apache-2.0 OR BSD-2-Clause", True),
+        # An OR needs only one allowed operand; an AND needs all of them.
+        ("MIT OR GPL-3.0-only", True),
+        ("MIT AND GPL-3.0-only", False),
+        # Refused rather than guessed at, because a wrong answer here is silent.
+        ("(MIT OR Apache-2.0) AND ISC", False),
+        ("Apache-2.0 WITH LLVM-exception", False),
+        ("MIT AND Apache-2.0 OR ISC", False),
+        ("", False),
+    ],
+)
+def test_an_spdx_expression_is_read_rather_than_matched_as_a_string(
+    expression: str, allowed: bool
+) -> None:
+    """The two halves that matter: an OR is a choice, an AND is a conjunction. Getting them
+    the wrong way round admits a GPL dependency that declared `MIT AND GPL-3.0-only`."""
+    from brain.ops.sweeps import licence_is_allowed
+
+    assert licence_is_allowed(expression) is allowed
+
+
+def test_the_copyleft_licences_that_would_reach_a_client_are_not_allowed() -> None:
+    """This is a client-hosted product: the client receives and runs the software. GPL and
+    AGPL reach into that in a way MIT and Apache do not, and AGPL reaches it over a network
+    too. LGPL is allowed and is a separate, argued decision recorded beside the allowlist -
+    it holds only while nothing here modifies or vendors an LGPL dependency."""
+    from brain.ops.sweeps import ALLOWED_LICENCES
+
+    for refused in ("GPL-3.0-only", "GPL-2.0-only", "AGPL-3.0-only", "SSPL-1.0", "BUSL-1.1"):
+        assert refused not in ALLOWED_LICENCES
