@@ -138,6 +138,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Deploy
+        id: deploy
         env:
           # Coolify's generic deploy endpoint. It handles Service resources as well as
           # Applications (DeployController::deploy_resource -> StartService), which is why
@@ -149,9 +150,21 @@ jobs:
           TOKEN: ${{ secrets.COOLIFY_TOKEN }}
           SHA: ${{ needs.build.outputs.sha }}
         run: |
-          if [ -z "$COOLIFY_URL" ] || [ -z "$TOKEN" ] || [ -z "$SERVICE_UUID" ]; then
-            echo "Coolify secrets not set - skipping deploy."
-            echo "Image ghcr.io/${{ github.repository }}:$SHA is published and ready to pull."
+          # Named, so the summary below can say which one is missing rather than "some
+          # secret". A deploy that cannot happen is worth being specific about.
+          missing=""
+          [ -z "$COOLIFY_URL" ]   && missing="$missing COOLIFY_URL"
+          [ -z "$TOKEN" ]         && missing="$missing COOLIFY_TOKEN"
+          [ -z "$SERVICE_UUID" ]  && missing="$missing COOLIFY_SERVICE_UUID"
+          if [ -n "$missing" ]; then
+            # A warning rather than a silent pass. This step exited 0 for months while the
+            # summary below printed "Deployed", so every run looked like a deploy and the
+            # server sat on an image from March. Not an error, because the build and the
+            # signature are genuinely fine and failing here would make a green build red
+            # for a reason nobody can fix from a pull request.
+            echo "::warning::no deploy: missing secret(s)$missing. The image is published; the server was not told."
+            echo "deployed=false" >> "$GITHUB_OUTPUT"
+            echo "missing=$missing" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           echo "Deploying $SHA to service $SERVICE_UUID"
@@ -161,10 +174,19 @@ jobs:
             echo "::error::Coolify returned $code"
             exit 1
           fi
+          echo "deployed=true" >> "$GITHUB_OUTPUT"
 
       - name: Record what shipped
         if: success()
         run: |
-          echo "### Deployed" >> "$GITHUB_STEP_SUMMARY"
+          # Two different summaries, because a run that published an image and a run that
+          # deployed one are different events and the old summary called both "Deployed".
+          if [ "${{ steps.deploy.outputs.deployed }}" = "true" ]; then
+            echo "### Deployed" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### Published, NOT deployed" >> "$GITHUB_STEP_SUMMARY"
+            echo "Missing secret(s):${{ steps.deploy.outputs.missing }}. The server is still" >> "$GITHUB_STEP_SUMMARY"
+            echo "running whatever it was running. Add them in Settings > Secrets." >> "$GITHUB_STEP_SUMMARY"
+          fi
           echo "- commit \`${{ needs.build.outputs.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- image \`ghcr.io/${{ github.repository }}:${{ needs.build.outputs.sha }}\`" >> "$GITHUB_STEP_SUMMARY"

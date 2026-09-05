@@ -2,8 +2,9 @@
 
 Decisions and access I cannot resolve alone. Served at `/build/needs-rupash`.
 
-**3 items are open: 24, 25 and 26.** None blocks
-anything today, and none is urgent this week. 24 is a disclosure trade-off that starts to
+**4 items are open: 24, 25, 26 and 27.** 27 is the one to do first and it takes about
+five minutes: automatic deploys have never actually worked, and I deployed by hand today
+to get your changes live. The other three block nothing and none is urgent this week. 24 is a disclosure trade-off that starts to
 matter when people with narrow permissions begin using the system, which is wave 4. 25 is a
 measured capacity limit that needs a decision before wave 4 rather than during it. 26 is a
 product question about the website widget, and the machinery around it is being built
@@ -16,6 +17,56 @@ in.
 ---
 
 # Open
+
+## 27. Automatic deploys have never worked, and the pipeline said they had
+
+**This is the one open item with a real cost, and it needs about five minutes from you.**
+
+**What I found.** You asked me to push everything live. I did, and nothing happened. The
+build ran, the image was published to the registry and signed, and then the step that tells
+your server to pull it printed `Coolify secrets not set - skipping deploy` and exited
+successfully. The next step printed **"Deployed"**. So every run since this was built has
+looked like a deploy on the summary page and has been a no-op.
+
+**What it cost.** Your server was running commit `d58b3ce` showing 24.1% while the work was
+at 31.3%. Roughly a hundred closed tasks were finished, tested, pushed and not live.
+
+**What I did about it.** I deployed by hand over SSH: took a verified database backup first,
+pulled the new image, applied the three pending migrations (0005, 0006, 0007 - production
+went from revision 0004 to 0007), and restarted. The site now serves commit `1a9527f` at
+31.3%, the app is healthy, and I checked the new tables and the widened constraint exist
+rather than trusting the migration's exit code. I also fixed the pipeline so it can never
+again print "Deployed" for a run that did not deploy: it now says "Published, NOT deployed"
+and names the missing secret.
+
+**What I need from you.** Three secrets on the GitHub repository. I cannot create these: the
+token has to be issued from your Coolify account, and I will not be handling it.
+
+1. Open Coolify. It is not reachable on the public internet by design, so use an SSH tunnel:
+   run `ssh -L 8000:localhost:8000 verz-vps` in a terminal and leave it open, then browse to
+   `http://localhost:8000`.
+2. In Coolify, go to **Keys & Tokens** > **API tokens**, create one with **write** (deploy)
+   permission, and copy the value. It is shown once.
+3. Still in Coolify, open the Brain service and copy its **UUID** from the browser address
+   bar. It is the long string after `/service/`, and it should be
+   `c74hlhygvg7scjttu8ydwnqi` unless something has changed.
+4. Go to `https://github.com/rpsj2230/verz-brain-v2.0/settings/secrets/actions` and click
+   **New repository secret** three times:
+   - Name `COOLIFY_URL`, value `http://localhost:8000` will NOT work here, because GitHub
+     runs on the internet. Use `https://194.233.66.89:8000` only if that port is open to
+     GitHub; it currently is not. **Tell me once you have the token and I will set up the
+     reachable path**, which is the one part of this that is a decision rather than a click:
+     either open the port to GitHub's ranges, or put Coolify behind the existing HTTPS proxy
+     on a path, or switch to a Coolify-side webhook that pulls rather than being pushed to.
+   - Name `COOLIFY_TOKEN`, value the token from step 2.
+   - Name `COOLIFY_SERVICE_UUID`, value the UUID from step 3.
+
+**The honest recommendation.** Do steps 1 to 3 and send me nothing but "done". I will then
+propose the reachability option I think is right, with the trade-off, and you pick. Until
+this is finished I will keep deploying by hand after each push, which works and is exactly
+the manual step decision 22 was meant to remove.
+
+---
 
 ## 26. The chat widget on a client's marketing site: what may a stranger ask it?
 
