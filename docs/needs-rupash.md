@@ -2,7 +2,7 @@
 
 Decisions and access I cannot resolve alone. Served at `/build/needs-rupash`.
 
-**Six items are open: 17, 19, 20, 21, 22 and 23.** None of them blocks anything today. 17 needs
+**Seven items are open: 17, 19, 20, 21, 22, 23 and 24.** None of them blocks anything today. 17 needs
 answering before the secrets vault is deployed; 19 is two numbers to confirm; 20 and 21 are
 design contradictions I have resolved one way and would rather you saw than inherited.
 Everything else on this page is decided.
@@ -511,6 +511,45 @@ other way is client-visible information you did not intend to publish, and unpub
 is harder than publishing it.
 
 Nothing to do unless you disagree.
+
+---
+
+## 24. When a source is down, should the answer name it?
+
+**Nothing is blocked. I have built the safe reading and this is a question about whether to
+loosen it.**
+
+The plan says that when the Brain cannot reach one of your systems, the answer should say
+which one. That is obviously good service: "I could not reach Xero" is a better answer than
+"something went wrong", because you know whether to wait or to ask somebody.
+
+**The problem is who else is asking.** The same sentence, sent to somebody who has no access
+to Xero at all, tells them Xero exists and that you connect to it. Ask about invoices and
+learn there is an accounting system; ask about tickets and learn there is a helpdesk. A
+person with no permissions anywhere could map every system you run, one question at a time,
+without ever seeing a single record.
+
+That is the same rule the rest of the system already follows: an answer never says "I looked
+in the finance ledger and found nothing", because the sentence gives away the ledger.
+
+**What I have built.** The answer names a source only when that person could already see it
+in their own tool list. Everything else becomes "part of this answer is unavailable", and
+the full list of what failed goes to the operator's log, where you and whoever is on support
+can read it.
+
+| | Names every failed source | Names only what they can already see |
+|---|---|---|
+| A person with full access | Sees exactly what is down | Sees exactly what is down |
+| A person with narrow access | Learns which systems exist | Told part of the answer is unavailable |
+| Somebody probing | Can map your whole estate | Learns nothing |
+| Your support team | Reads it in the answer | Reads it in the log |
+
+**My recommendation: keep it as built.** The cost is that a narrowly-permissioned person
+gets a vaguer message and has to ask, and the person they ask can see the log. The cost the
+other way is a map of your systems available to anybody who can type a question.
+
+This only becomes a real difference once there are people using it with narrow permissions,
+which is wave 4. Worth deciding before then rather than during.
 
 ---
 
