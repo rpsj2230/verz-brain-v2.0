@@ -1,11 +1,18 @@
 """Progress computed from git history, and the pages that serve it.
 
-Task ids: M38.3.1, M38.3.2, M38.3.3, M38.3.4, M38.3.5, M38.3.6
+Task ids: M38.3.1, M38.3.2, M38.3.3, M38.3.4, M38.3.5, M38.3.6,
+M38.3.1.1, M38.3.1.3, M38.3.1.4, M38.3.2.1, M38.3.2.2, M38.3.2.3, M38.3.2.4, M38.3.2.5
+
+Deliberately not claimed: M38.3.1.2, which asks for the status file to be written back
+to the repository on each merge. It is generated in CI and baked into the image, and
+committing it back would store a derived value in the tree it is derived from - a bot
+commit on every merge, each of which is itself a merge. See the note on it below.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from collections.abc import Iterator
 from pathlib import Path
@@ -104,6 +111,55 @@ def test_waves_roll_up_separately(repo: Path) -> None:
     assert (by_wave[1].done, by_wave[1].total) == (1, 2)
 
 
+def test_closed_today_counts_the_days_work(repo: Path) -> None:
+    """M38.3.1.4. Both commits in the fixture are made now, so all three of their leaves
+    are today's. Deleting this leaves the number free to be anything: it is displayed
+    prominently and checked by nobody, which is the worst combination for a figure a person
+    reads to decide whether to ask what happened."""
+    assert status.build_status(repo, WBS).closed_today == 3
+
+
+def test_a_commit_from_before_today_is_not_counted(repo: Path) -> None:
+    """The boundary, and it has to be real rather than assumed. Without this the count is
+    "every leaf ever closed" on a repository whose history is short, which is exactly the
+    situation now and exactly when nobody would notice."""
+    # Dated at commit time rather than amended afterwards. `--since` reads the *committer*
+    # date, and `--date` sets only the author date, so an amend that looks like it moved the
+    # commit leaves the filter reading the original moment.
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", "old work\n\nCloses: M0.2.1"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        env={
+            **os.environ,
+            "GIT_COMMITTER_DATE": "2026-09-01T09:00:00+00:00",
+            "GIT_AUTHOR_DATE": "2026-09-01T09:00:00+00:00",
+        },
+    )
+    s = status.build_status(repo, WBS)
+    # Counted as done, because it is. Not counted as today's, because it is not.
+    assert "M0.2.1" in s.done_task_ids
+    assert s.closed_today == 3
+
+
+def test_next_up_names_unclosed_leaves_in_the_current_wave(repo: Path) -> None:
+    """M38.3.1.4. In plan order, not id order: the WBS lists leaves in the sequence they
+    are meant to be done, and re-sorting answers a different question."""
+    s = status.build_status(repo, WBS)
+    assert s.next_up
+    assert all(leaf not in s.done_task_ids for leaf in s.next_up)
+
+
+def test_next_up_is_empty_when_the_current_wave_is_finished(repo: Path) -> None:
+    """Otherwise the page suggests work in a wave that has none left, which reads as the
+    plan being wrong rather than the page being wrong."""
+    git(repo, "commit", "--allow-empty", "-m", "rest of wave 0\n\nCloses: M0.2.1")
+    s = status.build_status(repo, WBS)
+    assert s.current_wave == 1
+    assert all(leaf.startswith("M1") for leaf in s.next_up), s.next_up
+
+
 def test_current_wave_is_the_first_unfinished_one(repo: Path) -> None:
     assert status.build_status(repo, WBS).current_wave == 0
 
@@ -177,6 +233,8 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClie
                 ],
                 "modules": [],
                 "done_task_ids": ["M0.1.1"],
+                "closed_today": 3,
+                "next_up": ["M1.2.3", "M1.2.4"],
                 "recent": [
                     {"sha": "abc1234", "subject": "M0.1.1: a thing", "closed": "M0.1.1", "at": ""}
                 ],
@@ -207,6 +265,84 @@ def test_index_shows_the_percentage_and_the_commit(client: TestClient) -> None:
     assert "25.0%" in text
     assert "abc1234" in text
     assert "The gate" in text
+
+
+def test_the_page_says_how_much_closed_today(client: TestClient) -> None:
+    """M38.3.2.3. The number a person actually wants when they open this: not the total,
+    which barely moves, but whether anything happened since they last looked."""
+    assert "3 closed today" in client.get("/build").text
+
+
+def test_a_day_with_nothing_closed_says_so_rather_than_showing_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Zero is a real answer and is the one worth showing. A page that only ever displays
+    movement cannot display a stall, and hiding the line on a quiet day means a stalled
+    project looks identical to a project nobody has checked."""
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "status.json").write_text(
+        json.dumps(
+            {
+                "commit": "abc1234",
+                "total": 100,
+                "done": 25,
+                "percent": 25.0,
+                "current_wave": 1,
+                "waves": [
+                    {"wave": 1, "name": "The gate", "total": 100, "done": 25, "percent": 25.0}
+                ],
+                "closed_today": 0,
+                "next_up": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(docs_routes, "DOCS", docs)
+    with TestClient(create_app(Settings(env="production"))) as c:
+        text = c.get("/build").text
+    assert "nothing closed today yet" in text
+    assert "this wave is finished" in text
+
+
+def test_the_page_says_what_is_next(client: TestClient) -> None:
+    """M38.3.2.3. "What is next" without anybody opening the tracker and reading down it.
+    In plan order rather than id order, because the WBS lists leaves in the sequence they
+    are meant to be done and `M12.1.10` sorts before `M12.1.2` as a string."""
+    text = client.get("/build").text
+    assert "Next up" in text
+    assert "M1.2.3" in text
+    assert text.index("M1.2.3") < text.index("M1.2.4")
+
+
+def test_the_page_names_the_commit_it_was_built_from(client: TestClient) -> None:
+    """M38.3.2.4, and the half that always worked. A status page that cannot say which
+    version produced it is a page nobody can check against the running system."""
+    assert "abc1234" in client.get("/build").text
+
+
+def test_the_page_is_reachable_without_signing_in(client: TestClient) -> None:
+    """M38.3.2.5. The whole point: progress needs no meeting, which means it needs no
+    account either. Built with `env="production"`, where the interactive API docs are off,
+    so this asserts the build pages are deliberately exempt rather than accidentally open."""
+    for path in ("/build", "/build/tracker", "/api/status.json"):
+        assert client.get(path).status_code == 200, path
+    assert client.get("/docs").status_code == 404
+
+
+def test_the_status_file_is_never_written_by_hand(client: TestClient) -> None:
+    """M38.3.1.3. There is no endpoint, flag or environment variable that marks a task
+    done. The only way a leaf becomes closed is a commit on main naming it, which means the
+    page cannot show progress that does not exist.
+
+    Asserted structurally over the module rather than by trying every URL: a route that
+    accepted a task id would have to exist as a function, and this is the check that fails
+    when somebody adds one for convenience during a demo."""
+    import inspect
+
+    source = inspect.getsource(docs_routes)
+    for verb in ("@router.post", "@router.put", "@router.patch", "@router.delete"):
+        assert verb not in source, f"{verb} on the build pages: progress could be set by hand"
 
 
 def test_tracker_is_served(client: TestClient) -> None:

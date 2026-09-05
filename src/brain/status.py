@@ -58,6 +58,12 @@ class Status(BaseModel):
     waves: list[WaveProgress] = []
     modules: list[ModuleProgress] = []
     done_task_ids: list[str] = []
+    #: How many leaves closed since midnight UTC. Zero is a real and common answer, and
+    #: showing it is the point: a page that only ever shows movement cannot show a stall.
+    closed_today: int = 0
+    #: The next few unclosed leaves in the current wave, in plan order. Answers "what is
+    #: next" without anybody opening the tracker and reading down it.
+    next_up: list[str] = []
     recent: list[dict[str, str]] = []
 
 
@@ -134,6 +140,46 @@ def closed_task_ids(repo: Path, ref: str = "HEAD") -> tuple[set[str], list[dict[
                 }
             )
     return found, recent
+
+
+def closed_since(repo: Path, when: datetime, ref: str = "HEAD") -> set[str]:
+    """Task ids claimed by commits made on or after `when`.
+
+    **Filtered in Python, not with `git log --since`.** `--since` prunes the walk: it
+    stops descending a line of history at the first commit older than the cutoff, so a
+    single old commit sitting at the tip hides every newer commit behind it. That is not
+    hypothetical - a rebase, a cherry-pick or any amended date produces exactly that
+    shape, and the count comes back zero with no error anywhere. Found by a test that
+    dated one commit to last week and expected the other three to still count.
+
+    A separate walk rather than a filter over `recent`, because `recent` is capped at
+    twenty entries: counting from it would be right on a quiet day and quietly wrong on a
+    busy one, which is the worse of the two failures.
+
+    `when` is passed in rather than computed here so the caller decides what "today"
+    means. It has to be UTC: the build runs on a CI runner in one timezone, the server is
+    in another and the person reading is in a third, and a day boundary that depends on
+    who is asking gives three different answers to one question.
+    """
+    raw = _git("log", ref, "--pretty=format:%ct%x1f%s%x1f%b%x1e", cwd=repo)
+    cutoff = when.timestamp()
+    found: set[str] = set()
+    for entry in raw.split("\x1e"):
+        if not entry.strip():
+            continue
+        # `lstrip` of line endings only, never `strip()`: Python counts \x1c through
+        # \x1f as whitespace, so a bare strip eats the unit separator and a one-line
+        # message then splits wrongly. The same trap as in `closed_task_ids` above.
+        parts = entry.lstrip("\r\n").split("\x1f", 2)
+        if len(parts) < 2:
+            continue
+        try:
+            if int(parts[0]) < cutoff:
+                continue
+        except ValueError:
+            continue
+        found.update(claimed_ids(parts[1], parts[2] if len(parts) > 2 else ""))
+    return found
 
 
 def _leaf_ids(node: Any, prefix: str, out: list[str]) -> None:
@@ -215,6 +261,29 @@ def build_status(repo: Path, wbs: dict[str, Any], ref: str = "HEAD") -> Status:
     # current wave rather than a misleading "wave 5".
     current = next((w.wave for w in waves if w.done < w.total), None)
 
+    # Midnight UTC rather than local. The build runs on a CI runner in one timezone, the
+    # server is in another and Rupash is in a third; "today" has to mean one thing or the
+    # number changes depending on who is asking.
+    midnight = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+    closed_today = len(closed_since(repo, midnight, ref) & set(matched))
+
+    # Plan order, not id order. The WBS lists leaves in the sequence they are meant to be
+    # done, and re-sorting them would answer a different question: `M12.1.10` sorts before
+    # `M12.1.2` as a string, and the plan does not mean that.
+    next_up: list[str] = []
+    for m in wbs.get("modules", []):
+        waves_by_leaf: dict[str, int] = m.get("leaf_waves", {})
+        for leaf in m.get("leaf_ids", []):
+            if leaf in closed:
+                continue
+            if current is not None and waves_by_leaf.get(leaf, int(m.get("wave", 0))) != current:
+                continue
+            next_up.append(leaf)
+            if len(next_up) == 5:
+                break
+        if len(next_up) == 5:
+            break
+
     return Status(
         generated_at=datetime.now(UTC).isoformat(),
         commit=_git("rev-parse", "--short", "HEAD", cwd=repo) or "unknown",
@@ -226,6 +295,8 @@ def build_status(repo: Path, wbs: dict[str, Any], ref: str = "HEAD") -> Status:
         waves=waves,
         modules=modules,
         done_task_ids=sorted(matched),
+        closed_today=closed_today,
+        next_up=next_up,
         recent=recent,
     )
 

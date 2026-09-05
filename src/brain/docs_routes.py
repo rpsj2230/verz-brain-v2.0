@@ -65,6 +65,26 @@ async def screens() -> FileResponse | HTMLResponse:
     return _doc("screens.html")
 
 
+def _shipped_at() -> str:
+    """When this image was built, from the manifest baked into it.
+
+    Empty outside a built image rather than a guess. The alternative sources are all
+    wrong in the same way: the file's mtime is when the layer was written, and
+    `datetime.now()` is when somebody loaded the page. Neither answers "when did this
+    version start serving", which is the question somebody asks when a bug appeared
+    between two times they remember.
+    """
+    try:
+        from brain.ops.release_manifest import read_manifest
+
+        manifest = read_manifest()
+    except Exception:
+        return ""
+    if manifest is None:
+        return ""
+    return f" · shipped {manifest.built_at:%d %b %H:%M} UTC"
+
+
 @router.get("/build", response_class=HTMLResponse)
 async def build_status(request: Request) -> HTMLResponse:
     """A one-screen answer to 'where is this up to', with links to the full documents."""
@@ -84,6 +104,18 @@ async def build_status(request: Request) -> HTMLResponse:
         f"<li><code>{r['sha']}</code> {r['subject']}</li>" for r in s.get("recent", [])[:6]
     )
     needs = _needs_count()
+
+    # Zero is a real answer and is shown as one. A page that only ever displays movement
+    # cannot display a stall, and a stall is the thing worth noticing without being told.
+    today = s.get("closed_today", 0)
+    today_line = f"{today} closed today" if today else "nothing closed today yet"
+
+    # In plan order, not id order: the WBS lists leaves in the sequence they are meant to
+    # be done, and `M12.1.10` sorts before `M12.1.2` as a string.
+    upcoming = "".join(f"<li><code>{leaf}</code></li>" for leaf in s.get("next_up", [])[:5])
+    upcoming = upcoming or "<li>this wave is finished</li>"
+
+    shipped = _shipped_at()
     return HTMLResponse(f"""<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Company Brain · build status</title>
@@ -116,7 +148,8 @@ code{{font-family:"IBM Plex Mono",monospace;font-size:11.5px;color:var(--brand)}
 <div class="sub">Verz Company Brain · build status</div>
 <h1>{current_name}</h1>
 <div class="big"><span class="p">{pct}%</span>
-<span class="c">{s.get("done", 0)} of {s.get("total", 0)} tasks · commit {s.get("commit", "?")}</span></div>
+<span class="c">{s.get("done", 0)} of {s.get("total", 0)} tasks · {today_line}<br>
+commit {s.get("commit", "?")}{shipped}</span></div>
 <div class="track"><span style="width:{pct}%"></span></div>
 <table><thead><tr><th>Wave</th><th>Name</th><th style="text-align:right">Done</th><th></th><th style="text-align:right">%</th></tr></thead>
 <tbody>{wave_rows}</tbody></table>
@@ -127,6 +160,8 @@ code{{font-family:"IBM Plex Mono",monospace;font-size:11.5px;color:var(--brand)}
 <a class="btn" href="/api/status.json">status.json</a>
 <h3 style="font-family:Poppins,sans-serif;font-size:15px;margin:30px 0 6px">Recently closed</h3>
 <ul>{recent}</ul>
+<h3 style="font-family:Poppins,sans-serif;font-size:15px;margin:24px 0 6px">Next up</h3>
+<ul>{upcoming}</ul>
 <p class="note">Every figure here is computed from commits merged to main, never entered by
 hand. A task counts as done when a commit naming its id is on main and CI passed, so this
 page cannot show progress that does not exist. Generated at build time from
