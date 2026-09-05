@@ -70,8 +70,12 @@ def _definitions(name: str) -> list[str]:
         except SyntaxError:  # pragma: no cover - a file that will not parse fails elsewhere
             continue
         for node in ast.walk(tree):
-            defines = isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef)
-            if defines and node.name == name:  # type: ignore[union-attr]
+            # Matched on the node type first so `node.name` is reachable without a
+            # suppression: only these three carry a name, and asking mypy to take that on
+            # trust is how a real type error gets silenced later by the same comment.
+            if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+                continue
+            if node.name == name:
                 found.append(path.relative_to(SRC).as_posix())
                 break
     return found
