@@ -5,7 +5,7 @@ to a number that asked to be bound proves only that whoever holds that number ca
 which is exactly what a SIM swap gives an attacker. A nonce minted inside an authenticated
 session proves the person was already signed in.
 
-Task ids: M3.2.1, M3.2.2, M3.2.3, M3.2.4
+Task ids: M3.2.1, M3.2.2, M3.2.3, M3.2.4, M10.3.3
 """
 
 from __future__ import annotations
@@ -209,3 +209,59 @@ def test_the_prompt_is_the_same_object_for_every_channel() -> None:
     """A per-channel variation would let someone compare replies across channels to learn
     which one a number is bound on."""
     assert Unrecognised(Channel.WHATSAPP).prompt == Unrecognised(Channel.EMAIL).prompt
+
+
+# ------------------------------------------ the prompt rule, now actually enforced
+#
+# `test_the_prompt_is_the_same_object_for_every_channel` above compares two *default*
+# constructions, which are equal by definition. `prompt` is an ordinary field, so a channel
+# could always pass its own, and one legitimately does: a widget visitor has no binding to
+# speak of and cannot be told to add a channel from a profile they do not have.
+#
+# So the invariant its name claims was never enforced. These check the property instead.
+
+
+@pytest.mark.parametrize(
+    "leaking",
+    [
+        "No Lark account is bound to this handle.",
+        "That number is unknown to us.",
+        "This handle is not registered.",
+        "We have no record of this number.",
+        "That user does not exist.",
+        "You have never signed in here.",
+        "That handle is unrecognised.",
+    ],
+)
+def test_a_prompt_that_confirms_whether_the_sender_is_bound_is_refused(leaking: str) -> None:
+    """Each of these answers the question an attacker holding a stolen handset came to ask.
+
+    The first one is the case that matters most, and it is why this is a pattern and not a
+    substring check: "No Lark account" does not contain "no account", so a plain phrase list
+    accepts the sentence somebody would actually write. It was accepted, until this.
+
+    Delete this and the rule goes back to living in a test that compares two defaults, which
+    is a test of nothing."""
+    with pytest.raises(ValueError, match="confirms whether the sender is bound"):
+        Unrecognised(channel=Channel.LARK, prompt=leaking)
+
+
+def test_the_prompts_this_system_actually_uses_are_accepted() -> None:
+    """The other direction, and it is not a formality: a rule tuned until it refuses
+    everything would satisfy every test above while making the feature unbuildable.
+
+    The widget's prompt is the one that proves a per-channel prompt stays possible. It has to
+    be, because "sign in and add this channel from your profile" is an instruction an
+    anonymous visitor cannot follow, and an unfollowable instruction reads as the product
+    being broken."""
+    from brain.channels.widget import WIDGET_PROMPT
+
+    assert Unrecognised(Channel.WHATSAPP).prompt == UNRECOGNISED_PROMPT
+    assert Unrecognised(channel=Channel.WIDGET, prompt=WIDGET_PROMPT).prompt == WIDGET_PROMPT
+
+
+def test_an_unrecognised_sender_is_never_told_nothing_at_all() -> None:
+    """Silence is indistinguishable from the system being broken, and the honest majority of
+    people reaching this path are staff who have not bound the channel yet."""
+    with pytest.raises(ValueError, match="told something"):
+        Unrecognised(channel=Channel.LARK, prompt="   ")

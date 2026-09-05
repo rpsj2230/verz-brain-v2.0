@@ -24,9 +24,11 @@ Task ids: M3.2.1, M3.2.2, M3.2.3, M3.2.4
 from __future__ import annotations
 
 import hashlib
+import re
 import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import Final
 
 from brain.gate.admission import Assurance
 from brain.gate.context import Channel
@@ -198,6 +200,45 @@ UNRECOGNISED_PROMPT = (
 )
 
 
+#: Patterns a prompt for an unrecognised sender may not match, whichever channel wrote it.
+#:
+#: **This exists because the invariant it enforces was not actually enforced.** There was a
+#: test called "the prompt is the same object for every channel", and it compared two
+#: *default* constructions, which are equal by definition. `prompt` is an ordinary field, so
+#: a channel could pass "No Lark account is bound to this handle" and the test would still
+#: pass. That sentence confirms precisely what the rule exists to hide, and it is the answer
+#: an attacker holding a stolen phone is looking for.
+#:
+#: A per-channel prompt is not forbidden, because one is legitimately needed: a widget
+#: visitor has no binding to speak of and is told something else, and telling them to add a
+#: channel from a profile they do not have is an instruction nobody can follow. So the rule
+#: is a property of the words rather than a list of approved strings, which also avoids an
+#: allowlist that `channels.widget` would have to import backwards into the gate.
+#:
+#: The patterns are the ones that answer the question rather than deflect it. A prompt may
+#: not say the identity is unknown, unregistered, not bound or without an account, because
+#: each of those is a fact about somebody else's identity given away to whoever is holding
+#: their handset.
+LEAKING_PATTERNS: Final[tuple[re.Pattern[str], ...]] = tuple(
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        # Intervening words are allowed on purpose. A plain substring check for
+        # "no account" is defeated by "No Lark account is bound to this handle", which
+        # is the sentence somebody would actually write, and the first version of this
+        # rule accepted it. The gap is bounded and stops at a full stop so a pattern
+        # describes one clause rather than matching across a whole paragraph.
+        r"\bno\b[^.]{0,25}\b(account|record|match|binding|user)\b",
+        r"\bnot\b[^.]{0,25}\b(bound|found|registered|recognised|recognized|known|linked)\b",
+        r"\bun(bound|registered|recognised|recognized|known|linked)\b",
+        # The character class covers "doesnt", "doesn't" and the typographic apostrophe a
+        # word processor substitutes, because a prompt is written by a person in a document
+        # at least as often as in an editor. `noqa` because the smart quote is the point.
+        r"\bdoes ?n[o’']?t\b[^.]{0,25}\bexist\b",  # noqa: RUF001
+        r"\bnever\b[^.]{0,25}\b(signed|registered|bound)\b",
+    )
+)
+
+
 @dataclass(frozen=True)
 class Unrecognised:
     """The outcome for a sender with no binding: no entitlement, and one instruction.
@@ -205,7 +246,30 @@ class Unrecognised:
     Carries no `EntitlementSet` at all rather than an empty one. An empty set would be a
     thing that could be intersected, cached and passed along, and the point is that there
     is no principal here to have reach.
+
+    The prompt is checked rather than assumed. See `LEAKING_PHRASES`: the rule used to live
+    only in a test over the default value, so any channel passing its own prompt was
+    unchecked, and the one channel that does pass its own is a real and reasonable case.
     """
 
     channel: Channel
     prompt: str = UNRECOGNISED_PROMPT
+
+    def __post_init__(self) -> None:
+        for pattern in LEAKING_PATTERNS:
+            found = pattern.search(self.prompt)
+            if found is not None:
+                msg = (
+                    f"this prompt says {found.group(0)!r}, which confirms whether the sender is "
+                    "bound. The same words have to answer an unknown identity, a known but "
+                    "unbound one, and one whose binding was revoked this morning, or the "
+                    "reply is the answer somebody with a stolen handset came for."
+                )
+                raise ValueError(msg)
+        if not self.prompt.strip():
+            msg = (
+                "an unrecognised sender is told something; silence is indistinguishable "
+                "from the system being broken, and the honest majority of people reaching "
+                "this are staff who have not bound the channel yet"
+            )
+            raise ValueError(msg)
