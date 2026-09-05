@@ -37,7 +37,7 @@ would have proposed dropping them. `tests/unit/test_tables.py` now imports this 
 subprocess and compares what lands on the metadata against the tuple below, so a table
 module that is never imported is a failing build rather than a quiet gap.
 
-Task ids: M0.2.3, M1.2.1, M1.2.2, M1.4.1, M1.4.3, M4.2.1, M24.1.1, M31.3.1.4
+Task ids: M0.2.3, M1.1.5, M1.2.1, M1.2.2, M1.4.1, M1.4.3, M4.2.1, M24.1.1, M31.3.1.4
 """
 
 from __future__ import annotations
@@ -57,13 +57,19 @@ from brain.tables.gate import (
     ScopeRow,
     TeamRow,
 )
-from brain.tables.identity import PrincipalIdentityRow, PrincipalRow, SessionRow, one_of
+from brain.tables.identity import (
+    DirectoryRoleGrantRow,
+    PrincipalIdentityRow,
+    PrincipalRow,
+    SessionRow,
+    one_of,
+)
 from brain.tables.routing import ModelAttemptRow, RoutingRungRow, RoutingTierRow
 
 #: Every table, in the order a migration must create them: a table appears after everything
-#: it points at. The order is the three migrations' own tuples end to end - 0002's seven,
-#: then 0003's nine, then 0004's two - so `tests/unit/test_tables.py` can compare this
-#: against their concatenation rather than against a hand-maintained fourth copy. Each
+#: it points at. The order is the migrations' own tuples end to end - 0002's seven, 0003's
+#: nine, 0004's two, 0005's two, 0006's one - so `tests/unit/test_tables.py` can compare
+#: this against their concatenation rather than against a hand-maintained second copy. Each
 #: migration's downgrade reverses its own slice.
 TABLES_IN_DEPENDENCY_ORDER: tuple[str, ...] = (
     # 0002_core_tables
@@ -90,6 +96,8 @@ TABLES_IN_DEPENDENCY_ORDER: tuple[str, ...] = (
     # 0005_chat
     "chat.conversation",
     "chat.message",
+    # 0006_directory_role_grant
+    "auth.directory_role_grant",
 )
 
 __all__ = [
@@ -101,6 +109,7 @@ __all__ = [
     "CapabilityRegistryRow",
     "ConversationRow",
     "DepartmentRow",
+    "DirectoryRoleGrantRow",
     "FieldPolicyRow",
     "GrantsVersionRow",
     "MessageRole",

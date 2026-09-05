@@ -30,7 +30,7 @@ from pydantic import ValidationError
 from brain.core.entitlement import Capability, EntitlementSet, Grant
 from brain.core.principal import Employment, Principal, PrincipalKind
 from brain.core.scope import Scope
-from brain.identity import packs, roles, teams
+from brain.identity import directory, packs, roles, teams
 from brain.identity.packs import (
     CapabilityPack,
     PackAssignment,
@@ -75,7 +75,7 @@ NOW = datetime(2026, 9, 5, 9, 0, tzinfo=UTC)
 
 #: Every module in the package. Named once so a new module is added here, or it is not
 #: swept by any of the structural checks below.
-IDENTITY_MODULES: tuple[ModuleType, ...] = (roles, packs, teams)
+IDENTITY_MODULES: tuple[ModuleType, ...] = (roles, packs, teams, directory)
 
 
 def cap(value: str) -> Capability:

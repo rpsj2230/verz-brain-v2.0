@@ -34,7 +34,18 @@ token, a Lark thread mid-conversation, a scheduled run that opened its session a
 the whole content of M1.2.3, and the direction is deliberately one-way - re-enabling
 restores the ability to sign in, never the sessions that were ended.
 
-Task ids: M1.2.1, M1.2.2, M1.2.3
+**A grant a directory made lives in its own table, not beside a grant a person made.**
+`auth.directory_role_grant` is the whole of decision 21 in `docs/needs-rupash.md`, and the
+argument for it is about what the sync is able to reach rather than about what it is
+careful to avoid. A directory sync has to take a role away when somebody leaves a group, so
+it must be able to delete; put both kinds of grant in one table and every run has to decide
+which rows are its own, either by getting it wrong and deleting somebody's hand-made grant
+or by carrying a `source` column that every query afterwards has to remember to filter on.
+A separate table makes "the sync may delete anything it can see" true and safe at the same
+time: what it can see is only ever its own rows. See the class docstring for the key, and
+`brain.identity.directory` for the reconciliation that reads it.
+
+Task ids: M1.1.5, M1.2.1, M1.2.2, M1.2.3
 """
 
 from __future__ import annotations
@@ -61,6 +72,7 @@ from brain.core.principal import Employment, PrincipalKind
 from brain.db import Base, SoftDeleteMixin, TimestampMixin
 from brain.gate.admission import Assurance
 from brain.gate.context import Channel
+from brain.identity.roles import Role
 
 #: `Principal.id` is `Field(max_length=128)`. Every column that holds a principal id is
 #: this wide, including the ones that hold it without a foreign key.
@@ -86,6 +98,20 @@ BOUNDED_EMPLOYMENTS = (Employment.CONTRACTOR, Employment.PARTNER)
 #: `BreakGlassSession.session_id` is `Field(max_length=120)`, and the ledger's subject
 #: grammar is what bounds it: a session id has to survive `session:<id>` in an audit row.
 SESSION_ID_CHARS = 120
+
+#: Wider than any of the six role values, and wide enough that a seventh does not need a
+#: column change - which matters more here than elsewhere, because this column is part of a
+#: primary key. The width is headroom and not a check: `one_of("role", Role)` is what
+#: actually constrains the value, and `tests/unit/test_directory_role_grant.py` asserts every
+#: role fits, so a role name that outgrew the column would fail a test rather than be
+#: truncated into one the check constraint then refuses at three in the morning.
+ROLE_CHARS = 32
+
+#: `GroupRoleRule.group` is `Field(max_length=300)`. The group path as the identity provider
+#: spells it, e.g. `/brain/approver/web`, and it is part of a primary key, so the two widths
+#: must agree: a rule the type accepts and the column refuses is a sync that fails on one
+#: client's directory and nowhere in CI.
+SOURCE_GROUP_CHARS = 300
 
 
 class SessionEndReason(enum.StrEnum):
@@ -154,10 +180,20 @@ class PrincipalRow(TimestampMixin, SoftDeleteMixin, Base):
 
     __tablename__ = "principal"
 
-    #: The principal id itself, not a surrogate. It arrives from the identity provider
-    #: (`c_0447`, a Keycloak subject) and is what every other table and the entire audit
-    #: ledger already refers to a principal by. A surrogate key here would mean the ledger's
-    #: `actor_id` pointed at nothing joinable, which is the one property it needs.
+    #: The principal id itself, not a surrogate, and **not the identity provider's**.
+    #: It is minted here (`c_0447`), and the IdP subject is a separate fact recorded
+    #: against it, resolved by `oidc.PrincipalDirectory.principal_for_subject`. An earlier
+    #: version of this comment said the id arrived from the provider, which contradicted
+    #: both that lookup and the example beside it: `c_0447` is not a Keycloak subject.
+    #:
+    #: The indirection costs one join and buys the only migration that matters. Replacing
+    #: the identity provider, or moving one client onto their own, rewrites the mapping and
+    #: nothing else. Were the id the provider's, that change would rewrite every grant and
+    #: every row of the audit ledger, and a ledger whose subject ids were rewritten is a
+    #: ledger nobody can attest to.
+    #:
+    #: A surrogate key here would mean the ledger's `actor_id` pointed at nothing joinable,
+    #: which is the one property it needs.
     id: Mapped[str] = mapped_column(String(PRINCIPAL_ID_CHARS), primary_key=True)
 
     kind: Mapped[str] = mapped_column(String(16), nullable=False)
@@ -338,5 +374,92 @@ class SessionRow(TimestampMixin, Base):
             "principal_id",
             postgresql_where=text("ended_at IS NULL"),
         ),
+        {"schema": "auth"},
+    )
+
+
+class DirectoryRoleGrantRow(TimestampMixin, Base):
+    """`auth.directory_role_grant`. A role a directory group asserts, and only that (M1.1.5).
+
+    The sync owns this table outright. It may insert into it and delete from it without
+    asking any question about who wrote a row, because there is no other writer. The
+    protection is the schema rather than a WHERE clause, and that is the entire difference
+    between this design and the one it replaces. A `source` column in a shared table protects
+    a hand-made grant only for as long as every delete statement anybody ever writes
+    remembers to carry it, and the one that forgets is the one that runs during an incident.
+
+    **The other table does not exist yet, and saying so is the point.** `role_grant` - the
+    grants a person makes, which `brain.identity.roles.RoleGrant` describes - is M1.3.2 and is
+    still unbuilt. This table is deliberately not it and must not become it: whoever builds
+    `role_grant` builds a second table, granted SELECT, INSERT and UPDATE and no DELETE, with
+    `deleted_at` for retirement like every other table here. Adding a `granted_by` and a
+    `reason` column here instead, so one table could serve both, is the exact merge decision
+    21 refused.
+
+    **The primary key is the natural key, not a surrogate.** `(principal_id, role,
+    source_group)` is the whole content of a row: "this group says this person has this
+    role". A `uuid` id would let the same sentence be stored twice, and two rows saying one
+    thing is not a duplicate-row problem here - it is a reconciliation that deletes one of
+    them, reports the role removed, and leaves the person holding it. The database refuses
+    the second row instead, so the sync's insert is idempotent by construction rather than
+    by whichever ON CONFLICT clause was written.
+
+    **There is no scope column, and its absence is load-bearing.** A `department_admin` or
+    `approver` grant needs a scope, and the scope is a property of the *rule* that maps the
+    group (`brain.identity.oidc.GroupRoleRule`), which is reviewed in this repository. Copied
+    onto the row it becomes a second answer that nothing updates: reconciliation keys on the
+    triple above, so a row whose group is still asserted is never rewritten, and a scope
+    narrowed in the rule would go on being served wide from a row written months earlier.
+    `brain.identity.directory.directory_role_grants` reads the scope from the rule every
+    time, so the reviewed copy is the only one.
+
+    **`last_seen_at` is the fourth column and it is not decoration.** A sync that stops
+    running fails silently and in the dangerous direction: nothing is removed, so everyone
+    keeps everything, and the symptom is an absence of change. The column makes "these rows
+    are from a sync that last ran a fortnight ago" a query. `created_at` from
+    `TimestampMixin` is the other half - when the directory first asserted it - and it is
+    what `granted_at` on the resulting `RoleGrant` is built from.
+
+    **No `deleted_at`, and no `SoftDeleteMixin`.** Retirement here would be a tombstone, and
+    `brain.identity.packs.subtractive_state` refuses that shape across the identity package
+    for the reason `revoke_role` deletes rather than flags: a row that subtracts turns "does
+    she hold this role" into an evaluation-order question. What a deletion here costs is the
+    record that the directory once asserted the role, and that record belongs in
+    `obs.audit_entry`, which is append-only and cannot be edited by removal.
+    """
+
+    __tablename__ = "directory_role_grant"
+
+    #: Who the directory says holds the role. `RESTRICT` for the reason
+    #: `principal_identity` uses it: the sync deleting its own rows is ordinary, a principal
+    #: disappearing underneath them is not, and the second must fail loudly.
+    principal_id: Mapped[str] = mapped_column(
+        String(PRINCIPAL_ID_CHARS),
+        ForeignKey("auth.principal.id", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+
+    #: One of the six. Text plus a check constraint generated from the enum, as everywhere
+    #: else here, so adding a seventh role fails a test rather than a 3am INSERT.
+    role: Mapped[str] = mapped_column(String(ROLE_CHARS), primary_key=True)
+
+    #: The group as the identity provider spells it, e.g. `/brain/approver/web`. Part of the
+    #: key rather than a detail on the row: two groups may both confer `approver`, and if
+    #: only one of them is still asserted the person keeps the role. Collapsing the two into
+    #: one row would make leaving either group remove it.
+    source_group: Mapped[str] = mapped_column(String(SOURCE_GROUP_CHARS), primary_key=True)
+
+    #: When the sync last confirmed the directory still asserts this. See the class
+    #: docstring: a sync that has stopped is invisible without it.
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(one_of("role", Role), name="role"),
+        CheckConstraint("length(btrim(source_group)) > 0", name="source_group_present"),
+        # No secondary index. Every read here is "what does the directory currently say
+        # about this person", and `principal_id` leads the primary key, so its own index
+        # already answers that. A separate index on the same leading column was written
+        # first and removed: it would be a second copy of the same b-tree, paid for on every
+        # insert the sync makes, serving no query the key does not.
         {"schema": "auth"},
     )

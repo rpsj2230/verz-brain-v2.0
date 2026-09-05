@@ -75,6 +75,7 @@ MIGRATION = VERSIONS / "0002_core_tables.py"
 MIGRATION_RESOLVER = VERSIONS / "0003_resolver_and_tables.py"
 MIGRATION_REGISTRY = VERSIONS / "0004_capability_registry_and_config.py"
 MIGRATION_CHAT = VERSIONS / "0005_chat.py"
+MIGRATION_DIRECTORY = VERSIONS / "0006_directory_role_grant.py"
 
 #: The seven tables 0002 built, in the order it builds them. Written out here rather than
 #: read from `brain.tables.TABLES_IN_DEPENDENCY_ORDER`, which now covers all eighteen: a
@@ -106,7 +107,14 @@ RESOLVER_TABLES: tuple[str, ...] = (
 REGISTRY_TABLES: tuple[str, ...] = ("gate.capability_registry", "ops.setting")
 CHAT_TABLES: tuple[str, ...] = ("chat.conversation", "chat.message")
 
-ALL_TABLES = CORE_TABLES + RESOLVER_TABLES + REGISTRY_TABLES + CHAT_TABLES
+#: And the one 0006 adds: role grants the corporate directory asserted, in a table the sync
+#: owns outright so that removing what a group withdrew cannot reach a grant a person made.
+#: The properties that matter about it are in `tests/unit/test_directory_role_grant.py`; what
+#: is here is the same question asked of every other migration - does it build what the model
+#: declares, and does it drop what it builds.
+DIRECTORY_TABLES: tuple[str, ...] = ("auth.directory_role_grant",)
+
+ALL_TABLES = CORE_TABLES + RESOLVER_TABLES + REGISTRY_TABLES + CHAT_TABLES + DIRECTORY_TABLES
 
 
 def _soft_deleted(qualified: tuple[str, ...]) -> tuple[str, ...]:
@@ -699,19 +707,31 @@ def test_the_migration_creates_exactly_the_tables_the_models_declare() -> None:
     resolver = migration_module(MIGRATION_RESOLVER)
     registry = migration_module(MIGRATION_REGISTRY)
     chat = migration_module(MIGRATION_CHAT)
+    directory = migration_module(MIGRATION_DIRECTORY)
     assert core.TABLES == CORE_TABLES
     assert resolver.TABLES == RESOLVER_TABLES
     assert registry.TABLES == REGISTRY_TABLES
     assert chat.TABLES == CHAT_TABLES
-    # The package tuple is the three migrations end to end. Stated as an equality rather
-    # than as a set comparison, because the order is what a downgrade depends on.
+    assert directory.TABLES == DIRECTORY_TABLES
+    # The package tuple is the migrations end to end. Stated as an equality rather than as a
+    # set comparison, because the order is what a downgrade depends on.
     end_to_end = (
-        tuple(core.TABLES) + tuple(resolver.TABLES) + tuple(registry.TABLES) + tuple(chat.TABLES)
+        tuple(core.TABLES)
+        + tuple(resolver.TABLES)
+        + tuple(registry.TABLES)
+        + tuple(chat.TABLES)
+        + tuple(directory.TABLES)
     )
     assert end_to_end == tables.TABLES_IN_DEPENDENCY_ORDER
     # Every table has a migration and every migration has a model. The union is the check
     # that matters: either half on its own would let a table be created twice or not at all.
-    every = (set(core.TABLES), set(resolver.TABLES), set(registry.TABLES), set(chat.TABLES))
+    every = (
+        set(core.TABLES),
+        set(resolver.TABLES),
+        set(registry.TABLES),
+        set(chat.TABLES),
+        set(directory.TABLES),
+    )
     assert set().union(*every) == set(metadata.tables)
     assert sum(len(s) for s in every) == len(set().union(*every)), "a table is created twice"
 
