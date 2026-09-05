@@ -315,7 +315,7 @@ Derived from the Company Brain architecture, module by module, so coverage is tr
     });
     var lb=document.getElementById("lateBox");
     if(lb)lb.innerHTML=late?'<span class="late"><b>'+late+'</b> overdue</span>':'<b>0</b> overdue';
-    var p=total?Math.round(done/total*100):0;
+    var p=total?Math.round(done/total*1000)/10:0;  // one decimal, matching status.json
     document.getElementById("pct").textContent=p+"%";
     document.getElementById("fill").style.width=p+"%";
     document.getElementById("cDone").textContent=done;
