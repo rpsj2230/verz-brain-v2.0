@@ -272,6 +272,61 @@ they are, and it belongs with the approval work rather than here.
 
 ---
 
+## 15. How long should an emergency access session last?
+
+**The plain problem: someone needs to get into something urgently, out of hours, and we
+need to let them without leaving the door open afterwards.**
+
+"Break-glass" is the emergency override. Somebody with the right to use it opens a session,
+gets access they would not normally have, and the system records it loudly and tells other
+people it happened. It is for the 2am case where a client site is down and the one person
+who can fix it does not have the access.
+
+**It has to expire on its own**, because nobody remembers to close these. The specification
+says "time-boxed" and never says how long.
+
+**I chose four hours** and I want you to confirm it or change it. My reasoning: four hours
+is one working session, so it covers a real incident; and a session opened at 11pm and
+forgotten has expired before anyone starts work the next morning.
+
+| Option | What it covers | What it costs |
+|---|---|---|
+| 1 hour | A quick fix | Someone mid-incident has to reopen it, and reopening becomes routine |
+| **4 hours** (recommended) | A full incident, out of hours | Occasionally someone reopens once |
+| 24 hours | Anything | It stops being an emergency and becomes an admin account with an awkward name |
+
+**Just tell me a number.** Everything else about it is built.
+
+---
+
+## 16. Two different things both mean "can approve", and nothing says which wins
+
+**The plain problem: a person can look approved and not be, or be approved and not look it.**
+
+There are two separate ways the system knows someone can sign something off:
+
+1. **The Approver role**, which is a job title on the platform.
+2. **An approve permission**, which is a specific right over specific things, like approving
+   a payment for one department.
+
+Right now those two do not talk to each other. Somebody can hold the Approver role and no
+approve permission, in which case the role does nothing. Or hold an approve permission and
+not the role, in which case the role is never consulted. Neither situation is an error, and
+neither looks wrong on a screen.
+
+**Why it matters:** whoever configures this will reasonably assume that giving someone the
+Approver role lets them approve things. It does not, and nothing tells them.
+
+**My recommendation:** the permission decides, always. The role is a label for the console
+to filter on, not an authority. That matches the rule the rest of the system already
+follows, that no role implies a permission, including Super Admin. What is missing is a
+check that the two agree, so an Approver with no approve permission shows up as a
+misconfiguration rather than a silent nothing.
+
+**No action needed from you if you agree** with that, and I will add the consistency check.
+
+---
+
 # Answered on 5 September
 
 ## 1. Coolify on plain HTTP — FIXED
