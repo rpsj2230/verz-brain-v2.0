@@ -27,6 +27,8 @@ TESTS = REPO / "tests"
 
 TOOL_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$")
 TASK_ID_RE = re.compile(r"\bM\d+(?:\.\d+){1,4}\b")
+#: The one line a file may claim task ids on. Everything else is discussion.
+TASK_LINE_RE = re.compile(r"^\s*Task ids:\s*(.+)$", re.M)
 
 
 class SweepFailure(Exception):
@@ -133,23 +135,37 @@ def sweep_traceability() -> None:
     sweep makes that claim checkable: if no test mentions the id, the claim is unproven
     and the tracker would show a task as done that nothing verifies.
     """
+    # Read claims from the `Task ids:` line only, never from body prose. A file that says
+    # "M24.1 is the chain logic only, M24.1.5 needs a decision" is discussing those ids,
+    # not claiming them, and counting prose turns every honest caveat into a false claim.
+    # `status.py` learned the same lesson: it reads the commit subject and `Closes:` lines
+    # and nothing else.
     claimed: dict[str, str] = {}
     for path in SRC.rglob("*.py"):
-        text = path.read_text(encoding="utf-8")
-        for tid in TASK_ID_RE.findall(text):
-            claimed.setdefault(tid, str(path.relative_to(REPO)))
+        for line in TASK_LINE_RE.findall(path.read_text(encoding="utf-8")):
+            for tid in TASK_ID_RE.findall(line):
+                claimed.setdefault(tid, str(path.relative_to(REPO)))
 
     proven: set[str] = set()
     for path in TESTS.rglob("*.py"):
         proven.update(TASK_ID_RE.findall(path.read_text(encoding="utf-8")))
     # a test file per module counts too: tests named for the module they cover
-    covered_modules = {p.stem.replace("test_", "") for p in TESTS.rglob("test_*.py")}
+    covered_modules = {p.stem.removeprefix("test_") for p in TESTS.rglob("test_*.py")}
 
-    findings = [
-        f"{tid} claimed in {src} but no test mentions it"
-        for tid, src in sorted(claimed.items())
-        if tid not in proven and not covered_modules
-    ]
+    # This condition used to read `if tid not in proven and not covered_modules`, which
+    # asks whether the covered set is *empty* rather than whether this module is in it.
+    # `covered_modules` is non-empty the moment any test file exists, so the sweep passed
+    # unconditionally and printed "all traceable" while checking nothing. It ran green in
+    # CI and on every push for as long as it has existed.
+    findings: list[str] = []
+    for tid, src in sorted(claimed.items()):
+        if tid in proven:
+            continue
+        if Path(src).stem in covered_modules:
+            continue
+        findings.append(
+            f"{tid} claimed in {src} but no test names it and there is no test_{Path(src).stem}.py"
+        )
     if findings:
         raise SweepFailure(findings)
     print(f"ok: {len(claimed)} task id(s) claimed, all traceable")
