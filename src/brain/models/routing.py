@@ -51,27 +51,10 @@ from datetime import datetime, timedelta
 from types import MappingProxyType
 
 from brain.core.errors import Degraded
+from brain.core.lane import Lane
 
 
 # ------------------------------------------------------------------------ lanes and tiers
-class Lane(enum.StrEnum):
-    """How much machinery a request is allowed to use.
-
-    Lane is defined here rather than in `brain.core.envelope` because today its only
-    mechanical consequence is which tier a request lands in. It moves to core when a
-    second subsystem needs to branch on it.
-    """
-
-    #: No model at all. Admission is exact intent match with every required slot present;
-    #: a fuzzy near-match in a lane with no model in the loop produces a confidently wrong
-    #: answer with nothing downstream able to catch it.
-    FAST = "fast"
-    #: A person is waiting. Roughly 95% of traffic.
-    ANSWER = "answer"
-    #: Autonomous multi-step work with tool use. Nobody is watching the spinner.
-    TASK = "task"
-
-
 class Tier(enum.StrEnum):
     """The model pools, cheapest first.
 

@@ -20,6 +20,7 @@ from typing import Any
 import pytest
 
 from brain.core.errors import Degraded, Outcome
+from brain.core.lane import Lane
 from brain.models.routing import (
     ANSWER_LANE_WALL_CLOCK_BUDGET_SECONDS,
     BREAKER_BASE_COOLDOWN_SECONDS,
@@ -36,7 +37,6 @@ from brain.models.routing import (
     CircuitBreaker,
     Deployment,
     FallbackTrigger,
-    Lane,
     NoCompliantRoute,
     ResidencyClass,
     ResidencyRequirement,
