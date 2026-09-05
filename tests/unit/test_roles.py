@@ -52,8 +52,10 @@ from brain.identity.roles import (
     NoStandingEntitlement,
     Role,
     RoleGrant,
+    RoleMismatchKind,
     RoleSpec,
     appoint_deputy,
+    approver_mismatches,
     check_deputy_depth,
     open_break_glass,
     reach_during,
@@ -867,3 +869,118 @@ def test_deputy_depth_is_swept_across_a_whole_grant_table() -> None:
     findings = check_deputy_depth(chained, NOW)
     assert len(findings) == 1
     assert "depth one" in findings[0]
+
+
+# ------------------------------------------- break-glass duration (Rupash, 5 September)
+def test_whoever_authorises_a_session_chooses_how_long_it_runs() -> None:
+    """The ceiling is four hours; the duration is the authoriser's. A fixed window teaches
+    everyone to ask for the maximum every time, and the person authorising knows whether
+    this is a ten-minute password reset or a four-hour migration."""
+    session, _ = open_break_glass(
+        session_id="bg_short",
+        principal=partner(),
+        reason=BreakGlassReason.INCIDENT_RESPONSE,
+        grants=break_glass_grants(),
+        authorised_by="u_sa_a",
+        notify=["u_auditor"],
+        now=NOW,
+        duration=timedelta(minutes=20),
+    )
+    assert session.expires_at == NOW + timedelta(minutes=20)
+
+
+def test_saying_nothing_gives_the_ceiling() -> None:
+    """A default of "no bound" would be the failure this whole type exists to prevent."""
+    session, _ = open_break_glass(
+        session_id="bg_default",
+        principal=partner(),
+        reason=BreakGlassReason.INCIDENT_RESPONSE,
+        grants=break_glass_grants(),
+        authorised_by="u_sa_a",
+        notify=["u_auditor"],
+        now=NOW,
+    )
+    assert session.expires_at == NOW + BREAK_GLASS_MAX
+
+
+def test_the_ceiling_is_not_something_a_caller_can_raise() -> None:
+    """A maximum an operator can raise is a maximum that gets raised during the incident
+    that made it inconvenient."""
+    with pytest.raises(IdentityError, match="at most"):
+        open_break_glass(
+            session_id="bg_long",
+            principal=partner(),
+            reason=BreakGlassReason.INCIDENT_RESPONSE,
+            grants=(),
+            authorised_by="u_rupash",
+            notify=("u_auditor",),
+            now=NOW,
+            duration=timedelta(hours=8),
+        )
+
+
+# ------------------------------------ the Approver consistency check (Rupash, 5 September)
+def _approver_grant(pid: str) -> RoleGrant:
+    return RoleGrant(
+        principal_id=pid,
+        role=Role.APPROVER,
+        scope=Scope.department("finance"),
+        granted_by="u_sa_a",
+        reason="approves finance work",
+        granted_at=NOW,
+    )
+
+
+def _can_approve(pid: str) -> EntitlementSet:
+    return EntitlementSet(
+        principal_id=pid,
+        grants=(Grant(capability=Capability(value="approve:payment.release"), scope=Scope()),),
+    )
+
+
+def test_the_role_alone_grants_nothing_and_is_reported() -> None:
+    """The decision of 5 September: the capability decides, always. Somebody given the
+    role and no capability cannot approve anything, and whoever granted the role believes
+    they made them an approver."""
+    found = approver_mismatches(
+        [_approver_grant("u_wei")],
+        {"u_wei": EntitlementSet(principal_id="u_wei")},
+    )
+    assert [m.kind for m in found] == [RoleMismatchKind.ROLE_WITHOUT_CAPABILITY]
+
+
+def test_the_capability_alone_works_and_is_still_reported() -> None:
+    """They can approve. The console listing "our approvers" leaves them out, which is the
+    quieter half of the same mistake."""
+    found = approver_mismatches([], {"u_wei": _can_approve("u_wei")})
+    assert [m.kind for m in found] == [RoleMismatchKind.CAPABILITY_WITHOUT_ROLE]
+
+
+def test_holding_both_is_not_a_mismatch() -> None:
+    """A check that fires on the correct configuration is a check somebody turns off."""
+    assert approver_mismatches([_approver_grant("u_wei")], {"u_wei": _can_approve("u_wei")}) == ()
+
+
+def test_holding_neither_is_not_a_mismatch() -> None:
+    """Most of the company holds neither, and reporting all 126 of them daily is how a
+    report stops being read."""
+    assert approver_mismatches([], {"u_wei": EntitlementSet(principal_id="u_wei")}) == ()
+
+
+def test_a_mismatch_is_reported_and_never_raised() -> None:
+    """A refusal would mean an incomplete configuration stops people working, and this
+    state is common and temporary during onboarding."""
+    found = approver_mismatches(
+        [_approver_grant("u_wei")], {"u_wei": EntitlementSet(principal_id="u_wei")}
+    )
+    assert isinstance(found, tuple)
+    assert "u_wei" in str(found[0])
+
+
+def test_the_check_changes_nobody_permissions() -> None:
+    """It is a report. If it could alter reach, it would be a second permission mechanism
+    and the first thing to disagree with the first one."""
+    entitlement = _can_approve("u_wei")
+    before = entitlement.ent_hash()
+    approver_mismatches([_approver_grant("u_wei")], {"u_wei": entitlement})
+    assert entitlement.ent_hash() == before

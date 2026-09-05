@@ -545,10 +545,20 @@ def standing_entitlement(
 
 
 # ---------------------------------------------------------------- break-glass
-#: The longest a break-glass session may run (M1.2.5). Four hours is one working session:
-#: long enough to finish an install or an incident, short enough that a forgotten session
-#: expires before the next working day. Rejected: 24 hours, which is an admin account with
-#: a slightly awkward name, and no bound at all, which is the thing this exists to prevent.
+#: The longest a break-glass session may run (M1.2.5), confirmed by Rupash on 5 September.
+#: Four hours is one working session: long enough to finish an install or an incident,
+#: short enough that a forgotten session expires before the next working day. Rejected:
+#: 24 hours, which is an admin account with a slightly awkward name, and no bound at all,
+#: which is the thing this exists to prevent.
+#:
+#: **This is a ceiling, not the duration.** Whoever authorises a session passes the window
+#: they mean, and four hours is what they get if they say nothing. That was Rupash's
+#: request and it is the right shape: the person authorising knows whether this is a
+#: ten-minute password reset or a four-hour migration, and a fixed window teaches everyone
+#: to ask for the maximum every time.
+#:
+#: The ceiling itself is deliberately not configurable. A maximum an operator can raise is
+#: a maximum that gets raised during the incident that made it inconvenient.
 BREAK_GLASS_MAX = timedelta(hours=4)
 
 #: Break-glass entries go in their own chain, not the main ledger (M1.2.5). A Super Admin's
@@ -796,3 +806,70 @@ def reach_during(
     if session is not None and session.is_open(now):
         return session.to_entitlement()
     return standing_entitlement(principal, grants)
+
+
+# ----------------------------------------------------- the Approver consistency check
+#: The verb that actually decides whether somebody may approve something.
+APPROVE_VERB: Final = "approve"
+
+
+class RoleMismatchKind(enum.StrEnum):
+    """The two ways the Approver role and the approve capability can disagree."""
+
+    #: Holds the role, holds no approve capability. The role does nothing for them.
+    ROLE_WITHOUT_CAPABILITY = "role_without_capability"
+    #: Holds an approve capability, does not hold the role. They can approve; the console
+    #: will not list them among the people who can.
+    CAPABILITY_WITHOUT_ROLE = "capability_without_role"
+
+
+@dataclass(frozen=True)
+class RoleMismatch:
+    """One person whose role and capability disagree, and which way round."""
+
+    principal_id: str
+    kind: RoleMismatchKind
+
+    def __str__(self) -> str:
+        if self.kind is RoleMismatchKind.ROLE_WITHOUT_CAPABILITY:
+            return f"{self.principal_id} holds the Approver role and no approve capability"
+        return f"{self.principal_id} can approve but does not hold the Approver role"
+
+
+def approver_mismatches(
+    role_grants: Iterable[RoleGrant],
+    entitlements: Mapping[str, EntitlementSet],
+) -> tuple[RoleMismatch, ...]:
+    """Where the Approver role and the approve capability disagree (M1.3.5, decided 5 Sep).
+
+    **The capability decides. Always.** The role is a label the console filters on, not an
+    authority, which is the same rule the rest of this module follows: no role implies a
+    capability, including Super Admin. Nothing here changes what anybody may do.
+
+    So why report at all. Because both disagreements are silent and neither looks wrong on
+    a screen. Somebody given the Approver role and no capability cannot approve anything,
+    and the person who granted the role believes they made them an approver. Somebody with
+    the capability and no role can approve, and the console listing "our approvers" leaves
+    them out. Each is a configuration mistake that surfaces as an absence, which is the
+    hardest kind to notice.
+
+    Returned rather than raised. This is a report for an administrator to read, not a
+    refusal: refusing would mean an incomplete configuration stopped people working, and
+    the state is common and temporary during onboarding.
+    """
+    holds_role = {grant.principal_id for grant in role_grants if grant.role is Role.APPROVER}
+    holds_capability = {
+        principal_id
+        for principal_id, entitlement in entitlements.items()
+        if any(grant.capability.verb == APPROVE_VERB for grant in entitlement.grants)
+    }
+
+    out = [
+        RoleMismatch(principal_id=pid, kind=RoleMismatchKind.ROLE_WITHOUT_CAPABILITY)
+        for pid in sorted(holds_role - holds_capability)
+    ]
+    out += [
+        RoleMismatch(principal_id=pid, kind=RoleMismatchKind.CAPABILITY_WITHOUT_ROLE)
+        for pid in sorted(holds_capability - holds_role)
+    ]
+    return tuple(out)
