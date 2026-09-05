@@ -56,6 +56,15 @@ class Finding:
         return f"{self.file}: {self.rule} — {self.detail}"
 
 
+def _is_docstring(stmt: ast.stmt) -> bool:
+    """Whether this statement is a docstring rather than something the migration does."""
+    return (
+        isinstance(stmt, ast.Expr)
+        and isinstance(stmt.value, ast.Constant)
+        and isinstance(stmt.value.value, str)
+    )
+
+
 def _downgrade_state(text: str) -> str:
     """Whether the file has a downgrade, and whether it does anything: parsed, not counted.
 
@@ -85,9 +94,8 @@ def _downgrade_state(text: str) -> str:
             continue
         body = list(node.body)
         # A leading string expression is the docstring, and a docstring is not a statement.
-        if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
-            if isinstance(body[0].value.value, str):
-                body = body[1:]
+        if body and _is_docstring(body[0]):
+            body = body[1:]
         if not body or all(isinstance(stmt, ast.Pass) for stmt in body):
             return "empty"
         return "present"
