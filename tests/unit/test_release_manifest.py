@@ -18,7 +18,7 @@ from brain.ops.release_manifest import (
     ManifestError,
     ReleaseManifest,
     build_manifest,
-    fallback_since,
+    choose_span,
     read_manifest,
 )
 
@@ -105,49 +105,84 @@ def test_a_named_starting_point_overrides_the_tag(repo: Path) -> None:
     assert build_manifest(repo, since=head_1, now=NOW).task_ids == ()
 
 
-# ------------------------------------------------- choosing the span (CI's fallback)
-def test_a_release_tag_beats_the_fallback(repo: Path) -> None:
-    """A release is what shipped since the last release, not since the last push. CI passes
-    the previous head every time, and once a tag exists that argument must stop being used
-    or every release describes only its final push."""
+# ------------------------------------------------------------- choosing the span
+def test_a_release_tag_wins_over_everything_else(repo: Path) -> None:
+    """A release is what shipped since the last release. Once a tag exists, no caller's
+    idea of "previous" may override it, or a release describes only its final push."""
     head_1 = _git(repo, "rev-parse", "HEAD~1")
-    assert fallback_since(repo, head_1) == "wave-0"
+    assert choose_span(repo, candidate=head_1) == ("wave-0", "release")
 
 
-def test_the_fallback_is_used_when_nothing_has_been_tagged(tmp_path: Path) -> None:
-    """Without this the manifest carries no ids until somebody cuts the first release,
-    which is exactly the period when nobody is watching whether the mechanism works. It
-    would then be discovered broken at the first release that mattered."""
+def test_with_no_tag_the_span_is_this_commit_and_says_so(tmp_path: Path) -> None:
+    """Honestly a smaller claim than a release, which is why the kind travels with it. It
+    exists because otherwise the manifest carries no ids at all until somebody cuts the
+    first release, and a mechanism nobody has seen work is a mechanism discovered broken at
+    the first release that matters."""
     work = tmp_path / "untagged"
     work.mkdir()
     _git(work, "init", "-q", "-b", "main")
     _git(work, "config", "user.email", "t@example.com")
     _git(work, "config", "user.name", "Test")
     _commit(work, "a.txt", "First")
-    first = _git(work, "rev-parse", "HEAD")
-    _commit(work, "b.txt", "Second\n\nCloses: M90.1.1")
-    assert fallback_since(work, first) == first
-    span = fallback_since(work, first)
-    assert build_manifest(work, since=span, now=NOW).task_ids == ("M90.1.1",)
+    _commit(work, "b.txt", "Second closing something\n\nCloses: M90.1.1")
+
+    since, kind = choose_span(work)
+    assert kind == "commit"
+    assert since == _git(work, "rev-parse", "HEAD~1")
+
+    manifest = build_manifest(work, now=NOW)
+    assert manifest.task_ids == ("M90.1.1",)
+    assert manifest.span == "commit"
 
 
-def test_the_all_zero_sha_github_sends_on_a_first_push_is_refused(tmp_path: Path) -> None:
-    """`github.event.before` is forty zeroes on the first push to a branch. It looks like a
-    real argument and resolves to nothing, so a span built from it would make git error
-    rather than return an empty answer."""
-    work = tmp_path / "fresh"
+def test_a_root_commit_has_no_span_at_all(tmp_path: Path) -> None:
+    """No tag and no parent. The honest answer is "none" rather than an empty list that
+    reads as "this release closed nothing"."""
+    work = tmp_path / "root"
+    work.mkdir()
+    _git(work, "init", "-q", "-b", "main")
+    _git(work, "config", "user.email", "t@example.com")
+    _git(work, "config", "user.name", "Test")
+    _commit(work, "a.txt", "First\n\nCloses: M90.1.1")
+    assert choose_span(work) == ("", "none")
+    assert build_manifest(work, now=NOW).span == "none"
+
+
+def test_the_kind_is_on_the_manifest_so_an_empty_list_is_not_ambiguous(repo: Path) -> None:
+    """An empty `task_ids` means two very different things - "this release closed nothing"
+    and "there was nothing to look at" - and they look identical without this field.
+
+    Deleting it makes a deployment record that closed nothing indistinguishable from one
+    built before any of this worked."""
+    assert build_manifest(repo, now=NOW).span == "release"
+
+
+def test_the_all_zero_sha_is_refused_and_falls_through_to_the_parent(tmp_path: Path) -> None:
+    """Forty zeroes is what GitHub sends when there is no before. It looks like a real
+    argument and resolves to nothing, so it must not be taken at face value."""
+    work = tmp_path / "zeros"
     work.mkdir()
     _git(work, "init", "-q", "-b", "main")
     _git(work, "config", "user.email", "t@example.com")
     _git(work, "config", "user.name", "Test")
     _commit(work, "a.txt", "First")
-    assert fallback_since(work, "0" * 40) == ""
+    _commit(work, "b.txt", "Second")
+    since, kind = choose_span(work, candidate="0" * 40)
+    assert (since, kind) == (_git(work, "rev-parse", "HEAD~1"), "commit")
 
 
-def test_a_commit_this_clone_does_not_have_is_refused(repo: Path) -> None:
-    """The shallow-checkout case. A sha that is real elsewhere and absent here would make
-    `git log` fail, and the build would break on a bookkeeping detail."""
-    assert fallback_since(repo, "f" * 40) in ("wave-0", "")
+def test_a_commit_this_clone_does_not_have_falls_through_to_the_parent(tmp_path: Path) -> None:
+    """The shallow-checkout case. A sha real elsewhere and absent here would make `git log`
+    fail and break the build on a bookkeeping detail."""
+    work = tmp_path / "absent"
+    work.mkdir()
+    _git(work, "init", "-q", "-b", "main")
+    _git(work, "config", "user.email", "t@example.com")
+    _git(work, "config", "user.name", "Test")
+    _commit(work, "a.txt", "First")
+    _commit(work, "b.txt", "Second")
+    since, kind = choose_span(work, candidate="f" * 40)
+    assert (since, kind) == (_git(work, "rev-parse", "HEAD~1"), "commit")
 
 
 # ------------------------------------------------------------------- the round trip

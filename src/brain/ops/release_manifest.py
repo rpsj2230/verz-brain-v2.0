@@ -61,6 +61,11 @@ class ReleaseManifest:
     built_at: datetime
     task_ids: tuple[str, ...] = ()
     previous_commit: str = ""
+    #: What `task_ids` is a list of: `release` (since the last wave tag), `commit` (since
+    #: the parent of this commit), or `none`. On the record rather than inferred, because
+    #: an empty list means two very different things and a reader cannot tell them apart -
+    #: "this release closed nothing" and "there was no span to look at" look identical.
+    span: str = "none"
     #: Anything the builder wants to record and nothing downstream parses. Kept a flat
     #: string map so a manifest written by a future version stays readable by this one.
     extra: dict[str, str] = field(default_factory=dict)
@@ -72,6 +77,7 @@ class ReleaseManifest:
                 "built_at": self.built_at.isoformat(),
                 "task_ids": list(self.task_ids),
                 "previous_commit": self.previous_commit,
+                "span": self.span,
                 "extra": self.extra,
             },
             indent=2,
@@ -121,6 +127,7 @@ class ReleaseManifest:
             built_at=built_at,
             task_ids=tuple(sorted({str(i) for i in ids})),
             previous_commit=str(raw.get("previous_commit", "")),
+            span=str(raw.get("span", "none")),
             extra={str(k): str(v) for k, v in extra.items()} if isinstance(extra, dict) else {},
         )
 
@@ -137,25 +144,31 @@ def _git(*args: str, repo: Path) -> str:
 
 
 def build_manifest(
-    repo: Path, *, ref: str = "HEAD", since: str = "", now: datetime | None = None
+    repo: Path,
+    *,
+    ref: str = "HEAD",
+    since: str = "",
+    span: str = "",
+    now: datetime | None = None,
 ) -> ReleaseManifest:
     """Assemble the manifest for what `ref` would deploy.
 
-    `since` names the previous release. Left empty, the most recent `wave-*` tag is used,
-    and if there is no tag at all the manifest carries no task ids rather than every id in
-    the history: the first release closing nine hundred tasks is not information, it is a
-    dump of the plan.
+    `since` names where the list starts and `span` says what kind of span that is. Left
+    empty, `choose_span` decides: the last `wave-*` tag if there is one, otherwise the
+    parent of this commit.
+
+    Never the whole history. A first release listing nine hundred ids is not information,
+    it is a dump of the plan.
     """
     commit = _git("rev-parse", ref, repo=repo)
     if not commit:
         msg = f"cannot resolve {ref!r} in {repo}"
         raise ManifestError(msg)
 
-    previous = since or _git("describe", "--tags", "--abbrev=0", "--match", "wave-*", repo=repo)
+    previous, kind = (since, span or "commit") if since else choose_span(repo, ref=ref)
     ids: set[str] = set()
     if previous:
-        span = f"{previous}..{ref}"
-        raw = _git("log", span, "--pretty=format:%s%x1f%b%x1e", repo=repo)
+        raw = _git("log", f"{previous}..{ref}", "--pretty=format:%s%x1f%b%x1e", repo=repo)
         for entry in raw.split("\x1e"):
             if not entry.strip():
                 continue
@@ -170,6 +183,7 @@ def build_manifest(
         built_at=now or datetime.now(UTC),
         task_ids=tuple(sorted(ids)),
         previous_commit=previous,
+        span=kind if previous else "none",
     )
 
 
@@ -192,26 +206,44 @@ def read_manifest(path: Path | None = None) -> ReleaseManifest | None:
 _NO_SUCH_COMMIT = "0" * 40
 
 
-def fallback_since(repo: Path, candidate: str) -> str:
-    """The span to use, preferring a release tag and falling back to the candidate.
+def choose_span(repo: Path, *, ref: str = "HEAD", candidate: str = "") -> tuple[str, str]:
+    """Where this build's list of task ids starts, and what kind of span that is.
 
-    A release is what shipped since the last *release*, not since the last push, so the tag
-    wins whenever there is one. The fallback exists because there is no tag yet: without it
-    the manifest carries no ids at all until somebody cuts the first release, which is
-    exactly the period when nobody is watching whether the mechanism works.
+    Returns `(since, kind)`. The kind is on the manifest so a reader cannot mistake one
+    thing for the other, which is the whole reason this returns two values instead of one.
 
-    The candidate is refused if it is not a commit this repository has. `github.event.before`
-    is forty zeroes on a first push, and a span starting from that resolves to nothing
-    useful while looking like a real argument.
+    **`release`** - since the last `wave-*` tag. What shipped in this release, which is the
+    question the manifest exists to answer.
+
+    **`commit`** - since the parent of the commit being built. Used when nothing is tagged
+    yet. It is honestly a smaller claim: it says what this one commit closed, not what the
+    release contains. It is still worth having, because otherwise the manifest carries no
+    ids at all until somebody cuts the first release, and a mechanism nobody has seen work
+    is a mechanism discovered broken at the first release that matters.
+
+    **`none`** - a root commit with no parent and no tag. There is nothing before it.
+
+    An explicit `candidate` wins over the parent when it names a commit this clone has, so a
+    caller that knows the real previous deploy can say so.
+
+    Rejected: `github.event.before` from GitHub Actions, which is what this used to pass and
+    which was always the empty string. That context exists on a `push` event; this workflow
+    runs on `workflow_run`, where the payload is `github.event.workflow_run` and carries no
+    `before` at all. It was asserted rather than checked, and it silently produced an empty
+    argument for every build.
     """
     tag = _git("describe", "--tags", "--abbrev=0", "--match", "wave-*", repo=repo)
     if tag:
-        return tag
-    if not candidate or candidate == _NO_SUCH_COMMIT:
-        return ""
+        return tag, "release"
+
+    named = candidate and candidate != _NO_SUCH_COMMIT
     # `--verify` with `^{commit}` refuses a ref that exists but is not a commit, and refuses
-    # a sha this clone does not have - which is the shallow-checkout case.
-    return candidate if _git("rev-parse", "--verify", f"{candidate}^{{commit}}", repo=repo) else ""
+    # a sha this clone does not have, which is the shallow-checkout case.
+    if named and _git("rev-parse", "--verify", f"{candidate}^{{commit}}", repo=repo):
+        return candidate, "commit"
+
+    parent = _git("rev-parse", "--verify", f"{ref}^", repo=repo)
+    return (parent, "commit") if parent else ("", "none")
 
 
 def main() -> int:
@@ -220,8 +252,9 @@ def main() -> int:
 
     repo = Path(__file__).resolve().parents[3]
     candidate = sys.argv[1] if len(sys.argv) > 1 else ""
+    since, kind = choose_span(repo, candidate=candidate)
     try:
-        manifest = build_manifest(repo, since=fallback_since(repo, candidate))
+        manifest = build_manifest(repo, since=since, span=kind)
     except ManifestError as exc:
         print(f"refused: {exc}", file=sys.stderr)
         return 1
