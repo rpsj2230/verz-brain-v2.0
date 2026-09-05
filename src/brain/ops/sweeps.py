@@ -22,6 +22,7 @@ import sys
 from pathlib import Path
 
 from brain.core.envelope import TOOL_NAME_PATTERN
+from brain.db import libpq_url
 
 REPO = Path(__file__).resolve().parents[3]
 SRC = REPO / "src" / "brain"
@@ -46,7 +47,15 @@ class SweepFailure(Exception):
 
 
 def _needs_db() -> str | None:
-    return os.environ.get("DATABASE_URL")
+    """The database URL in the form `psycopg.connect` accepts, or None.
+
+    Converted here rather than at each call site, because every caller of this opens a
+    connection without SQLAlchemy and every deployment writes the URL in SQLAlchemy's form.
+    `postgresql+psycopg://` reaches libpq as a keyword/value string and fails with
+    `missing "=" after ...`, which reads like a malformed password.
+    """
+    url = os.environ.get("DATABASE_URL")
+    return libpq_url(url) if url else url
 
 
 # --------------------------------------------------------------------- rls

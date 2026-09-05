@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import sys
 
-from brain.db import SCHEMAS
+from brain.db import SCHEMAS, libpq_url
 
 
 def missing_schemas(present: set[str]) -> tuple[str, ...]:
@@ -42,7 +42,11 @@ def check(url: str) -> int:
     """0 when every expected schema exists, 1 otherwise. Prints what is missing."""
     import psycopg
 
-    with psycopg.connect(url) as conn, conn.cursor() as cur:
+    # `libpq_url` because every deployment writes `DATABASE_URL` in SQLAlchemy's form and
+    # psycopg does not read it. This is the bug the whole-stack CI job caught: the app came
+    # up, the migrations ran, and this check failed with `missing "=" after ...`, which
+    # points a reader at the password rather than at the scheme.
+    with psycopg.connect(libpq_url(url)) as conn, conn.cursor() as cur:
         cur.execute(
             "SELECT nspname FROM pg_namespace WHERE nspname = ANY(%(names)s)",
             {"names": sorted(SCHEMAS)},

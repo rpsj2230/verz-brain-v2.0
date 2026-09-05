@@ -7,7 +7,15 @@ from __future__ import annotations
 
 import pytest
 
-from brain.db import EXTENSIONS, NAMING_CONVENTION, SCHEMAS, Base, metadata, normalise_database_url
+from brain.db import (
+    EXTENSIONS,
+    NAMING_CONVENTION,
+    SCHEMAS,
+    Base,
+    libpq_url,
+    metadata,
+    normalise_database_url,
+)
 
 
 @pytest.mark.parametrize(
@@ -120,3 +128,82 @@ def test_every_constraint_on_every_table_has_a_generated_name() -> None:
             if not name.startswith(("ix_", "uq_")):
                 wrong.append(f"{table.fullname}: index named {name!r}")
     assert not wrong, wrong
+
+
+# ------------------------------------------------- the URL psycopg itself can read
+@pytest.mark.parametrize(
+    ("given", "expected"),
+    [
+        (
+            "postgresql+psycopg://brain:pw@pgbouncer:5432/brain",
+            "postgresql://brain:pw@pgbouncer:5432/brain",
+        ),
+        ("postgresql+asyncpg://brain@host/brain", "postgresql://brain@host/brain"),
+        ("postgresql://brain:pw@host:5432/brain", "postgresql://brain:pw@host:5432/brain"),
+        ("postgres://brain@host/brain", "postgres://brain@host/brain"),
+        ("host=db dbname=brain user=brain", "host=db dbname=brain user=brain"),
+    ],
+)
+def test_a_sqlalchemy_url_is_turned_into_one_psycopg_can_read(given: str, expected: str) -> None:
+    """The bug this exists for reached CI and blocked a deploy.
+
+    Every deployment writes `DATABASE_URL` in SQLAlchemy's form, because that is what the
+    engine wants. Anything that opens a connection *without* SQLAlchemy gets handed the same
+    string, and `psycopg.connect("postgresql+psycopg://...")` fails with `missing "=" after
+    ...` - an error about keyword/value syntax, which sends the reader to look at the
+    password rather than at the scheme.
+
+    The keyword/value form is passed through untouched, because libpq accepts that too and
+    it is already what psycopg wants.
+
+    Delete this and `normalise_database_url` still has a test, and the direction that
+    actually broke has none."""
+    assert libpq_url(given) == expected
+
+
+def test_the_two_normalisers_are_inverses_on_the_form_operators_write() -> None:
+    """`normalise_database_url` exists because people write `postgresql://` and SQLAlchemy
+    maps that to a driver this project does not install. `libpq_url` exists because psycopg
+    cannot read what that produces. A round trip has to land back where it started, or one
+    of the two is rewriting something it should not."""
+    written = "postgresql://brain:pw@pgbouncer:5432/brain"
+
+    assert libpq_url(normalise_database_url(written)) == written
+
+
+def test_psycopg_actually_accepts_what_libpq_url_produces() -> None:
+    """Asserted against psycopg's own parser rather than against a string I expect.
+
+    A test comparing to a hand-written expected value proves the function does what I wrote
+    down; this proves it does what psycopg needs, which is the thing that failed. `psycopg`
+    is a dependency of this project, so there is no reason to assert on a proxy."""
+    import psycopg.conninfo
+
+    parsed = psycopg.conninfo.conninfo_to_dict(
+        libpq_url("postgresql+psycopg://brain:pw@pgbouncer:5432/brain")
+    )
+
+    assert parsed["host"] == "pgbouncer"
+    assert parsed["dbname"] == "brain"
+
+
+def test_every_direct_psycopg_connection_goes_through_the_converter() -> None:
+    """The call sites, not the function. `libpq_url` being correct helps nothing if the next
+    module to open a connection passes the raw setting, which is exactly what happened: the
+    function did not exist, two sweeps and the schema check each called
+    `psycopg.connect(url)`, and the whole-stack CI job was the only thing that noticed.
+
+    Asserted on the source because there is no behaviour to observe without a database, and
+    the sweeps skip when `DATABASE_URL` is unset - which is every run on a laptop."""
+    import inspect
+
+    from brain.ops import schema_check, sweeps
+
+    for module in (schema_check, sweeps):
+        source = inspect.getsource(module)
+        for line in source.splitlines():
+            if "psycopg.connect(" in line and "libpq_url" not in line:
+                assert "_needs_db()" in source, (
+                    f"{module.__name__} calls psycopg.connect on a URL that never passed "
+                    f"through libpq_url: {line.strip()}"
+                )

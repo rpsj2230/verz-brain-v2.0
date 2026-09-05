@@ -87,6 +87,36 @@ def normalise_database_url(url: str) -> str:
     return url
 
 
+def libpq_url(url: str) -> str:
+    """The same URL, in the form psycopg itself accepts. The inverse of the above.
+
+    SQLAlchemy's `postgresql+psycopg://` is a SQLAlchemy spelling, not a libpq one, and
+    handing it to `psycopg.connect` fails with `missing "=" after ...` - an error about
+    keyword/value syntax, which sends the reader looking at the password rather than at the
+    scheme. Every deployment sets `DATABASE_URL` in the SQLAlchemy form, because that is
+    what the engine wants, so anything opening a connection without SQLAlchemy has to undo it.
+
+    This existed as a gap rather than a bug for a while: nothing outside the engine opened a
+    connection. `brain.ops.schema_check` and two sweeps in `brain.ops.sweeps` do, and the
+    CI job that starts the whole stack found it - which is precisely the job's stated
+    purpose, catching what lint, types, tests and sweeps cannot because the compose file is
+    valid YAML pointing at a real image.
+
+    Any `+driver` suffix is stripped, not just `+psycopg`, because the failure mode is
+    identical for every one of them and a check for the single spelling we happen to use
+    would pass a URL naming a driver we do not.
+
+    Task ids: M0.3.2
+    """
+    scheme, separator, rest = url.partition("://")
+    if not separator:
+        # Not a URL at all. libpq also accepts a keyword/value string
+        # (`host=... dbname=...`), which is already the form psycopg wants.
+        return url
+    base, plus, _driver = scheme.partition("+")
+    return f"{base}://{rest}" if plus else url
+
+
 class TimestampMixin:
     """created_at and updated_at, set by the database rather than the application.
 
