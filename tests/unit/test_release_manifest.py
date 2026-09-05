@@ -18,6 +18,7 @@ from brain.ops.release_manifest import (
     ManifestError,
     ReleaseManifest,
     build_manifest,
+    fallback_since,
     read_manifest,
 )
 
@@ -102,6 +103,51 @@ def test_a_named_starting_point_overrides_the_tag(repo: Path) -> None:
     the manifest has to describe the span that was actually built."""
     head_1 = _git(repo, "rev-parse", "HEAD~1")
     assert build_manifest(repo, since=head_1, now=NOW).task_ids == ()
+
+
+# ------------------------------------------------- choosing the span (CI's fallback)
+def test_a_release_tag_beats_the_fallback(repo: Path) -> None:
+    """A release is what shipped since the last release, not since the last push. CI passes
+    the previous head every time, and once a tag exists that argument must stop being used
+    or every release describes only its final push."""
+    head_1 = _git(repo, "rev-parse", "HEAD~1")
+    assert fallback_since(repo, head_1) == "wave-0"
+
+
+def test_the_fallback_is_used_when_nothing_has_been_tagged(tmp_path: Path) -> None:
+    """Without this the manifest carries no ids until somebody cuts the first release,
+    which is exactly the period when nobody is watching whether the mechanism works. It
+    would then be discovered broken at the first release that mattered."""
+    work = tmp_path / "untagged"
+    work.mkdir()
+    _git(work, "init", "-q", "-b", "main")
+    _git(work, "config", "user.email", "t@example.com")
+    _git(work, "config", "user.name", "Test")
+    _commit(work, "a.txt", "First")
+    first = _git(work, "rev-parse", "HEAD")
+    _commit(work, "b.txt", "Second\n\nCloses: M90.1.1")
+    assert fallback_since(work, first) == first
+    span = fallback_since(work, first)
+    assert build_manifest(work, since=span, now=NOW).task_ids == ("M90.1.1",)
+
+
+def test_the_all_zero_sha_github_sends_on_a_first_push_is_refused(tmp_path: Path) -> None:
+    """`github.event.before` is forty zeroes on the first push to a branch. It looks like a
+    real argument and resolves to nothing, so a span built from it would make git error
+    rather than return an empty answer."""
+    work = tmp_path / "fresh"
+    work.mkdir()
+    _git(work, "init", "-q", "-b", "main")
+    _git(work, "config", "user.email", "t@example.com")
+    _git(work, "config", "user.name", "Test")
+    _commit(work, "a.txt", "First")
+    assert fallback_since(work, "0" * 40) == ""
+
+
+def test_a_commit_this_clone_does_not_have_is_refused(repo: Path) -> None:
+    """The shallow-checkout case. A sha that is real elsewhere and absent here would make
+    `git log` fail, and the build would break on a bookkeeping detail."""
+    assert fallback_since(repo, "f" * 40) in ("wave-0", "")
 
 
 # ------------------------------------------------------------------- the round trip

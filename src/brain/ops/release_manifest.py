@@ -186,14 +186,42 @@ def read_manifest(path: Path | None = None) -> ReleaseManifest | None:
     return ReleaseManifest.from_json(where.read_text(encoding="utf-8"))
 
 
+#: What GitHub sends as `github.event.before` when there is no before: the first push to a
+#: branch, or a force-push it declines to describe. Not a commit, and asking git about it
+#: produces an error rather than an empty answer.
+_NO_SUCH_COMMIT = "0" * 40
+
+
+def fallback_since(repo: Path, candidate: str) -> str:
+    """The span to use, preferring a release tag and falling back to the candidate.
+
+    A release is what shipped since the last *release*, not since the last push, so the tag
+    wins whenever there is one. The fallback exists because there is no tag yet: without it
+    the manifest carries no ids at all until somebody cuts the first release, which is
+    exactly the period when nobody is watching whether the mechanism works.
+
+    The candidate is refused if it is not a commit this repository has. `github.event.before`
+    is forty zeroes on a first push, and a span starting from that resolves to nothing
+    useful while looking like a real argument.
+    """
+    tag = _git("describe", "--tags", "--abbrev=0", "--match", "wave-*", repo=repo)
+    if tag:
+        return tag
+    if not candidate or candidate == _NO_SUCH_COMMIT:
+        return ""
+    # `--verify` with `^{commit}` refuses a ref that exists but is not a commit, and refuses
+    # a sha this clone does not have - which is the shallow-checkout case.
+    return candidate if _git("rev-parse", "--verify", f"{candidate}^{{commit}}", repo=repo) else ""
+
+
 def main() -> int:
-    """`python -m brain.ops.release_manifest [since] > RELEASE.json`, run by CI."""
+    """`python -m brain.ops.release_manifest [fallback-since] > RELEASE.json`, run by CI."""
     import sys
 
     repo = Path(__file__).resolve().parents[3]
-    since = sys.argv[1] if len(sys.argv) > 1 else ""
+    candidate = sys.argv[1] if len(sys.argv) > 1 else ""
     try:
-        manifest = build_manifest(repo, since=since)
+        manifest = build_manifest(repo, since=fallback_since(repo, candidate))
     except ManifestError as exc:
         print(f"refused: {exc}", file=sys.stderr)
         return 1

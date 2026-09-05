@@ -145,7 +145,25 @@ check_ids() {
   fi
 }
 
-check_ids "a manifest in the image puts its ids on the record"   '{"commit":"abc","task_ids":["M38.1.3.5","M12.1.1"],"built_at":"x"}'   "M38.1.3.5,M12.1.1"
+# The manifest exactly as `ReleaseManifest.to_json` writes it: indented, keys sorted.
+# The previous version of this scenario used a one-line manifest, which passed while
+# the real extraction returned nothing, because sed matches one line at a time and
+# `"task_ids": [` and its closing bracket are on different lines in the real file. A
+# test fixture that is not the shape of the real thing tests the fixture.
+MANIFEST='{
+  "built_at": "2026-09-05T00:00:00+00:00",
+  "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "extra": {},
+  "previous_commit": "",
+  "task_ids": [
+    "M12.1.1",
+    "M38.1.3.5"
+  ]
+}'
+
+check_ids "a manifest in the image puts its ids on the record" \
+  "$MANIFEST" \
+  "M12.1.1,M38.1.3.5"
 
 # An image built before the manifest existed, or built locally. The deploy must still
 # happen and still be recorded: refusing to deploy because a record would be incomplete

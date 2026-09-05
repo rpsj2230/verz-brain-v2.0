@@ -97,10 +97,16 @@ wait_ready() {
 # trust in order to find out what is in it.
 task_ids() {
   cid="$(docker create "$1" 2>/dev/null)" || { printf ''; return 0; }
+  # Newlines stripped *before* the match, not after. The manifest is written with
+  # `indent=2`, so `"task_ids": [` and its entries and the closing `]` are on separate
+  # lines, and sed works one line at a time: the pattern could never span them. It did not
+  # error - it matched the empty list on a single `"task_ids": []` line and returned an
+  # empty string, which is indistinguishable from "this release closed nothing". A test
+  # with a one-line manifest passed happily against a shape the real file never has.
   ids="$(docker cp "$cid:/app/RELEASE.json" - 2>/dev/null \
-         | tr -d '\000' \
+         | tr -d '\000' | tr '\n' ' ' \
          | sed -n 's/.*"task_ids"[^]]*\[\([^]]*\)\].*/\1/p' \
-         | tr -d ' "' | tr -d '\n')"
+         | tr -d ' "')"
   docker rm -f "$cid" >/dev/null 2>&1 || true
   printf '%s' "$ids"
 }
