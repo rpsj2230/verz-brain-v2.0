@@ -322,7 +322,11 @@ CALLS: dict[str, dict[str, object]] = {
         "capability": cap("read:client.contract_value"),
         "reason": DenyReason.NO_GRANT,
     },
-    "revoke": {"principal_id": "u_weiling", "capability": cap("read:client.name")},
+    "revoke": {
+        "principal_id": "u_weiling",
+        "capability": cap("read:client.name"),
+        "reason_code": "offboarding",
+    },
     "leash_change": {
         "agent_id": "sentinel",
         "target": "ticket.update_status",
@@ -370,7 +374,11 @@ def test_the_recorder_binds_the_actor_once_so_a_call_site_cannot_get_it_wrong() 
     order in which a grant gets recorded under the wrong person's name."""
     recorder, chain = a_recorder()
     recorder.grant(principal_id="u_weiling", capability=cap("read:client.name"))
-    recorder.revoke(principal_id="u_weiling", capability=cap("read:client.name"))
+    recorder.revoke(
+        principal_id="u_weiling",
+        capability=cap("read:client.name"),
+        reason_code="offboarding",
+    )
 
     assert {e.actor_id for e in chain.entries} == {"u_rupash"}
     assert {e.ent_hash for e in chain.entries} == {ENT}
@@ -774,3 +782,39 @@ def test_a_cursor_is_a_position_in_the_visible_order_and_not_a_row_number() -> N
 
     assert set(decoded) == {"at", "tie"}
     assert datetime.fromisoformat(decoded["at"]) == NOW + timedelta(minutes=1)
+
+
+# ------------------------------------------- the reason on a revocation (M24.1.4)
+def test_a_revocation_must_say_why() -> None:
+    """A revocation is the entry somebody comes back to months later, and "why was her
+    access removed" is the only question they will have. An optional field is one that is
+    empty on exactly the rows that matter."""
+    recorder, _ = a_recorder()
+    with pytest.raises(TypeError):
+        recorder.revoke(principal_id="u_weiling", capability=cap("read:client.name"))  # type: ignore[call-arg]
+
+
+def test_the_reason_is_a_code_and_not_a_sentence() -> None:
+    """Free text in the longest-retained table in the system is where the complainant, the
+    allegation and the counterparty end up. A code is also countable, so "how many
+    offboardings last quarter" is a query rather than a reading exercise."""
+    recorder, _ = a_recorder()
+    with pytest.raises(ValueError, match="not prose"):
+        recorder.revoke(
+            principal_id="u_weiling",
+            capability=cap("read:client.name"),
+            reason_code="she resigned on Tuesday and HR asked",
+        )
+
+
+def test_the_reason_survives_redaction_where_prose_would_not() -> None:
+    """The whole reason it is a code. `redact_details` is an allowlist of field-name
+    shapes, so a sentence would be reduced to the marker and the audit row would say
+    nothing at all about why."""
+    recorder, chain = a_recorder()
+    recorder.revoke(
+        principal_id="u_weiling",
+        capability=cap("read:client.name"),
+        reason_code="offboarding",
+    )
+    assert chain.entries[-1].details["reason_code"] == "offboarding"

@@ -37,12 +37,13 @@ typing are imported under `TYPE_CHECKING` only, so the audit package stays under
 layers that record into it and a future import of this module from `brain.gate` cannot
 produce a cycle.
 
-Task ids: M24.1.3
+Task ids: M24.1.3, M24.1.4
 """
 
 from __future__ import annotations
 
 import enum
+import re
 from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
 from types import MappingProxyType
@@ -129,6 +130,11 @@ ACTION_BY_METHOD: Final[Mapping[str, AuditAction]] = MappingProxyType(
         "break_glass": AuditAction.BREAK_GLASS,
     }
 )
+
+
+#: A reason code, not a sentence. Same grammar as a field name, so it survives
+#: `redact_details` untouched while prose would be reduced to the marker.
+_REASON_CODE_RE = re.compile(r"^[a-z][a-z0-9_]{1,60}$")
 
 
 def subject(kind: str, ident: str) -> str:
@@ -247,17 +253,31 @@ class AuditRecorder:
             {"capability": capability.value, "reason": reason.value},
         )
 
-    def revoke(self, *, principal_id: str, capability: Capability) -> AuditEntry:
-        """Record that a capability was taken away from a principal.
+    def revoke(self, *, principal_id: str, capability: Capability, reason_code: str) -> AuditEntry:
+        """Record that a capability was taken away from a principal, and why (M24.1.4).
 
         Separate from `deny` because the ledger keeps them separate, and the ledger keeps
         them separate because "who removed her access, and when" is otherwise unanswerable
         without reading the details of every routine refusal in between.
+
+        `reason_code` is required, and it is a code rather than a sentence. Required,
+        because a revocation is the entry somebody comes back to months later and "why was
+        her access removed" is the only question they will have; an optional field is one
+        that is empty on exactly the rows that matter. A code rather than prose, because
+        free text in the longest-retained table in the system is where the complainant, the
+        allegation and the counterparty end up, and because a code is countable: "how many
+        offboardings last quarter" becomes a query rather than a reading exercise.
         """
+        if not _REASON_CODE_RE.match(reason_code):
+            msg = (
+                f"reason code {reason_code!r} must be a lowercase code such as "
+                "`offboarding` or `role_change`, not prose"
+            )
+            raise ValueError(msg)
         return self._write(
             AuditAction.REVOKE,
             subject("principal", principal_id),
-            {"capability": capability.value},
+            {"capability": capability.value, "reason_code": reason_code},
         )
 
     def leash_change(
