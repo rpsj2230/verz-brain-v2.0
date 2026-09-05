@@ -16,11 +16,17 @@ INTERVAL="${WATCH_INTERVAL:-3min}"
 
 echo "==> installing the deploy watcher on $HOST, every $INTERVAL"
 
-scp -o BatchMode=yes ops/watch-and-deploy.sh "$HOST:/usr/local/bin/brain-deploy" >/dev/null
+# Piped through `tr -d` rather than scp'd, because this repo is edited on Windows and git
+# gives the working tree CRLF line endings. dash on the server reads the carriage return as
+# part of the command and fails with "end of file unexpected", which reads like a truncated
+# transfer rather than a line-ending problem and cost half an hour once.
+tr -d '\015' < ops/watch-and-deploy.sh | ssh -o BatchMode=yes "$HOST" "cat > /usr/local/bin/brain-deploy"
 
 ssh -o BatchMode=yes "$HOST" "
 set -eu
 chmod +x /usr/local/bin/brain-deploy
+# Checked with the server's own shell. Git Bash accepts scripts dash refuses.
+sh -n /usr/local/bin/brain-deploy
 
 cat > /etc/systemd/system/brain-deploy.service <<'UNIT'
 [Unit]
