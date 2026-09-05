@@ -43,10 +43,24 @@ subtractive state that `subtractive_state` refuses across the identity package. 
 that a binding existed lives in the audit ledger, which is where a record that must survive
 belongs.
 
-Nothing here decides whether the caller is authenticated. `mint_nonce` says the caller is
-responsible for that being true, and so is this.
+**Minting requires a live sign-in, and that is the "outward-only" property having teeth
+rather than a docstring.** `ingress.mint_nonce` takes a principal id as a string and says the
+caller is responsible for that being an authenticated one. That is a true statement and it is
+not a guard: anything that can reach it can mint a nonce naming somebody else's principal,
+present it from its own chat account, and be bound to them. The whole direction of this flow
+exists to stop that, and it rested on a caller being careful.
 
-Task ids: M10.3.2, M10.3.4
+`mint_for_session` takes a `Session` instead, and reads the principal off it. There is no
+argument to pass the wrong principal in, which is the only form of this rule that survives a
+future caller who has not read the docstring.
+
+**A nonce is also re-checked against the session at bind time.** A nonce lives ten minutes.
+Somebody who signs in, requests a code and then signs out has ended the sign-in that
+authorised the binding, and the code should stop working at that moment rather than at the
+end of its ten minutes. The registry's not-before floor is what makes logout mean anything at
+all here, and it is the thing that survives a restart or a second replica.
+
+Task ids: M10.3.1, M10.3.2, M10.3.4
 """
 
 from __future__ import annotations
@@ -65,7 +79,9 @@ from brain.gate.ingress import (
     BindingRefusedError,
     ChannelEvent,
     bind,
+    mint_nonce,
 )
+from brain.identity.sessions import Session, SessionRegistry
 
 #: Derived from `ingress.NONCE_TTL` rather than restated, so the two cannot drift. A
 #: consumption record shorter than the nonce's own life would let a replay through in the gap
@@ -106,6 +122,86 @@ def nonce_digest(nonce: BindingNonce) -> str:
     parts = (nonce.principal_id, nonce.channel.value, nonce.value)
     blob = "".join(f"{len(p)}:{p}" for p in parts)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+@dataclass(frozen=True)
+class SessionNonce:
+    """A nonce, and the sign-in that authorised it.
+
+    The pair travels together because the second half is checked twice: once when the nonce
+    is minted, and again when it is presented. A nonce carrying no session would be a nonce
+    that outlives the sign-in it came from, and ten minutes is long enough for somebody to
+    request a code and then sign out.
+    """
+
+    nonce: BindingNonce
+    session_id: str
+
+
+def mint_for_session(
+    session: Session,
+    channel: Channel,
+    *,
+    now: datetime,
+) -> SessionNonce:
+    """Mint a binding code inside a live sign-in, for the person who is signed in.
+
+    **The principal is read off the session and is not a parameter.** `ingress.mint_nonce`
+    takes it as a string and documents that the caller must have authenticated them; this
+    takes the session and leaves no argument to pass somebody else's id into. A rule enforced
+    by a docstring is a rule that holds until the second caller.
+
+    What that stops is the whole point of the outward direction: mint a nonce naming a
+    colleague, present it from your own chat account, and their messages now resolve to you.
+
+    **An expired session mints nothing.** Checked with `Session.is_live`, so idle expiry and
+    the absolute ceiling are the ones `brain.identity.sessions` already decided rather than a
+    second opinion here.
+    """
+    if not session.is_live(now):
+        msg = (
+            "this sign-in has expired, so there is no authenticated session to mint in. "
+            "The code is carried outward from a live session on purpose: minting outside one "
+            "is minting on behalf of somebody who is not there."
+        )
+        raise BindingRefusedError(msg)
+    return SessionNonce(
+        nonce=mint_nonce(session.principal_id, channel, now),
+        session_id=session.session_id,
+    )
+
+
+def assert_session_still_authorises(
+    minted: SessionNonce,
+    *,
+    now: datetime,
+    registry: SessionRegistry,
+) -> None:
+    """Refuse a code whose sign-in has since ended.
+
+    A nonce lives ten minutes, which is long enough to request a code and then sign out, and
+    signing out has to mean the code stops working at that moment rather than at the end of
+    its own clock. Otherwise "log me out everywhere" leaves a credential outstanding that
+    binds a chat account afterwards.
+
+    Two questions, and the second is the one that survives a restart. `registry.get` finds the
+    session if this process knows about it; the not-before floor answers even when it does
+    not, because a floor is one timestamp per principal and it is raised by every logout,
+    including one that arrived at a different replica. Checking only the first would make this
+    guard depend on which process happened to serve the request.
+    """
+    session = registry.get(minted.session_id)
+    if session is None or not session.is_live(now):
+        msg = "the sign-in that produced this code has ended"
+        raise BindingRefusedError(msg)
+
+    floor = registry.not_before_for(minted.nonce.principal_id)
+    if floor is not None and minted.nonce.minted_at < floor:
+        msg = (
+            "this code was minted before the last sign-out for that person, so the sign-in "
+            "that authorised it has been revoked"
+        )
+        raise BindingRefusedError(msg)
 
 
 @dataclass(frozen=True)

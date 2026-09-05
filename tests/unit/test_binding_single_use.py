@@ -20,8 +20,11 @@ import pytest
 from brain.channels.binding import (
     NONCE_TTL_SECONDS,
     BindingOutcome,
+    SessionNonce,
     apply_unbind,
+    assert_session_still_authorises,
     bind_once,
+    mint_for_session,
     nonce_digest,
     unbind,
     would_replay,
@@ -35,6 +38,7 @@ from brain.gate.ingress import (
     identity_hash,
     mint_nonce,
 )
+from brain.identity.sessions import Session, SessionRegistry
 
 NOW = datetime(2026, 9, 5, 12, 0, tzinfo=UTC)
 ALICE = "u_alice"
@@ -329,3 +333,145 @@ def test_the_ledger_protocol_offers_no_way_to_read_before_writing() -> None:
 
     methods = {name for name in vars(NonceLedger) if not name.startswith("_")}
     assert methods == {"consume"}
+
+
+# ------------------------------------------- minting requires somebody to be signed in
+#
+# `ingress.mint_nonce` takes a principal id as a string and documents that the caller must
+# have authenticated them. That is a true sentence and not a guard.
+
+
+def _session(principal: str = ALICE, *, opened: datetime = NOW) -> Session:
+    return Session(
+        session_id="sid-" + principal,
+        principal_id=principal,
+        issuer="https://id.example/realms/brain",
+        subject="1f2e3d4c-0000-4000-8000-000000000001",
+        opened_at=opened,
+        expires_at=opened + timedelta(minutes=30),
+        absolute_expiry=opened + timedelta(hours=10),
+    )
+
+
+def test_a_code_is_minted_for_the_person_who_is_signed_in() -> None:
+    """The happy path, and it also pins where the principal comes from: the session, not an
+    argument. If this fails, the refusals below pass for the wrong reason."""
+    minted = mint_for_session(_session(), Channel.LARK, now=NOW)
+
+    assert isinstance(minted, SessionNonce)
+    assert minted.nonce.principal_id == ALICE
+    assert minted.session_id == "sid-" + ALICE
+
+
+def test_minting_takes_no_principal_argument_at_all() -> None:
+    """**The actual guard, and it is a shape rather than a check.** A function taking a
+    principal id lets a caller mint a nonce naming a colleague, present it from their own
+    chat account, and receive that colleague's messages. That is the exact attack the outward
+    direction exists to prevent, and it rested on the caller being careful.
+
+    Asserted on the signature because there is no behaviour to observe: the wrong call does
+    not exist. Delete this and a principal parameter can be added back for a caller that
+    "already knows who it is", which is how it was written the first time."""
+    import inspect
+
+    from brain.channels import binding
+
+    parameters = set(inspect.signature(binding.mint_for_session).parameters)
+    assert "principal_id" not in parameters
+    assert parameters == {"session", "channel", "now"}
+
+
+def test_an_expired_sign_in_mints_nothing() -> None:
+    """Minting outside a live session is minting on behalf of somebody who is not there.
+
+    Uses `Session.is_live` rather than a second opinion, so idle expiry and the absolute
+    ceiling stay the ones `brain.identity.sessions` decided."""
+    stale = _session(opened=NOW - timedelta(hours=11))
+
+    with pytest.raises(BindingRefusedError, match="expired"):
+        mint_for_session(stale, Channel.LARK, now=NOW)
+
+
+def test_a_code_stops_working_when_the_person_signs_out() -> None:
+    """A nonce lives ten minutes, which is long enough to request a code and then sign out.
+    Signing out has to end the code at that moment, or "log me out everywhere" leaves a
+    credential outstanding that binds a chat account afterwards.
+
+    Delete this and logout is honoured for tokens and ignored for binding codes."""
+    registry = SessionRegistry()
+    session = _session()
+    registry.register(session)
+    minted = mint_for_session(session, Channel.LARK, now=NOW)
+
+    assert_session_still_authorises(minted, now=NOW, registry=registry)
+
+    registry.end_session(session.session_id, NOW + timedelta(minutes=1))
+
+    with pytest.raises(BindingRefusedError):
+        assert_session_still_authorises(minted, now=NOW + timedelta(minutes=2), registry=registry)
+
+
+def test_a_code_naming_a_sign_in_nobody_has_heard_of_is_refused() -> None:
+    """Found by mutation: the sign-out test above is satisfied by the not-before floor alone,
+    so the `registry.get` branch was never exercised by anything.
+
+    It is load-bearing on its own. A `SessionNonce` is an ordinary object and can be built
+    naming any session id; the floor for a principal who has never signed out is None, so the
+    floor check passes it. Only looking the session up refuses a code that came from a
+    sign-in that never existed.
+
+    Delete this and a fabricated pair binds, and the sign-out test still passes."""
+    registry = SessionRegistry()
+    forged = SessionNonce(
+        nonce=mint_nonce(ALICE, Channel.LARK, NOW),
+        session_id="sid-that-never-existed",
+    )
+
+    with pytest.raises(BindingRefusedError, match="has ended"):
+        assert_session_still_authorises(forged, now=NOW, registry=registry)
+
+
+def test_a_code_from_a_sign_in_that_simply_timed_out_is_refused() -> None:
+    """The other branch the floor does not cover, and also found by mutation.
+
+    Nobody signed out here, so no floor was ever raised. The session is still in the registry
+    and has merely run past its idle window. Without the liveness half of the check, a code
+    minted in a session that expired hours ago still binds, and expiry would mean nothing on
+    this path while meaning everything on the token path.
+
+    Delete this and `is_live` can be dropped from the lookup with every other test green."""
+    registry = SessionRegistry()
+    session = _session(opened=NOW - timedelta(hours=9))
+    registry.register(session)
+    minted = mint_for_session(session, Channel.LARK, now=NOW - timedelta(hours=9))
+
+    # Well past the thirty-minute idle window, and no sign-out anywhere.
+    later = NOW - timedelta(hours=9) + timedelta(hours=2)
+
+    assert registry.not_before_for(ALICE) is None, "a floor was raised; this is the wrong test"
+    with pytest.raises(BindingRefusedError, match="has ended"):
+        assert_session_still_authorises(minted, now=later, registry=registry)
+
+
+def test_a_code_is_refused_after_a_sign_out_this_process_never_saw() -> None:
+    """The half that survives a restart or a second replica.
+
+    `registry.get` only answers for sessions this process knows about, so a logout handled
+    elsewhere leaves it unable to refuse anything. The not-before floor is one timestamp per
+    principal and every sign-out raises it, so it answers in all three cases.
+
+    Delete this and the guard works on whichever process happened to serve the sign-out and
+    silently does nothing on the others, which is the failure that only appears once there is
+    more than one replica."""
+    registry = SessionRegistry()
+    session = _session()
+    registry.register(session)
+    minted = mint_for_session(session, Channel.LARK, now=NOW)
+
+    # A sign-out that raises the floor. The session row is then re-registered, standing in
+    # for a replica that never learned the session had ended.
+    registry.end_all_for(ALICE, NOW + timedelta(minutes=1))
+    registry.register(session)
+
+    with pytest.raises(BindingRefusedError, match="revoked"):
+        assert_session_still_authorises(minted, now=NOW + timedelta(minutes=2), registry=registry)
