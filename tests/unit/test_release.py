@@ -61,12 +61,10 @@ def repo(tmp_path: Path) -> Path:
 
 
 # ------------------------------------------------------- what the tag contains
-def test_the_tag_message_is_the_wave_report() -> None:
-    """A tag called v0.3.1 says the order releases went out and nothing else. `git show
-    wave-1` should answer "what was in this" without a separate changelog that drifts."""
-
-
 def test_a_plan_carries_the_report_and_the_counts(repo: Path) -> None:
+    """A tag called v0.3.1 says the order releases went out and nothing else. This one
+    carries the report, so `git show wave-0` answers what was in the release without a
+    separate changelog that drifts."""
     plan = plan_release(repo, 0)
     assert plan.tag == "wave-0"
     assert "M90" in plan.message
