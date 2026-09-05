@@ -194,6 +194,24 @@ jobs:
           # rather than the list this checkout happens to have. See the tests job for why
           # this is a module and not a shell one-liner.
           docker compose exec -T app python -m brain.ops.schema_check
+      - name: Row-level security, against a database that exists
+        # THE SWEEP THAT HAD NEVER RUN. `brain.ops.sweeps rls` skips when DATABASE_URL is
+        # unset, and the standalone sweeps job has no database service, so for the whole life
+        # of this pipeline it printed "skip: DATABASE_URL unset (CI always sets it)" and
+        # exited 0. The parenthetical was false in the one place it was read.
+        #
+        # A skip is right on a laptop, where there is genuinely no database and failing would
+        # make the sweep something people stop running. It is wrong here. So the check lives
+        # in this job, which has a migrated database, and runs inside the container, which is
+        # the honest place to ask: it reads the schema the running image actually built.
+        #
+        # This is the class of bug the sweep exists to catch. A table shipped with RLS off is
+        # one forgotten WHERE clause from returning every row to every caller, and it looks
+        # correct in every test that happens to use a wide principal.
+        run: |
+          docker compose exec -T app python -m brain.ops.sweeps rls
+          docker compose exec -T app python -m brain.ops.sweeps grant_isolation
+
       - name: The documents are served
         run: |
           for path in / /build /build/tracker /admin /api/status.json; do

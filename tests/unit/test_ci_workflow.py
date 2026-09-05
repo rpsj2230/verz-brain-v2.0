@@ -160,3 +160,65 @@ def test_the_workflow_runs_on_a_pull_request_and_not_only_on_main() -> None:
     triggers = _workflow()[True]
     assert "pull_request" in triggers
     assert "main" in triggers["push"]["branches"]
+
+
+# --------------------------------- the sweeps that need a database, and did not get one
+#
+# `sweep_rls` and `sweep_grant_isolation` skip when DATABASE_URL is unset. The standalone
+# sweeps job has no database service, so for the whole life of this pipeline the row-level
+# security sweep printed a skip and exited 0. It had never run once.
+
+
+DB_DEPENDENT_SWEEPS = ("rls", "grant_isolation")
+
+
+def _stack_run_commands() -> str:
+    """Every `run:` in the job that starts the whole stack, which is the job with a database."""
+    job = _workflow()["jobs"]["stack"]
+    return "\n".join(str(step["run"]) for step in job.get("steps", []) if "run" in step)
+
+
+@pytest.mark.parametrize("sweep", DB_DEPENDENT_SWEEPS)
+def test_a_sweep_that_needs_a_database_is_run_where_one_exists(sweep: str) -> None:
+    """The bug: a security check that exits 0 without checking anything is worse than one
+    that is absent, because the absent one is visible.
+
+    A table shipped without row-level security is one forgotten WHERE clause from returning
+    every row to every caller, and it looks correct in every test that happens to use a wide
+    principal. That is precisely what this sweep exists to catch, and it had never run.
+
+    Asserted against the *stack* job specifically, not against the workflow as a whole. The
+    sweeps job invokes the same command and skips, so a test over every `run:` in the file
+    passes while nothing is checked - which is the shape of the original bug, one level up.
+
+    Delete this and the sweep can quietly return to skipping everywhere."""
+    assert f"brain.ops.sweeps {sweep}" in _stack_run_commands()
+
+
+def test_the_job_that_runs_the_database_sweeps_actually_has_a_database() -> None:
+    """The other half, and the one that makes the test above mean something. Asserting a
+    command appears in a job proves nothing if that job has no database: the sweep would skip
+    there too, exactly as it did before.
+
+    The stack job's whole purpose is starting the real compose stack, so what is checked here
+    is that it still does, and that the sweeps run against it rather than beside it."""
+    stack = _stack_run_commands()
+
+    assert "docker compose up" in stack, "the stack job no longer starts a stack"
+    for sweep in DB_DEPENDENT_SWEEPS:
+        assert f"docker compose exec -T app python -m brain.ops.sweeps {sweep}" in stack, (
+            f"the {sweep} sweep is not run inside the container that has DATABASE_URL"
+        )
+
+
+def test_the_skip_message_claims_nothing_about_where_it_does_run() -> None:
+    """It used to read "(CI always sets it)", which was false in the one place anybody read
+    it: printed by CI, in a job with no database.
+
+    A message that asserts a check happens elsewhere is worse than silence, because it
+    answers the question a reader would otherwise go and ask. Deleting this test lets the
+    next reassuring parenthetical go in unchallenged."""
+    from brain.ops.sweeps import SKIPPED_FOR_WANT_OF_A_DATABASE
+
+    assert "always" not in SKIPPED_FOR_WANT_OF_A_DATABASE
+    assert "nothing was checked" in SKIPPED_FOR_WANT_OF_A_DATABASE

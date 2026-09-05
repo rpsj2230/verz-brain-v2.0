@@ -46,6 +46,22 @@ class SweepFailure(Exception):
         self.findings = findings
 
 
+#: What a skip says, and it no longer claims anything about CI.
+#:
+#: It used to read "(CI always sets it)", which was false in the one place anybody read it:
+#: the sweeps job has no database service, so this sweep printed that line and exited 0 on
+#: every run since it was written. A security check that had never executed, announcing that
+#: it runs elsewhere.
+#:
+#: Skipping is still right on a laptop, where there is no database and a failure would turn
+#: the sweep into something people route around. The fix is that CI now runs it in the job
+#: that has a migrated database, and there is a test asserting CI does so.
+SKIPPED_FOR_WANT_OF_A_DATABASE = (
+    "skip: DATABASE_URL unset, so nothing was checked. "
+    "CI runs this against a real schema in the stack job."
+)
+
+
 def _needs_db() -> str | None:
     """The database URL in the form `psycopg.connect` accepts, or None.
 
@@ -68,7 +84,7 @@ def sweep_rls() -> None:
     """
     url = _needs_db()
     if url is None:
-        print("skip: DATABASE_URL unset (CI always sets it)")
+        print(SKIPPED_FOR_WANT_OF_A_DATABASE)
         return
     import psycopg  # imported here so the sweep module works with no DB driver present
 
@@ -109,7 +125,7 @@ def sweep_grant_isolation() -> None:
     """
     url = _needs_db()
     if url is None:
-        print("skip: DATABASE_URL unset (CI always sets it)")
+        print(SKIPPED_FOR_WANT_OF_A_DATABASE)
         return
     import psycopg
 
