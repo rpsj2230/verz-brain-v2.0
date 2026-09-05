@@ -151,3 +151,46 @@ def test_development_without_a_database_stays_quiet(monkeypatch: pytest.MonkeyPa
     app = create_app(Settings(env="development", database_url=""))
     with TestClient(app) as c:
         assert c.get("/health/ready").status_code == 200
+
+
+# ----------------------------------------------- the lock has to survive a transaction pooler
+def test_the_migration_lock_is_transaction_scoped_not_session_scoped() -> None:
+    """A session-level lock is held by a *server* connection, and the application talks to
+    PgBouncer in transaction mode, where consecutive statements from one client can land on
+    different server connections. The lock was taken on one and every later statement ran
+    somewhere else, so mutual exclusion was gone and nothing said so: two replicas both ran
+    the upgrade, both issued CREATE TABLE alembic_version, and the loser died on a unique
+    violation against a system index while the app failed to start.
+
+    Asserted by reading the source because the failure only appears with a real pooler and
+    two replicas, which is not a thing a unit test can stand up.
+    """
+    source = (Path(__file__).resolve().parents[2] / "src" / "brain" / "migrate.py").read_text(
+        encoding="utf-8"
+    )
+    assert "pg_advisory_xact_lock" in source
+    assert "SELECT pg_advisory_lock(" not in source
+
+
+def test_the_migration_runs_on_the_connection_that_holds_the_lock() -> None:
+    """A transaction-scoped lock only guards work inside its own transaction. Left to
+    itself alembic opens a second connection, and through the pooler that is a different
+    server connection again, so the migration would run outside the lock it just took."""
+    source = (Path(__file__).resolve().parents[2] / "src" / "brain" / "migrate.py").read_text(
+        encoding="utf-8"
+    )
+    assert 'attributes["connection"]' in source
+
+    env = (Path(__file__).resolve().parents[2] / "migrations" / "env.py").read_text(
+        encoding="utf-8"
+    )
+    assert 'config.attributes.get("connection")' in env
+
+
+def test_nothing_unlocks_by_hand() -> None:
+    """A transaction-scoped lock releases itself. An explicit unlock would be a path that
+    can be forgotten, and a crashed replica would leave the lock held forever."""
+    source = (Path(__file__).resolve().parents[2] / "src" / "brain" / "migrate.py").read_text(
+        encoding="utf-8"
+    )
+    assert "pg_advisory_unlock" not in source

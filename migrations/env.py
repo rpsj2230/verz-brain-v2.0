@@ -61,7 +61,36 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
+def _run_with(connection: object) -> None:
+    """Configure and run against a connection somebody else owns.
+
+    The caller keeps the transaction, so nothing here commits: `brain.migrate` holds the
+    advisory lock for the same transaction and commits once, which is what makes the lock
+    and the migration atomic with respect to another replica.
+    """
+    context.configure(
+        connection=connection,  # type: ignore[arg-type]
+        target_metadata=target_metadata,
+        include_schemas=True,
+        include_name=include_name,
+        compare_type=True,
+        transaction_per_migration=False,
+    )
+    context.run_migrations()
+
+
 def run_migrations_online() -> None:
+    # A caller may hand us its own connection through `config.attributes`, and
+    # `brain.migrate` does exactly that. It matters for more than tidiness: the advisory
+    # lock guarding concurrent replicas is transaction-scoped, and a transaction only
+    # guards the work that happens inside it. If alembic opened a second connection the
+    # migration would run outside the lock's transaction, which through a transaction
+    # pooler means outside the lock entirely.
+    supplied = config.attributes.get("connection")
+    if supplied is not None:
+        _run_with(supplied)
+        return
+
     connectable = engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",

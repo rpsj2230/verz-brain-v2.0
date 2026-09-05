@@ -31,6 +31,7 @@ from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, text
+from sqlalchemy.pool import NullPool
 
 from brain.db import normalise_database_url
 
@@ -78,26 +79,47 @@ def run_migrations(database_url: str) -> list[str]:
         return []
 
     log.info("migrations pending", count=len(pending), revisions=pending)
-    engine = create_engine(url, poolclass=None)
+    engine = create_engine(url, poolclass=NullPool)
     try:
         with engine.connect() as conn:
+            # `pg_advisory_xact_lock`, not `pg_advisory_lock`, and the difference is the
+            # whole reason this function exists in the shape it does.
+            #
+            # A session-level lock is held by a *server* connection. The application talks
+            # to PgBouncer in transaction mode, where consecutive statements from one
+            # client can land on different server connections, so the lock was taken on
+            # one connection and every later statement ran somewhere else. Mutual
+            # exclusion was gone and nothing said so: two replicas both ran `upgrade`,
+            # both issued `CREATE TABLE alembic_version`, and the loser died with a
+            # unique-violation on a system index while the app failed to start.
+            #
+            # A transaction-scoped lock is held for one transaction, and a transaction is
+            # the one thing a transaction pooler will not split across server connections.
+            # It also cannot leak: there is no unlock to forget and no path where a
+            # crashed replica leaves the lock held.
+            #
             # Blocking, not try-lock: a replica that loses the race must wait for the
             # winner rather than start serving against an unmigrated schema.
-            conn.execute(text("SELECT pg_advisory_lock(:id)"), {"id": MIGRATION_LOCK_ID})
+            conn.execute(text("SELECT pg_advisory_xact_lock(:id)"), {"id": MIGRATION_LOCK_ID})
+
+            # Re-check inside the lock. The replica that waited will usually find the work
+            # already done, and running `upgrade` regardless would be harmless but would
+            # log a migration that did not happen.
+            still_pending = pending_revisions(url)
+            if not still_pending:
+                log.info("migrations applied by another replica")
+                conn.rollback()
+                return []
+
+            # Alembic runs on *this* connection, inside *this* transaction, which is what
+            # puts the migration under the lock. Left to itself it would open a second
+            # connection, and through the pooler that is a different server connection
+            # again, which is the bug this whole block exists to close.
+            cfg = _alembic_config(url)
+            cfg.attributes["connection"] = conn
+            command.upgrade(cfg, "head")
             conn.commit()
-            try:
-                # Re-check inside the lock. The replica that waited will usually find the
-                # work already done, and running `upgrade` regardless would be harmless
-                # but would log a migration that did not happen.
-                still_pending = pending_revisions(url)
-                if not still_pending:
-                    log.info("migrations applied by another replica")
-                    return []
-                command.upgrade(_alembic_config(url), "head")
-                log.info("migrations applied", revisions=still_pending)
-                return still_pending
-            finally:
-                conn.execute(text("SELECT pg_advisory_unlock(:id)"), {"id": MIGRATION_LOCK_ID})
-                conn.commit()
+            log.info("migrations applied", revisions=still_pending)
+            return still_pending
     finally:
         engine.dispose()
