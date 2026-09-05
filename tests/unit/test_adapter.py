@@ -349,7 +349,7 @@ def test_the_sdk_error_names_translate_onto_our_closed_set(name: str, expected: 
     from brain.models.adapter import translate_sdk_error
 
     exc = type(name, (Exception,), {})()
-    exc.status_code = 429  # type: ignore[attr-defined]
+    exc.status_code = 429
     assert isinstance(translate_sdk_error(exc), expected)
 
 

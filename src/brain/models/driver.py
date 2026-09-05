@@ -243,10 +243,21 @@ class ModelDriver(Protocol):
     an answer. `ProviderUnavailable` carries the `DriverFailure` so nothing is lost.
     """
 
-    #: The provider this adapter speaks for, matching `Deployment.provider`. An attribute
-    #: rather than a method because it is a constant of the adapter, and `DriverRegistry`
-    #: keys on it.
-    provider: str
+    @property
+    def provider(self) -> str:
+        """The provider this adapter speaks for, matching `Deployment.provider`.
+
+        Declared as a read-only property rather than as `provider: str`. A bare annotation
+        in a Protocol asks for a *settable* attribute, which every correctly written adapter
+        fails to provide: an adapter is a frozen dataclass, because its provider and its
+        transport are constants of the thing, and a frozen field is read-only.
+
+        So the protocol was demanding mutability it does not want and cannot use, and
+        `SdkDriver` did not satisfy it. mypy said so precisely ("expected settable variable,
+        got read-only attribute") and the error surfaced at the registry, where it read as a
+        problem with a dictionary.
+        """
+        ...
 
     def complete(self, request: DriverRequest) -> DriverResponse:
         """Make one call. Raises `ProviderUnavailable` on any transport failure."""
