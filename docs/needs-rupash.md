@@ -158,11 +158,52 @@ which is wave 4. Worth deciding before then rather than during.
 **Measured, not estimated. Nothing is blocked today, and this needs deciding before
 wave 4 rather than during it.**
 
-Your server has about 6.4 GB usable. Your other production system already uses 3.7 GB of
-it. Leaving a small reserve for the machine itself, that gives the Brain about **2.4 GB**.
+**Re-measured on 2026-09-06, on the live box. Two numbers in the original version of this
+note were wrong. The recommendation at the bottom does not change.**
 
-The Brain today fits comfortably. The full feature set does not: it wants **3.7 GB**, so it
-is over by about **1.3 GB**.
+What was written here before: "your server has about 6.4 GB usable, your other production
+system already uses 3.7 GB of it". Neither is right.
+
+- **The machine is 11.7 GB, not 6.4 GB.** The 6.4 figure is a budget the code sets for
+  itself, deliberately well below the machine, so the Brain can never be the reason a
+  neighbour falls over. It was written up as though it were the size of the server.
+- **The 3.7 GB is the Brain's own, not your other project's.** The same number appears
+  twice for two unrelated things, which is what made this confusing. 3,712 MB is what the
+  Brain's four services are *allowed* to use, and separately it happens to be what the full
+  feature set wants. Your other containers actually use about **5.2 GB** right now.
+
+The corrected picture, all measured this morning:
+
+| | Measured |
+|---|---|
+| The machine | 11,960 MB |
+| Actually in use, everything on the box | 5,641 MB |
+| Of that, the Brain | **394 MB** |
+| Free right now | 6,318 MB |
+| Swap in use | 1,352 MB of 2,047 |
+
+The Brain today is using **394 MB** of the 3,584 MB it is allowed. It is not the thing
+under pressure.
+
+**The conclusion is unchanged: the full feature set is over budget by about 1.3 GB.** That
+was right for the right reason, because the budget is a deliberate self-imposed cap rather
+than the size of the machine, and the arithmetic behind it was never wrong.
+
+### The thing worth knowing that was not in here before
+
+**15 of the 31 containers on that box have no memory limit at all.** Not a high one, none.
+Among them are Coolify itself, `verzbrain-activepieces`, and the two largest consumers on
+the machine. Together the containers that *do* have limits are already allowed 9,600 MB on
+an 11,960 MB machine, and the 15 unlimited ones are on top of that.
+
+In plain terms: the box is already promised more memory than it has, and the swap figure
+above is the evidence that it has been asked for it at least once. Nothing has fallen over,
+and the Brain is the well-behaved tenant here rather than the risk. But it does mean that if
+something on that machine goes wrong at 3am, the kernel picks what to kill, and it does not
+know which container is your client-facing system.
+
+That is not a Brain problem to fix, and I have not touched anything outside our own project.
+It is an argument for the second server being about resilience as well as capacity.
 
 **What is using it.** The single biggest item is the database behind the tracing tool
 (`langfuse-clickhouse`) at 1 GB. That is the component that records what the AI did, step

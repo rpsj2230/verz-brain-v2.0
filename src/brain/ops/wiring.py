@@ -47,22 +47,48 @@ reports the overrun rather than the numbers being quietly rounded until they agr
 answer is a second host or a hosted trace ledger, and that is a decision for Rupash, not
 something to resolve by editing a constant here.
 
-No leaf ids are claimed by this module. The compose services for these components are not
-written, and a memory limit that exists only as a Python constant is not a resource limit
-on anything. What is here is the budget those services will have to satisfy, and the
-arithmetic that says two of them cannot both be run.
+**The profile is a flag that refuses, not a word in a settings file.** `components_for`
+answers what a profile deploys, and that was the whole of it until a lite install could
+still carry a `LANGFUSE_HOST` copied from a standard one. Nothing deployed the ledger and
+nothing stopped the client library posting spans at it, which fails silently in both
+directions: a refused span is retried and dropped inside the client, and an accepted one
+means a client's traces are sitting on a host chosen by whoever edited an environment
+file. `trace_config_conflicts` is what makes the flag load-bearing.
+
+This module previously claimed no leaves, on the grounds that a memory limit existing only
+as a Python constant is not a resource limit on anything. That is still the right test, and
+it is now satisfied from the other side: `docker-compose.langfuse.yml` carries the limits
+and `tests/unit/test_wiring.py` holds the two copies equal, so neither can move alone.
+
+Still not claimed: M32.1.1.1. The service set is written and has never been started, because
+there is no host it fits on. A compose file that has never run is a design.
+
+Task ids: M32.1.1.4
 """
 
 from __future__ import annotations
 
 import enum
 from dataclasses import dataclass
-from typing import Final
+from typing import Final, Literal
 
 #: What this system's declared limits may add up to on the shared host, in mebibytes.
 #: Approximate on purpose: it is headroom above a neighbour whose own usage moves, so
 #: treating it as exact would be false precision. Sizing against it is still the point,
 #: because the alternative is sizing against nothing.
+#:
+#: **It is a self-imposed cap, not the size of the machine, and it was documented as the
+#: latter.** Measured on the live host 2026-09-06: 11,960 MiB total, 5,641 MiB in use, of
+#: which this system accounts for 394 MiB. `docs/needs-rupash.md` item 25 said "your server
+#: has about 6.4 GB usable" and that sentence was describing this constant. Corrected there.
+#:
+#: The cap stays at 6400 rather than rising to meet the measurement, and the reason is the
+#: rest of the box: 15 of the 31 containers on it declare no memory limit at all, and the
+#: 16 that do are already allowed 9,600 MiB of the 11,960. The host is overcommitted before
+#: this system asks for anything, so headroom measured as "free right now" is headroom that
+#: belongs to whichever neighbour grows first. Sizing to it would make this system the
+#: reason somebody else's production is killed, which is the one outcome the whole module
+#: exists to prevent.
 HOST_HEADROOM_MIB: Final = 6400
 
 #: The sum of `deploy.resources.limits.memory` across the four services in
@@ -77,6 +103,15 @@ PRODUCTION_BASELINE_MIB: Final = 3712
 HOST_RESERVE_MIB: Final = 256
 
 PROFILES: Final = ("lite", "standard", "full")
+
+#: What an install that never says runs. Declared once, here, because it was briefly
+#: written in both `brain.app.Settings` and `brain.config.check`, and a default in two
+#: places is a default that disagrees with itself the first time one of them is edited.
+#:
+#: Lite is the only safe value. It deploys nothing beyond the four base services, so
+#: forgetting the variable leaves an install under-featured; any other default makes
+#: forgetting it the expensive mistake, and on this host `full` does not fit at all.
+DEFAULT_PROFILE: Final[Literal["lite", "standard", "full"]] = "lite"
 
 
 class Wiring(enum.StrEnum):
@@ -216,6 +251,68 @@ COMPONENTS: Final[tuple[Component, ...]] = (
         ready_when="the flow runner reports a worker and the egress proxy answers",
     ),
 )
+
+
+#: The components that together are the trace ledger. Named as a set rather than found by
+#: a `startswith("langfuse")` test, because the prefix is a naming convention and this is a
+#: security-relevant boundary: what a lite install must not run, and what a lite install
+#: must not be configured to ship to. A convention is a thing somebody renames.
+TRACE_LEDGER: Final = frozenset(
+    {"langfuse-web", "langfuse-worker", "langfuse-clickhouse", "langfuse-cache"}
+)
+
+#: Environment settings that name somewhere to send spans. Any one of them set on an
+#: install with no trace ledger is the failure `trace_config_conflicts` exists for.
+TRACE_DESTINATION_SETTINGS: Final = ("langfuse_host", "langfuse_public_key", "langfuse_secret_key")
+
+#: Why lite is not "tracing off". The distinction matters to anybody reading a lite
+#: install's records during an incident and finding them thinner than they expected.
+LITE_KEEPS_THE_AUDIT_LEDGER = (
+    "a lite install records to brain.audit.ledger and ships no spans. The audit ledger is "
+    "the client-facing record of who read what, it is append-only, and it is not optional "
+    "in any profile. What lite gives up is the step-by-step trace an operator reads to "
+    "explain how an answer was assembled, which is a diagnostic aid and not an obligation"
+)
+
+
+def runs_trace_ledger(profile: str) -> bool:
+    """Whether this profile runs somewhere for spans to go.
+
+    Derived from `COMPONENTS` rather than declared a second time. A profile gains a trace
+    ledger by a component naming it, which is the same edit that puts it in the budget, so
+    the two cannot disagree.
+    """
+    assert_known_profile(profile)
+    return any(c.name in TRACE_LEDGER for c in components_for(profile))
+
+
+def trace_config_conflicts(profile: str, values: dict[str, str]) -> tuple[str, ...]:
+    """Trace destinations configured on an install that runs no trace ledger.
+
+    **This is the profile flag doing something rather than describing something.** Without
+    it, `profile=lite` is a word in a settings file: the components are not deployed, but
+    a `LANGFUSE_HOST` left over from a standard install is still read by the client
+    library, and the process spends the rest of its life posting spans at a host that
+    either refuses them or, worse, belongs to somebody else and accepts them.
+
+    Neither failure is visible from the application. A refused span is retried and dropped
+    inside the client; an accepted one looks like success. So this is checked at startup
+    against the declaration, where it fails loudly, rather than trusted to whoever copies
+    an environment file between two installs.
+
+    Returns every conflict rather than the first, matching `brain.config.check`: a
+    misconfiguration found one variable at a time is a sequence of restarts.
+    """
+    assert_known_profile(profile)
+    if runs_trace_ledger(profile):
+        return ()
+    return tuple(
+        f"{setting} is set but profile {profile!r} runs no trace ledger, so these spans "
+        f"have nowhere to go that we control. Unset it, or deploy a profile that runs one. "
+        f"Note that {LITE_KEEPS_THE_AUDIT_LEDGER}."
+        for setting in TRACE_DESTINATION_SETTINGS
+        if (values.get(setting) or "").strip()
+    )
 
 
 def component(name: str) -> Component:

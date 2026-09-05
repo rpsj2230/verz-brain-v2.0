@@ -1,0 +1,259 @@
+# The trace ledger, and the reason it is a file nobody deploys yet.
+#
+# This is the `full` profile's observability stack: Langfuse web, its ingest worker,
+# ClickHouse behind them, a Redis for the ingest queue, and the S3-compatible store
+# Langfuse v3 writes event and media blobs into.
+#
+# **It is not deployed on the current host and this file does not pretend otherwise.**
+# `ops/DEPLOY.md` records the measurement: Langfuse documents a 25.5 GiB minimum, the box
+# is 11.7 GiB, and `brain.ops.wiring.budget_breaches("full")` reports the overrun in
+# megabytes rather than rounding until it agrees. The file exists so the sizing is
+# reviewable before somebody deploys it, not as a claim that it runs.
+#
+# **Every service is capped twice, and the second cap is the one that matters.**
+# A `deploy.resources.limits.memory` is a cgroup ceiling: it stops a runaway container
+# taking the host down, and it does so by killing the container. It does not stop the
+# process inside from sizing itself for the wrong machine. ClickHouse reads
+# `/proc/meminfo`, not its cgroup, and picks cache sizes for 11.7 GiB; Node does the same
+# with its old-space default. Both are then OOM-killed the first time a real query lands,
+# which presents as a restart loop with nothing in the application log, because the
+# process is killed rather than failing. So each service is also told its own ceiling in
+# its own units, below the cgroup limit, with the difference left for the parts of the
+# process that are not the heap.
+#
+# The pairs below are deliberate and the gap is not slack:
+#
+# | Service | cgroup limit | process ceiling | what the gap is for |
+# | --- | --- | --- | --- |
+# | langfuse-web | 512M | 384M old-space | V8 metaspace, sockets, the Node binary |
+# | langfuse-worker | 384M | 288M old-space | same, smaller heap because it batches |
+# | langfuse-clickhouse | 1024M | 768M server usage | mark cache, merge buffers, allocator |
+# | langfuse-cache | 128M | 96M maxmemory | Redis fragmentation, which runs 1.2 to 1.5x |
+# | seaweedfs | 256M | 192MiB GOMEMLIMIT | Go's non-heap: stacks, the binary, mmap'd index |
+#
+# `GOMEMLIMIT` is the Go equivalent and it is a soft limit, which is the point: as the
+# heap approaches it the collector runs harder instead of the kernel killing the process.
+# A Go service under a cgroup limit with no `GOMEMLIMIT` collects on its own schedule,
+# discovers the ceiling by being killed, and restarts with a cold index.
+#
+# **Why web and worker do not go through PgBouncer.** Both are wired `direct` in
+# `brain.ops.wiring`, and `pooler_misuse` checks that rather than leaving it to whoever
+# writes the connection string. Langfuse's migrations take session-level advisory locks
+# and its ORM prepares statements server-side. Behind a transaction pooler the first is
+# released by an unrelated transaction and the second fails on a backend that never saw
+# the prepare. That has already cost `brain.migrate` a rewrite and `brain.session` a
+# connect_arg; here it would be the same failure a third time, arriving in somebody
+# else's code where our connect_args cannot reach it.
+#
+# **The S3-compatible store is `seaweedfs`, deliberately the same service the object
+# store declares.** Langfuse v3 requires blob storage and the leaf asks for it, but a
+# second S3 gateway on a host that already runs one is two copies of the same data path
+# competing for the same 256 MiB. Naming the service `seaweedfs` means a project
+# composing this file beside the object store gets one container rather than two. A full
+# install must run exactly one, which is why it is named here rather than duplicated
+# under a Langfuse prefix.
+#
+# **Not claimed: M32.1.1.1.** The service set is written here and has never been started
+# anywhere, because there is no host it fits on. A compose file that has never run is a
+# design, not a deployment, and claiming the leaf would put a tick on something nobody
+# has seen work. What is claimed is the sizing, which `tests/unit/test_wiring.py` checks
+# against `brain.ops.wiring.COMPONENTS` on every run, so the numbers here and the numbers
+# the budget is computed from cannot drift apart.
+#
+# Task ids: M32.1.1.2
+
+services:
+  langfuse-web:
+    image: langfuse/langfuse:3
+    restart: unless-stopped
+    depends_on:
+      langfuse-clickhouse:
+        condition: service_healthy
+      langfuse-cache:
+        condition: service_healthy
+    environment:
+      # Straight to the database. See the pooler note in this file's header.
+      DATABASE_URL: postgresql://langfuse:${LANGFUSE_POSTGRES_PASSWORD}@db:5432/langfuse
+      CLICKHOUSE_URL: http://langfuse-clickhouse:8123
+      CLICKHOUSE_USER: langfuse
+      CLICKHOUSE_PASSWORD: ${LANGFUSE_CLICKHOUSE_PASSWORD}
+      REDIS_CONNECTION_STRING: redis://langfuse-cache:6379/0
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse-events
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://seaweedfs:8333
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${LANGFUSE_S3_ACCESS_KEY_ID}
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_S3_SECRET_ACCESS_KEY}
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      NEXTAUTH_URL: ${LANGFUSE_PUBLIC_URL}
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET}
+      SALT: ${LANGFUSE_SALT}
+      ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY}
+      # Below the cgroup limit on purpose. Node sizes old-space from the host otherwise,
+      # and is then killed by the cgroup rather than collecting.
+      NODE_OPTIONS: "--max-old-space-size=384"
+      # Telemetry to the vendor is off. This instance exists to hold traces that were
+      # masked before they left our process; a usage ping from it is a second egress
+      # nobody reviewed.
+      TELEMETRY_ENABLED: "false"
+    expose:
+      - "3000"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    healthcheck:
+      # Readiness, not liveness. Langfuse answers on / long before it can accept a trace,
+      # and a check that passes then puts a half-migrated instance into rotation.
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/public/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 90s
+
+  langfuse-worker:
+    image: langfuse/langfuse-worker:3
+    restart: unless-stopped
+    depends_on:
+      langfuse-clickhouse:
+        condition: service_healthy
+      langfuse-cache:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://langfuse:${LANGFUSE_POSTGRES_PASSWORD}@db:5432/langfuse
+      CLICKHOUSE_URL: http://langfuse-clickhouse:8123
+      CLICKHOUSE_USER: langfuse
+      CLICKHOUSE_PASSWORD: ${LANGFUSE_CLICKHOUSE_PASSWORD}
+      REDIS_CONNECTION_STRING: redis://langfuse-cache:6379/0
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse-events
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://seaweedfs:8333
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${LANGFUSE_S3_ACCESS_KEY_ID}
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_S3_SECRET_ACCESS_KEY}
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      SALT: ${LANGFUSE_SALT}
+      ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY}
+      NODE_OPTIONS: "--max-old-space-size=288"
+      TELEMETRY_ENABLED: "false"
+    deploy:
+      resources:
+        limits:
+          memory: 384M
+    healthcheck:
+      # The queue depth is the real readiness signal and there is no endpoint for it, so
+      # this is the closest honest check: the worker's own health route, which answers
+      # only once it has a database and a queue connection.
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3030/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
+  # The component that does not fit. A gigabyte is ClickHouse's practical floor rather
+  # than a preference: below it the mark cache and the merge buffers contend, merges fall
+  # behind ingest, and the symptom is query latency climbing over days rather than an
+  # error anybody is paged for.
+  langfuse-clickhouse:
+    image: clickhouse/clickhouse-server:24.12-alpine
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_USER: langfuse
+      CLICKHOUSE_PASSWORD: ${LANGFUSE_CLICKHOUSE_PASSWORD}
+      CLICKHOUSE_DB: default
+    volumes:
+      # Read-only, and a file rather than a shell heredoc in the command. A config built
+      # by `echo` inside a YAML scalar is not reviewable, and this one decides whether
+      # the server sizes itself for its cgroup or for the host.
+      - ./ops/langfuse/clickhouse-memory.xml:/etc/clickhouse-server/config.d/memory.xml:ro
+      - langfuse-clickhouse:/var/lib/clickhouse
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    expose:
+      - "8123"
+    deploy:
+      resources:
+        limits:
+          memory: 1024M
+    healthcheck:
+      # A SELECT, not a ping, matching `ready_when` in `brain.ops.wiring`. ClickHouse
+      # accepts connections while still replaying its log, and a TCP check passes then.
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8123/?query=SELECT%201"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 45s
+
+  # The ingest queue. Separate from the application's `cache` service on purpose: a trace
+  # backlog evicting the application's rate-limit windows would turn an observability
+  # problem into a limits outage, and `allkeys-lru` cannot tell the two workloads apart.
+  #
+  # `noeviction` rather than `allkeys-lru` for the same reason in the other direction. A
+  # full ingest queue must refuse writes and let the backlog be visible; silently dropping
+  # the oldest traces produces a ledger with holes in it exactly when it is being used to
+  # explain an incident.
+  langfuse-cache:
+    image: valkey/valkey:8-alpine
+    restart: unless-stopped
+    command:
+      [
+        "valkey-server",
+        "--maxmemory",
+        "96mb",
+        "--maxmemory-policy",
+        "noeviction",
+        "--save",
+        "",
+      ]
+    expose:
+      - "6379"
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # The S3-compatible store. One per host: see the header. A `standard` install already
+  # runs this for the object store, and a full install composes both files against this
+  # one service rather than starting a second gateway over the same data path.
+  seaweedfs:
+    image: chrislusf/seaweedfs:3.80
+    restart: unless-stopped
+    environment:
+      # Soft limit: the collector works harder as the heap approaches it, rather than the
+      # kernel killing the process at the cgroup ceiling. 192 MiB against 256 MiB leaves
+      # the Go runtime's non-heap: goroutine stacks, the binary itself, and the mmap'd
+      # LevelDB index, none of which GOMEMLIMIT counts and all of which the cgroup does.
+      GOMEMLIMIT: "192MiB"
+    command:
+      [
+        "server",
+        "-dir=/data",
+        "-s3",
+        "-s3.port=8333",
+        "-master.volumeSizeLimitMB=1024",
+        "-volume.index=leveldb",
+      ]
+    volumes:
+      - seaweedfs:/data
+    expose:
+      - "8333"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    healthcheck:
+      # The S3 gateway, not the master. The master answers while the volume server is
+      # still registering, which is the window where a bucket list returns empty rather
+      # than failing, and an empty list is what a caller treats as "no traces yet".
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8333/status"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+volumes:
+  langfuse-clickhouse:
+  seaweedfs:

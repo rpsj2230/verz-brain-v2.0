@@ -14,6 +14,7 @@ from pydantic.fields import FieldInfo
 
 from brain.app import Settings
 from brain.config import assert_valid, check, required_for
+from brain.ops.wiring import DEFAULT_PROFILE
 
 REPO = Path(__file__).resolve().parents[2]
 ENV_EXAMPLE = REPO / ".env.example"
@@ -161,6 +162,69 @@ def test_a_named_origin_list_is_not_flagged() -> None:
 
 
 # ------------------------------------------------------------------ reporting
+def test_a_lite_deployment_pointed_at_a_trace_ledger_fails_before_the_port_is_bound() -> None:
+    """The profile flag reaching the one place it can still stop a deployment.
+
+    `brain.ops.wiring` can compute the conflict all it likes; if nothing calls it at
+    startup, a lite install carrying a LANGFUSE_HOST from a standard one ships spans to it
+    for the rest of its life, and neither outcome is visible from the application. Delete
+    this and the check goes back to being a function nobody invokes."""
+    problems = check(
+        "production",
+        {
+            "database_url": "postgresql://brain:s3cret@db:5432/brain",
+            "valkey_url": "redis://cache:6379/0",
+            "profile": "lite",
+            "langfuse_host": "https://cloud.langfuse.com",
+        },
+    )
+
+    assert [p.setting for p in problems] == ["profile"]
+
+
+def test_a_profile_nobody_defined_stops_the_deployment_rather_than_selecting_nothing() -> None:
+    """Every other problem here is a value to fix and is collected. This one is not: an
+    unknown profile cannot select any components, so reporting it alongside the others
+    would mean the component set had already been chosen, from an empty set. Delete this
+    and BRAIN_PROFILE=lte deploys the four base services and silently nothing else."""
+    with pytest.raises(Exception, match="unknown profile"):
+        check("production", {"database_url": "x", "valkey_url": "y", "profile": "lte"})
+
+
+def test_an_install_that_never_sets_a_profile_is_quiet_and_runs_no_trace_ledger() -> None:
+    """The default has to be both safe and quiet, and those are two separate claims.
+
+    **Quiet** is the easy half: every deployment in existence today sets no BRAIN_PROFILE,
+    so a default that raised would refuse the running production stack.
+
+    **Safe** is the half a mutation caught. Asserting only that an unset profile produces
+    no problems does not pin the default at all: with no `langfuse_*` set, `lite` and
+    `full` both produce zero problems, and changing the default to `full` passed the
+    earlier version of this test untouched. So the default is pinned by the case where the
+    profiles differ, which is a trace destination being present. Under a `full` default
+    that is permitted and this test fails.
+
+    Delete this and the default can drift to a profile that does not fit the host and
+    silently starts shipping spans."""
+    base = {"database_url": "postgresql://brain:s3cret@db:5432/brain", "valkey_url": "redis://c"}
+
+    assert check("production", base) == []
+    assert [p.setting for p in check("production", {**base, "langfuse_host": "https://x"})] == [
+        "profile"
+    ], "the default profile must be one that runs no trace ledger"
+
+
+def test_the_default_profile_is_spelled_in_exactly_one_place() -> None:
+    """`Settings.profile` and `brain.config.check` both need a default, and for a short
+    while both spelled it. Two defaults for one setting disagree the first time one is
+    edited, and the disagreement is silent: the settings object says lite, the validator
+    says something else, and which one you get depends on whether the key reached the dict.
+
+    Delete this and the literal can come back in either file."""
+    assert Settings().profile == DEFAULT_PROFILE
+    assert DEFAULT_PROFILE == "lite"
+
+
 def test_every_problem_is_reported_at_once() -> None:
     """Reporting one at a time turns a misconfigured deployment into a sequence of
     restarts, each revealing the next thing."""

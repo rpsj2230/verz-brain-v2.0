@@ -29,6 +29,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from brain.core.errors import BrainError, Outcome, to_public
 from brain.docs_routes import router as docs_router
 from brain.migrate import run_migrations
+from brain.ops.wiring import DEFAULT_PROFILE
 from brain.session import (
     check_reachable,
     dispose,
@@ -61,6 +62,18 @@ class Settings(BaseSettings):
     valkey_url: str = Field(
         default="", validation_alias=AliasChoices("BRAIN_VALKEY_URL", "VALKEY_URL")
     )
+    #: Which set of wave-2 components this install runs. See `brain.ops.wiring`.
+    #:
+    #: The default comes from `wiring.DEFAULT_PROFILE` rather than being spelled again
+    #: here. It was written in both places for about ten minutes, which is exactly long
+    #: enough for a mutation test to show that changing one of them changed nothing
+    #: observable.
+    profile: Literal["lite", "standard", "full"] = DEFAULT_PROFILE
+    #: Where spans go. Read here so that `brain.config.check` can refuse them being set on
+    #: a profile that runs no trace ledger; see `wiring.trace_config_conflicts`.
+    langfuse_host: str = ""
+    langfuse_public_key: str = ""
+    langfuse_secret_key: str = ""
     #: The console and the widget only. Not a wildcard, in any environment.
     cors_origins: tuple[str, ...] = ()
     #: Off in tests, on everywhere else. A deployment that wants migrations applied

@@ -14,12 +14,14 @@ The check runs before the server binds a port, so a misconfigured container fail
 rather than serving wrongly. That is the one case where crashing beats degrading: a
 container that will never work should not be in a load balancer's rotation at all.
 
-Task ids: M31.3.1.1, M31.3.1.3
+Task ids: M31.3.1.1, M31.3.1.3, M32.1.1.4
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+
+from brain.ops.wiring import DEFAULT_PROFILE, assert_known_profile, trace_config_conflicts
 
 #: Settings that must be non-empty, by environment. Cumulative: staging inherits
 #: development's, production inherits staging's.
@@ -111,6 +113,27 @@ def check(env: str, values: dict[str, str]) -> list[ConfigProblem]:
                 problem=f"wildcard origin in {env}",
                 fix="name the console and widget origins explicitly; a wildcard beside them "
                 "is still a wildcard",
+            )
+        )
+
+    # The profile flag, refusing rather than describing. A lite install carrying a
+    # LANGFUSE_HOST copied from a standard one deploys no trace ledger and still posts
+    # spans at whatever that host is, which fails silently whether the far end refuses
+    # them or accepts them. Checked here because here is before the port is bound.
+    #
+    # An unknown profile raises rather than being collected: every other problem in this
+    # function is a value somebody should fix, and a profile nobody defined is a
+    # deployment that cannot select any components at all. Letting it through to be
+    # reported as one problem among several would mean the components were already chosen
+    # by then, from an empty set.
+    profile = (values.get("profile") or DEFAULT_PROFILE).strip()
+    assert_known_profile(profile)
+    for conflict in trace_config_conflicts(profile, values):
+        problems.append(
+            ConfigProblem(
+                setting="profile",
+                problem=conflict,
+                fix="unset the trace destination, or deploy standard or full",
             )
         )
 
