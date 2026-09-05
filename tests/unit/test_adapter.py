@@ -6,6 +6,7 @@ Task ids: M5.1.1, M5.1.4
 from __future__ import annotations
 
 import importlib
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -91,6 +92,9 @@ class Fake:
 def driver_over(answer: Completion | BaseException) -> tuple[SdkDriver, Fake]:
     transport = Fake(answer)
     return SdkDriver(provider="anthropic", transport=transport), transport
+
+
+REPO = Path(__file__).resolve().parents[2]
 
 
 # --------------------------------------------------------------------- the success path
@@ -413,6 +417,42 @@ def test_asking_for_an_sdk_that_is_not_installed_says_exactly_that(
     monkeypatch.setattr(importlib, "import_module", refuse)
     with pytest.raises(ProviderSdkMissingError, match="not installed"):
         litellm_transport(routers_for(seed_chain())[Tier.MAIN])
+
+
+# --------------------------------------------------- the SDK is optional (M5.1.1)
+def test_the_sdk_is_declared_as_an_optional_extra_and_not_a_default_dependency() -> None:
+    """It has to be installable by name, and it must not be installed by default.
+
+    Installable, because otherwise the only route is `uv pip install litellm` and a guessed
+    version - the constraint is the contract, and an unpinned SDK is one whose behaviour
+    changes under a stack that treats it as a driver with no retries of its own.
+
+    Not by default, because it is heavy: it pulls tokenizers, an HTTP stack and a tokeniser
+    model, into every image including a staging stack sized at 1.44 GB on a host shared with
+    a different production system. The adapter imports it inside one function precisely so
+    that weight is opt-in, and that design is worth nothing if the dependency list undoes
+    it."""
+    import tomllib
+
+    project = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    extras = project.get("optional-dependencies", {})
+    assert any("litellm" in dep for dep in extras.get("models", [])), (
+        "litellm is not declared anywhere, so there is no supported way to install it"
+    )
+    assert not any("litellm" in dep for dep in project["dependencies"]), (
+        "litellm is a default dependency; the lazy import in the adapter buys nothing"
+    )
+
+
+def test_the_sdk_is_absent_from_the_environment_the_tests_run_in() -> None:
+    """The missing-SDK path above is only a real test while the SDK is genuinely missing.
+    If it ever gets installed by default, `ProviderSdkMissingError` stops being reachable
+    and that test starts passing for the wrong reason."""
+    import importlib.util
+
+    assert importlib.util.find_spec("litellm") is None, (
+        "litellm is installed here, so the missing-SDK test is no longer testing anything"
+    )
 
 
 # ------------------------------------------------------------------------ the log code

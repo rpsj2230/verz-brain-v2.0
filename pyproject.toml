@@ -16,6 +16,11 @@ dependencies = [
     "redis>=5.2",
 ]
 
+[project.optional-dependencies]
+models = [
+    "litellm>=1.63",
+]
+
 [dependency-groups]
 dev = [
     "pytest>=8.3",
