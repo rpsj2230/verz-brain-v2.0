@@ -589,6 +589,23 @@ def test_a_scope_required_role_cannot_be_mapped_from_a_group_without_a_scope():
         GroupRoleRule(group="/brain/department-admin", role=Role.DEPARTMENT_ADMIN)
 
 
+def test_a_scope_that_restricts_nothing_does_not_satisfy_the_requirement():
+    """The gap the scope requirement is actually about, and it was untested: removing this
+    guard passed every other test in the file.
+
+    `Scope.unrestricted()` is a scope by type and not by effect. A `department_admin` rule
+    carrying one satisfies "this role needs a scope" while conferring exactly what that rule
+    exists to prevent - company-wide admin - and it reads in review as somebody having done
+    the right thing. The bare-scope refusal above does not catch it, because there *is* a
+    scope."""
+    with pytest.raises(ValidationError, match="restricts nothing"):
+        GroupRoleRule(
+            group="/brain/department-admin",
+            role=Role.DEPARTMENT_ADMIN,
+            scope=Scope.unrestricted(),
+        )
+
+
 def test_a_company_wide_role_cannot_carry_a_scope_from_a_group():
     """A scope that is written, stored and read by nobody is worse than none, because
     whoever wrote it believes they narrowed the grant."""
