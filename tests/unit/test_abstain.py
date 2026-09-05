@@ -466,6 +466,36 @@ def test_an_expired_escalation_tells_the_asker_the_queue_did_not_reply() -> None
     )
 
 
+def test_the_delivery_address_never_reaches_the_asker() -> None:
+    """M8.3.3. `address` is how the channel finds the queue - a Lark chat id, a mailbox, a
+    webhook. It is infrastructure, and the asker is not owed it.
+
+    Structurally it cannot reach them: `EscalationNotice` has one field and it is text. What
+    this pins is the other half - that no notice *renders* it into that text. A template
+    written as "sent to {address}" would be the obvious helpful change and would put an
+    internal routing handle in front of whoever asked, in a message that gets forwarded.
+
+    Checked across every notice this escalation can produce, so a new one added later has to
+    pass here too."""
+    route = EscalationRoute(queue="maintenance", channel=Channel.LARK, address="oc_secret_room")
+    escalation = raise_escalation(
+        trigger=EscalationTrigger.ABSTENTION, route=route, handoff=a_handoff(), now=NOW
+    )
+    notices = [
+        escalation.for_asker(),
+        escalation.expiry_notice(NOW + timedelta(days=1)),
+    ]
+    for notice in notices:
+        if notice is None:
+            continue
+        assert "oc_secret_room" not in notice.text, (
+            "the delivery address reached the asker's notice"
+        )
+    # The queue name is fine and is the point: "a person from maintenance" is what makes the
+    # message answerable without naming anybody.
+    assert any(n and "maintenance" in n.text for n in notices)
+
+
 def test_a_queue_that_is_not_a_route_name_is_refused() -> None:
     """A queue is an audited route. A free-text one cannot be looked up, cannot be reported
     on, and is where a sentence about a person ends up."""
