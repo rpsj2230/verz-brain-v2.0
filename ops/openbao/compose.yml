@@ -35,6 +35,11 @@ services:
     command: server
     volumes:
       - brain-vault-data:/openbao/file
+      # The audit log, on its own volume. Separate from the storage volume deliberately:
+      # an audit log that fills the same disk the vault stores its data on takes both out
+      # at once, and the vault refuses every request the moment it cannot write an audit
+      # entry. Two volumes means a full log is a full log.
+      - brain-vault-logs:/openbao/logs
     expose:
       - "8200"
     networks:
@@ -55,6 +60,7 @@ services:
 
 volumes:
   brain-vault-data:
+  brain-vault-logs:
 
 networks:
   brain-vault:
