@@ -132,6 +132,75 @@ def test_interactive_docs_are_off_in_production() -> None:
     prod = create_app(Settings(env="production"))
     with TestClient(prod) as c:
         assert c.get("/docs").status_code == 404
+        assert c.get("/redoc").status_code == 404
+
+
+def test_fastapis_own_schema_is_off_in_production_not_only_the_docs_page() -> None:
+    """This test used to check `/docs` alone, and read as though the schema were handled.
+
+    It was not. Production served the complete generated schema at `/openapi.json`:
+    fourteen paths, every operation, every response model's field names, and no security
+    scheme described. `/docs` was correctly 404 the whole time, which is exactly what made
+    it look covered. Turning off the reading room and leaving the catalogue on the doorstep.
+
+    Nothing sensitive was behind those paths, because no route is behind the gate yet. That
+    is luck rather than design: the schema is generated from whatever is mounted, so the
+    first real endpoint would have published itself.
+    """
+    prod = create_app(Settings(env="production"))
+    assert prod.openapi_url is None, "FastAPI is still generating its own schema route"
+
+
+def test_the_public_schema_that_is_served_describes_authentication() -> None:
+    """A schema with no security scheme tells a reader the API is open. Ours is not, and a
+    document that implies otherwise is worse than no document."""
+    prod = create_app(Settings(env="production"))
+    with TestClient(prod) as c:
+        body = c.get("/openapi.json").json()
+    assert body["components"]["securitySchemes"]
+
+
+def test_the_public_schema_enumerates_no_scopes() -> None:
+    """A scopes map is the permission map, served unauthenticated. It is the document this
+    endpoint exists to avoid publishing."""
+    prod = create_app(Settings(env="production"))
+    with TestClient(prod) as c:
+        body = c.get("/openapi.json").json()
+    for scheme in body["components"]["securitySchemes"].values():
+        assert "flows" not in scheme, "an OAuth2 flows block carries a scopes map"
+
+
+def test_a_route_under_the_api_prefix_is_absent_from_the_public_schema() -> None:
+    """The property that matters going forward. Today every mounted path happens to be a
+    public build route; the first real endpoint must not publish itself."""
+    from brain.api import API_PREFIX
+
+    prod = create_app(Settings(env="production"))
+
+    @prod.get(f"{API_PREFIX}/clients", tags=["docs"])
+    async def _clients() -> dict[str, str]:
+        return {}
+
+    with TestClient(prod) as c:
+        body = c.get("/openapi.json").json()
+    assert f"{API_PREFIX}/clients" not in body["paths"], (
+        "a path under the API prefix reached the public schema even though it is tagged "
+        "public; the two conditions are meant to be independent"
+    )
+
+
+def test_an_untagged_route_is_absent_from_the_public_schema() -> None:
+    """Deny by default. An operation that loses its tags in a refactor must disappear from
+    the public document rather than appear in it."""
+    prod = create_app(Settings(env="production"))
+
+    @prod.get("/whatever")
+    async def _whatever() -> dict[str, str]:
+        return {}
+
+    with TestClient(prod) as c:
+        body = c.get("/openapi.json").json()
+    assert "/whatever" not in body["paths"]
 
 
 def test_docs_are_available_outside_production(client: TestClient) -> None:

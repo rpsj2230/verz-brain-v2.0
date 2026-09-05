@@ -359,3 +359,29 @@ async def audit_anchor() -> JSONResponse:
 
     anchor = take_anchor(AuditChain(), name="main", now=datetime.now(UTC))
     return JSONResponse(anchor.to_public(), headers={"cache-control": "no-store"})
+
+
+@router.get("/openapi.json", response_class=JSONResponse, include_in_schema=False)
+async def public_openapi(request: Request) -> JSONResponse:
+    """The public API description (M31.1.4.2).
+
+    FastAPI's own `/openapi.json` is switched off in production, because it describes every
+    mounted operation and every response model's field names regardless of who is asking.
+    This serves a deliberately narrower document instead: an operation appears only if it
+    carries a tag, every tag it carries is public, and it does not sit under the API prefix,
+    with the schema components pruned to what those operations actually reference.
+
+    Deny by default and on two independent conditions, because a single condition is one
+    refactor away from admitting everything: an operation that loses its tags would become
+    public under a rule that only checked tags.
+
+    Authentication is described. Scopes are not enumerated, and that is the point: a scopes
+    map is the permission map served unauthenticated, which is the document this endpoint
+    exists to avoid publishing.
+    """
+    from brain.openapi import Audience, document
+
+    return JSONResponse(
+        document(request.app, audience=Audience.PUBLIC),
+        headers={"cache-control": "no-store"},
+    )

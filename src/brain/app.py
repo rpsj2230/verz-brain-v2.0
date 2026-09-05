@@ -129,11 +129,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings()
+    in_production = settings.env == "production"
     app = FastAPI(
         title="Verz Company Brain",
         version="0.1.0",
         lifespan=lifespan,
-        docs_url="/docs" if settings.env != "production" else None,
+        docs_url=None if in_production else "/docs",
+        # Turning off `/docs` without turning off `/openapi.json` closes the reading room
+        # and leaves the catalogue on the doorstep. Production served the complete schema
+        # unauthenticated: fourteen paths, every operation, every response model's field
+        # names, and no security scheme described. `/docs` was correctly 404 the whole
+        # time, which is what made it look handled.
+        #
+        # Nothing sensitive was behind those paths yet, because no route is behind the gate
+        # yet. That is luck rather than design: the schema is generated from whatever is
+        # mounted, so the first real endpoint would have published itself.
+        openapi_url=None if in_production else "/openapi.json",
+        redoc_url=None if in_production else "/redoc",
     )
     app.state.settings = settings
     app.state.ready = {}
