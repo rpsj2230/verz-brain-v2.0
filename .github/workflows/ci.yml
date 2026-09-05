@@ -106,6 +106,12 @@ jobs:
         run: uv run python -m brain.ops.sweeps tool_registry
       - name: Traceability — nothing claimed without a test id
         run: uv run python -m brain.ops.sweeps traceability
+      - name: Slug collisions — one name means one thing
+        # Scopes and agents are rows that mostly do not exist yet, so this compares little
+        # today and says so in its output rather than printing a bare "ok". A sweep that
+        # reports success over an empty comparison is how `traceability` spent its whole
+        # life green while checking nothing.
+        run: uv run python -m brain.ops.sweeps slug_collisions
       - name: Migration policy
         # Autogenerate is very often nearly right, and nearly right passes review. These
         # are the three ways it is wrong that a diff does not show: a rename written as a

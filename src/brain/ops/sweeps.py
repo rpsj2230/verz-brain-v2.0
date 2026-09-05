@@ -11,7 +11,7 @@ Sweeps that need a database skip with exit 0 when DATABASE_URL is unset, and say
 is deliberate: a developer without Postgres should not be blocked, but CI always has one,
 so the check is never actually skipped where it counts.
 
-Task ids: M0.5.4, M0.5.5, M0.5.6, M0.5.7, M0.5.8
+Task ids: M0.5.4, M0.5.5, M0.5.6, M0.5.7, M0.5.8, M2.1.5
 """
 
 from __future__ import annotations
@@ -188,11 +188,60 @@ def sweep_dependencies() -> None:
     print("note: licence and archived checks require network; enforced in CI")
 
 
+# --------------------------------------------------------- slug collisions (M2.1.5)
+#: Where each registry declares its names. Scopes and agents have no registry in code
+#: yet: they will be rows. Listed anyway so this sweep starts comparing them the day they
+#: arrive rather than the day somebody remembers to come back here.
+_SCOPE_SLUG_RE = re.compile(r'ScopeRecord\(\s*slug\s*=\s*"([a-z0-9_.-]+)"')
+_AGENT_SLUG_RE = re.compile(r'AgentCeiling\(\s*agent_id\s*=\s*"([a-z0-9_.-]+)"')
+_TOOL_ENTITY_RE = re.compile(r'ToolDefinition\([^)]*?entity\s*=\s*"([a-z0-9_.-]+)"', re.S)
+
+
+def sweep_slug_collisions() -> None:
+    """No agent slug or tool object may collide with a scope slug (M2.1.5).
+
+    Three registries share one namespace where it matters. A grant reads "read:client in
+    finance", a request-access route is keyed by slug, and the console resolves one typed
+    name against all three. If an agent and a scope are both called `finance`, then "grant
+    Priya finance" has two meanings and the safe reading is not the one a resolver picks
+    by declaration order.
+
+    **It reports how many names it compared, and that is deliberate.** Scopes and agents
+    are rows that do not exist yet, so today this compares almost nothing. A sweep that
+    printed "ok" over an empty comparison is the exact failure `sweep_traceability` had
+    for its whole life: green in CI, checking nothing, and nobody looking again. Saying
+    the counts out loud means the gap is visible in the log rather than hidden by a tick.
+    """
+    from brain.core.department import check_slug_collisions
+
+    scopes: set[str] = set()
+    agents: set[str] = set()
+    tools: set[str] = set()
+    for path in list(SRC.rglob("*.py")) + list(TESTS.rglob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        scopes.update(_SCOPE_SLUG_RE.findall(text))
+        agents.update(_AGENT_SLUG_RE.findall(text))
+        tools.update(_TOOL_ENTITY_RE.findall(text))
+
+    findings = [
+        str(c) for c in check_slug_collisions(sorted(scopes), sorted(agents), sorted(tools))
+    ]
+    if findings:
+        raise SweepFailure(findings)
+    print(
+        f"ok: no slug collisions across {len(scopes)} scope(s), "
+        f"{len(agents)} agent(s), {len(tools)} tool object(s)"
+    )
+    if not scopes:
+        print("  note: no scope registry exists yet, so this sweep is not yet load-bearing")
+
+
 SWEEPS = {
     "rls": sweep_rls,
     "grant_isolation": sweep_grant_isolation,
     "tool_registry": sweep_tool_registry,
     "traceability": sweep_traceability,
+    "slug_collisions": sweep_slug_collisions,
     "dependencies": sweep_dependencies,
 }
 

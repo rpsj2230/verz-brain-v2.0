@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import pytest
 
+from brain.core import department
 from brain.ops import sweeps
 
 
@@ -90,3 +91,43 @@ def test_dependency_sweep_fails_when_the_lock_is_missing(
     monkeypatch.setattr(sweeps, "REPO", tmp_path)
     with pytest.raises(sweeps.SweepFailure, match="finding"):
         sweeps.sweep_dependencies()
+
+
+# ------------------------------------------------------ slug collisions (M2.1.5)
+def test_an_agent_named_after_a_scope_is_a_collision() -> None:
+    """ "Grant Priya finance" has two meanings if a scope and an agent are both called
+    finance, and the safe reading is not the one a resolver picks by declaration order."""
+    found = department.check_slug_collisions(["finance"], ["finance"], [])
+    assert len(found) == 1
+    assert "finance" in str(found[0])
+
+
+def test_names_that_differ_only_by_a_separator_collide() -> None:
+    """Two names only a machine can tell apart are a collision in the interface even when
+    the database is content with them."""
+    assert department.check_slug_collisions(["client-ops"], [], ["client_ops"])
+
+
+def test_distinct_names_are_not_a_collision() -> None:
+    """A check that fires on correct input is a check somebody switches off."""
+    assert department.check_slug_collisions(["finance"], ["reporter"], ["client"]) == []
+
+
+def test_the_collision_sweep_is_registered_so_ci_can_run_it() -> None:
+    """A sweep nothing invokes is a function, not a check. This one was written during M2
+    and left unregistered, which is how it stayed unrun."""
+    assert "slug_collisions" in sweeps.SWEEPS
+
+
+def test_the_collision_sweep_reports_how_many_names_it_compared(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The important one. Scopes and agents are rows that mostly do not exist yet, so this
+    sweep compares very little today. Printing "ok" over an empty comparison is exactly the
+    failure `sweep_traceability` had for its whole life: green in CI, checking nothing, and
+    nobody looking again. Saying the counts out loud keeps the gap visible."""
+    sweeps.sweep_slug_collisions()
+    out = capsys.readouterr().out
+    assert "scope(s)" in out
+    assert "agent(s)" in out
+    assert "tool object(s)" in out
