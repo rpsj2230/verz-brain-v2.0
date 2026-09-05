@@ -18,6 +18,7 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
+import brain.tables  # noqa: F401  registers every table on `metadata`
 from brain.db import SCHEMAS, metadata, normalise_database_url
 
 config = context.config

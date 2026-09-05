@@ -25,7 +25,7 @@ from brain.db import normalise_database_url
 log = structlog.get_logger()
 
 #: Tables this command owns and will replace. Anything else is left alone.
-OWNED = ("auth.principal", "gate.grant")
+OWNED = ("auth.principal", "gate.capability_grant")
 
 
 def _seed_rows() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -98,7 +98,7 @@ def seed(url: str, *, force: bool = False) -> int:
     # The tables themselves arrive with M1 and M2. Until then this command exists to be
     # correct about what it would do and about refusing when it should — writing rows to
     # tables that do not exist yet would be the wrong kind of placeholder.
-    print("auth.principal and gate.grant are created in M1 and M2; nothing written yet")
+    print("auth.principal and gate.capability_grant exist; nothing written yet")
     return 0
 
 

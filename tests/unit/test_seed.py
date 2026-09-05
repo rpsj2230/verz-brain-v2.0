@@ -40,7 +40,10 @@ def test_grants_carry_their_scope_as_json() -> None:
 def test_the_owned_table_list_is_explicit() -> None:
     """Seeding truncates what it owns. What it owns is written down rather than inferred,
     so widening it is a visible edit."""
-    assert seed_mod.OWNED == ("auth.principal", "gate.grant")
+    # Corrected 5 September: the table M1.4.1 actually creates is `capability_grant`.
+    # `gate.grant` named nothing, and `looks_like_production` counts rows in tables it
+    # does not own, so the first real grant row would have made the seeder refuse to run.
+    assert seed_mod.OWNED == ("auth.principal", "gate.capability_grant")
 
 
 def test_seed_refuses_when_the_database_holds_rows_it_does_not_own(

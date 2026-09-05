@@ -64,7 +64,7 @@ def sweep_rls() -> None:
             SELECT c.relname
             FROM pg_class c
             JOIN pg_namespace n ON n.oid = c.relnamespace
-            WHERE n.nspname IN ('proj', 'know', 'agent', 'mem', 'er')
+            WHERE n.nspname IN ('auth', 'gate', 'obs', 'proj', 'know', 'agent', 'mem', 'er')
               AND c.relkind = 'r'
               AND NOT c.relrowsecurity
             ORDER BY c.relname
@@ -98,7 +98,7 @@ def sweep_grant_isolation() -> None:
             JOIN pg_class src ON src.oid = con.conrelid
             JOIN pg_class tgt ON tgt.oid = con.confrelid
             WHERE con.contype = 'f'
-              AND src.relname LIKE '%grant%'
+              AND (src.relname LIKE '%grant%' OR src.relname LIKE '%pack%')
               AND tgt.relname LIKE '%connector%'
             """
         )
