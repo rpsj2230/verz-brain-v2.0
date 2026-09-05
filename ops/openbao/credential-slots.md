@@ -1,6 +1,6 @@
 # Credential slots: what each connector needs, and what it must not be given
 
-Task ids: M38.4.1.3
+Task ids: M38.4.1.3, M5.1.2
 
 Every slot below is **defined and empty**. The path exists, the policy that reaches it
 exists, and there is no credential in it until go-live. That ordering is the point: the
@@ -21,6 +21,35 @@ later" is a scope nobody removes.
 | `connectors/creds/laravel_readonly` | Laravel MySQL | A database user with SELECT on the allowlisted views only | SELECT on tables. The views are the contract; tables change shape without warning |
 | `connectors/creds/google_drive` | Drive or M365 | Read on the specific shared drive | Domain-wide delegation. It reads everything, for everyone, for ever |
 | `browser/creds/*` | Browser runner | One credential per site, per task | Anything reusable across sites |
+
+## Model provider keys, which work differently
+
+These are the one category that **cannot be leased**, and the difference is worth
+understanding before somebody tries.
+
+Every slot above is a credential the vault can mint fresh and take back: a database user, a
+scoped OAuth token. A model provider's API key is not. OpenAI, Anthropic and Moonshot each
+issue a key that is valid until a person revokes it in a dashboard, and no engine mints one
+per request. So there is nothing to hand back, and wrapping one in a lease with an invented
+expiry would be worse than admitting it: the caller would believe the key stops working at a
+time nothing enforces.
+
+They are therefore read once at startup, straight into the process environment where the
+provider SDK finds it, and never held by application code. Rotation is a restart, which
+costs three minutes here.
+
+| Slot | Provider | Environment variable | Notes |
+|---|---|---|---|
+| `providers/anthropic` | Anthropic | `ANTHROPIC_API_KEY` | Claude, the default reasoner |
+| `providers/openai` | OpenAI | `OPENAI_API_KEY` | Embeddings, and a fallback for completion |
+| `providers/moonshot` | Moonshot | `MOONSHOT_API_KEY` | The cheaper reasoner; the v1 system routes here by default |
+
+`providers/` is the **only** prefix the static read will touch, and the refusal lives on
+`OpenBaoVault.read_static_kv` rather than on its caller. That placement matters: a guard on
+the caller is a guard somebody bypasses by calling the other thing. Reading
+`connectors/creds/xero` this way would work perfectly, hand out a standing credential with
+nothing to revoke and no record of which run held it, and nobody would see the difference
+until an audit asked.
 
 ## Three things worth deciding before the keys are issued, not after
 

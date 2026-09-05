@@ -48,6 +48,26 @@ TIMEOUT_SECONDS = 5.0
 #: is refused below.
 DYNAMIC_MOUNTS = ("database/", "aws/", "gcp/", "azure/", "consul/")
 
+#: The one prefix `read_static_kv` may read. Everything else in the vault is leased.
+STATIC_PREFIX = "providers/"
+
+
+def assert_static_path(path: str) -> None:
+    """Refuse anything outside the static prefix.
+
+    Public and separate so the refusal can be tested directly rather than only through a
+    call that needs a server. `providers/anthropic` is a key nobody can lease;
+    `connectors/creds/xero` is one somebody should, and reading the second one this way
+    would work perfectly and be invisible.
+    """
+    if not path.startswith(STATIC_PREFIX):
+        msg = (
+            f"{path!r} is not a provider key. Everything outside {STATIC_PREFIX!r} is leased "
+            "through brain.ops.secrets.borrow, which revokes it when the run ends; reading "
+            "it here would hand back a standing credential nobody gives back."
+        )
+        raise SecretsUnavailableError(msg)
+
 
 class OpenBaoVault:
     """Issues and revokes leases against a running OpenBao.
@@ -170,6 +190,37 @@ class OpenBaoVault:
                 return str(data[key])
         msg = f"the vault returned fields this does not recognise: {sorted(data)[:5]}"
         raise SecretsUnavailableError(msg)
+
+    def read_static_kv(self, path: str) -> dict[str, Any]:
+        """One value out of the kv engine, and only from under `STATIC_PREFIX`.
+
+        This is read-by-path, which the `Vault` protocol deliberately does not have, so it
+        lives here as a named exception with the refusal attached rather than as a general
+        capability. A model provider's API key cannot be leased: OpenAI, Anthropic and
+        Moonshot each issue a key that is valid until somebody revokes it in a dashboard,
+        and there is no engine that mints a fresh one per request. Wrapping one in a `Lease`
+        with an invented expiry would be worse than admitting it - the caller would believe
+        the credential stops working at a time nothing enforces.
+
+        **The prefix check is what stops this being the hole in the design.** Without it,
+        `read_static_kv("connectors/creds/xero")` works perfectly, hands out a standing
+        connector credential with nothing to revoke and no record of which run held it, and
+        nothing anywhere notices. The guard is on this method rather than on the caller
+        precisely because a caller can be bypassed.
+        """
+        assert_static_path(path)
+        # kv version 2 answers on `<mount>/data/<rest>`, not on the logical path. Getting
+        # this wrong returns a 404 that reads as "the slot is empty" rather than "the path
+        # is wrong", and somebody then writes the key in twice.
+        mount, _, rest = path.partition("/")
+        payload = self._call("GET", f"{mount}/data/{rest}")
+        data = payload.get("data")
+        if isinstance(data, dict):
+            inner = data.get("data")
+            if isinstance(inner, dict):
+                # kv v2 nests twice: {"data": {"data": {...}, "metadata": {...}}}.
+                return inner
+        return data if isinstance(data, dict) else {}
 
     def revoke(self, lease_id: str) -> None:
         """Give the credential back. Retries, unlike `issue`.
