@@ -6,6 +6,22 @@
 /src/brain/core/scope.py         @rpsj2230
 /src/brain/gate/                 @rpsj2230
 
+# The redactor and the policy it reads. The redactor decides, field by field, what
+# survives into an answer; the policy is the table it decides from. A rule quietly
+# reclassified from confidential to internal changes every answer that touches that
+# field, and changes nothing that a test about redaction would notice.
+/src/brain/core/redaction.py     @rpsj2230
+/src/brain/core/field_policy.py  @rpsj2230
+
+# Where a scope stops being Python and becomes SQL. This one is here because it has
+# already gone wrong: an unescaped LIKE and a string splitting into an IN list both
+# made the SQL admit rows the Python evaluator refused, so the two halves of one
+# predicate disagreed and the wider half was the one that ran.
+/src/brain/core/scope_sql.py     @rpsj2230
+
+# The projection: what a caller is allowed to be shown before anybody asks a question.
+/src/brain/core/projection.py    @rpsj2230
+
 # The invariant suite is the only thing standing between a refactor and a leak.
 # Weakening a test must be as deliberate as weakening the code it guards.
 /tests/invariants/               @rpsj2230

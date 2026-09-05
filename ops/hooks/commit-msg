@@ -1,0 +1,23 @@
+#!/bin/sh
+# Refuses a commit whose `Closes:` line does not mean what it says.
+#
+# Runs at commit time rather than in CI on purpose. CI runs after the commit exists, so
+# by then the message is written and the fix is a rebase; here it costs one retry.
+#
+# The rule itself lives in `brain.ops.conventions` so it can be tested. A hook is the
+# worst possible place to put logic: it does not run in CI, it does not run for anybody
+# who has not set core.hooksPath, and nothing tests it. This file is a two-line shim and
+# the rule it calls has thirty tests.
+#
+# Task ids: M38.1.1.2
+
+set -eu
+
+if ! uv run python -m brain.ops.conventions "$1"; then
+    echo "" >&2
+    echo "The status page is generated from these ids. A commit that closes a task" >&2
+    echo "without naming it leaves the plan describing work that is already done." >&2
+    echo "" >&2
+    echo "To commit anyway: git commit --no-verify" >&2
+    exit 1
+fi
