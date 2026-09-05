@@ -398,3 +398,58 @@ def test_claimed_ids_reads_subject_and_trailer_only() -> None:
         "Body mentions M9.9.9 in prose.\n\nCloses: M0.1.2 M0.1.3\n",
     )
     assert ids == {"M0.1.1", "M0.1.2", "M0.1.3"}
+
+
+# ------------------------------------- the open count is the open count (M38.3.2.3)
+def test_the_needs_count_stops_at_the_answered_heading(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """It used to count every `## ` heading in the file, so the badge on the status page was
+    the number of items ever *raised*: it read twenty-two while two were actually open, and
+    it could only ever go up.
+
+    A count that never falls is a count nobody acts on, because answering something does not
+    change it. Deleting this test lets the badge drift back into being a running total, which
+    looks identical to a working one until you notice it has never gone down."""
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "needs-rupash.md").write_text(
+        "# Needs Rupash\n\n# Open\n\n## 24. still open\n\n## 25. also open\n\n"
+        "# Answered\n\n## 23. decided\n\n## 22. decided\n\n## 21. decided\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(docs_routes, "DOCS", docs)
+    assert docs_routes._needs_count() == 2
+
+
+def test_a_document_with_nothing_answered_yet_counts_everything() -> None:
+    """The boundary in the other direction. Before anything is decided there is no
+    `# Answered` heading, and every item is open - so a reader that broke on a missing
+    heading would report zero, which is the most reassuring wrong answer available."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        docs = Path(tmp)
+        (docs / "needs-rupash.md").write_text(
+            "# Needs Rupash\n\n# Open\n\n## 1. a\n\n## 2. b\n", encoding="utf-8"
+        )
+        original = docs_routes.DOCS
+        docs_routes.DOCS = docs
+        try:
+            assert docs_routes._needs_count() == 2
+        finally:
+            docs_routes.DOCS = original
+
+
+def test_the_real_document_reports_what_its_own_first_paragraph_says() -> None:
+    """The badge and the sentence at the top of the page are the same fact asked twice, and
+    they are written in different places. This is what stops them disagreeing - which they
+    did, for as long as the count was a running total."""
+    import re
+
+    from brain.docs_routes import DOCS, NEEDS_FILE, _needs_count
+
+    text = (DOCS / NEEDS_FILE).read_text(encoding="utf-8")
+    stated = re.search(r"\*\*(\d+) items are open", text)
+    assert stated, "the document no longer states how many items are open"
+    assert int(stated.group(1)) == _needs_count()

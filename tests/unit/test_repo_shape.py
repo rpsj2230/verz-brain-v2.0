@@ -241,3 +241,38 @@ def test_the_schema_check_reports_what_is_missing_rather_than_a_count() -> None:
     from brain.db import SCHEMAS
 
     assert missing_schemas(set(SCHEMAS) | {"public", "someone_elses"}) == ()
+
+
+# ------------------------------- the lite profile really is the same stack (M0.4.1)
+def test_the_lite_profile_is_the_same_stack_as_the_one_coolify_deploys() -> None:
+    """`docker-compose.lite.yml` names itself the lite profile and its header used to claim
+    byte-identity with `docker-compose.yml`, kept so by a CI check. Neither was true: the
+    files differed by comment lines and nothing anywhere compared them.
+
+    That is worse than no claim. The next person to edit one file reads a sentence saying
+    the other is guaranteed to follow, and the two profiles drift while both look
+    maintained - which is exactly how a profile stops being the thing it is named after.
+
+    Compared as parsed YAML rather than as bytes, deliberately: a comment may differ and a
+    port, an image, a memory limit or a volume may not. Byte-equality would fail on the
+    header these two are allowed to differ in, and a test that fails for a legitimate reason
+    is one somebody deletes."""
+    import yaml
+
+    deployed = yaml.safe_load((REPO / "docker-compose.yml").read_text(encoding="utf-8"))
+    lite = yaml.safe_load((REPO / "docker-compose.lite.yml").read_text(encoding="utf-8"))
+    assert deployed == lite, (
+        "the lite profile has drifted from the stack Coolify deploys; they are two files "
+        "that must agree and this is the only thing making them"
+    )
+
+
+def test_the_lite_header_does_not_claim_a_check_that_does_not_exist() -> None:
+    """The specific sentence that was false. A header describing an enforcement mechanism
+    is load-bearing documentation, and one describing a mechanism nobody built is worse than
+    silence."""
+    header = (REPO / "docker-compose.lite.yml").read_text(encoding="utf-8")[:2000]
+    assert "byte-identical" not in header, (
+        "the header claims byte-identity again; the files differ by their headers and the "
+        "check compares parsed YAML"
+    )

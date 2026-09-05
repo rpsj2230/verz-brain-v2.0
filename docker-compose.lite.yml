@@ -1,10 +1,19 @@
 # The lite profile (M0.4.1).
 #
-# This file is byte-identical to `docker-compose.yml` and a CI check keeps it that way.
-# The duplication is deliberate and the check is the reason it is safe: the architecture
-# asks for the profiles to be named files an operator can point at, and Coolify deploys
-# `docker-compose.yml` by that name. Two files that must agree, with nothing enforcing it,
-# is how a profile quietly stops being the thing it is named after.
+# Every service, volume and setting here is identical to `docker-compose.yml`, and
+# `tests/unit/test_repo_shape.py` is what keeps it that way. Only this header differs.
+#
+# The header used to claim byte-identity and a CI check. Neither was true: the files
+# differed by these comment lines, and nothing anywhere compared them. That is worse than
+# no claim, because the next person to edit one file reads a sentence saying the other is
+# guaranteed to follow. Found by an agent reading the header while working on the memory
+# budget; the check is now real and compares the parsed YAML rather than the bytes, so a
+# comment may differ and a port may not.
+#
+# The duplication is deliberate: the architecture asks for the profiles to be named files an
+# operator can point at, and Coolify deploys `docker-compose.yml` by that name. Two files
+# that must agree, with nothing enforcing it, is how a profile quietly stops being the thing
+# it is named after.
 #
 # **Lite is the whole stack minus the worker**: application, transaction pooler, database,
 # cache. It is not a cut-down or development configuration; it is what a client without

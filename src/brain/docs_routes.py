@@ -299,15 +299,33 @@ answer a question yet.</p>
 NEEDS_FILE = "needs-rupash.md"
 
 
+#: The heading that ends the open section. Everything after it has been decided.
+ANSWERED_HEADING = "# Answered"
+
+
 def _needs_count() -> int:
-    """How many items are waiting on a decision. Shown on the status page so it is not
-    something anyone has to remember to go and look for."""
+    """How many items are still waiting on a decision.
+
+    Counted up to `# Answered` and no further. It used to count every `## ` heading in the
+    file, which meant the number on the status page was the number of items ever raised: it
+    said twenty-two while two were actually open, and it could only ever go up. A count that
+    never falls is one nobody acts on, because answering something does not change it.
+
+    Reading the structure rather than a number written at the top, so the two cannot
+    disagree - the sentence in the document and the badge on the status page are now the
+    same fact asked twice.
+    """
     path = DOCS / NEEDS_FILE
     if not path.exists():
         return 0
-    return sum(
-        1 for line in path.read_text(encoding="utf-8").splitlines() if line.startswith("## ")
-    )
+    lines = path.read_text(encoding="utf-8").splitlines()
+    count = 0
+    for line in lines:
+        if line.startswith(ANSWERED_HEADING):
+            break
+        if line.startswith("## "):
+            count += 1
+    return count
 
 
 @router.get("/build/needs-rupash", response_class=HTMLResponse)
@@ -337,6 +355,15 @@ async def needs_rupash() -> HTMLResponse:
             in_table = False
         if line.startswith("## "):
             body.append(f"<h2>{esc[3:]}</h2>")
+        elif line.startswith(ANSWERED_HEADING):
+            # Everything from here on is decided, so it folds away. It stays on the page
+            # rather than moving to another file, because the reasoning behind a decision is
+            # most wanted by whoever is questioning that decision, and they arrive here.
+            # Collapsed rather than dropped, so what the page is *about* is what is open.
+            body.append(
+                f"</div><details class='past'><summary>{esc[2:]} "
+                "&mdash; decided, kept as a record</summary><div>"
+            )
         elif line.startswith("# "):
             body.append(f"<h1>{esc[2:]}</h1>")
         elif line.startswith("---"):
@@ -345,7 +372,15 @@ async def needs_rupash() -> HTMLResponse:
             body.append(f"<p>{esc}</p>")
     if in_table:
         body.append("</table>")
-    html_body = "\n".join(body).replace("<tr><th>", "<table><tr><th>")
+    # The open section opens a div that the answered summary closes. If the document has no
+    # answered heading - which it will not once every item is decided - the wrapper still
+    # has to balance, so the closing tags are emitted only when the fold was opened.
+    opened_fold = any(chunk.startswith("</div><details") for chunk in body)
+    if opened_fold:
+        body.append("</div></details>")
+    html_body = "<div>" + "\n".join(body).replace("<tr><th>", "<table><tr><th>")
+    if not opened_fold:
+        html_body += "</div>"
     return HTMLResponse(f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Needs Rupash</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;600&family=Poppins:wght@600&display=swap">
@@ -357,6 +392,10 @@ body{{margin:0;background:var(--ground);color:var(--ink);font:15px/1.65 "IBM Ple
 h1{{font-family:Poppins,sans-serif;font-size:32px;margin:0 0 10px;letter-spacing:-.02em}}
 h2{{font-family:Poppins,sans-serif;font-size:19px;margin:34px 0 8px;letter-spacing:-.01em;border-left:3px solid var(--brand);padding-left:11px}}
 p{{color:var(--dim);max-width:64ch}}
+details.past{{margin-top:44px;border-top:1px solid var(--line);padding-top:18px}}
+details.past>summary{{cursor:pointer;font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim)}}
+details.past[open]>summary{{margin-bottom:10px}}
+details.past h2{{font-size:16px}}
 hr{{border:0;border-top:1px solid var(--line);margin:26px 0}}
 table{{width:100%;border-collapse:collapse;font-size:13px;margin:12px 0 18px}}
 th{{font-family:"IBM Plex Mono",monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);text-align:left;padding:7px 12px 6px 0;border-bottom:1px solid var(--line)}}
