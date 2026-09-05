@@ -116,6 +116,7 @@
       <li><span class="n">25</span><a href="#s23b">Capacity, failure, SLOs</a></li>
       <li><span class="n">26</span><a href="#s23">Build plan</a></li>
       <li><span class="n">27</span><a href="#s24">Open questions</a></li>
+      <li><span class="n">28</span><a href="#s25">Decisions taken during the build</a></li>
     </ol>
   </nav>
 </header>
@@ -1342,12 +1343,36 @@
 
 <section id="s24">
   <h2><span class="sn">27</span>Open questions</h2>
+  <p><strong>Sensitive-topic interception is built</strong> and has moved off this list (M24.2.2). It routes HR, grievance and whistleblowing questions to one confidential route, and the interception itself is unobservable from outside: the disclosure is assembled from constants with no branch, so a referral cannot be told apart from an ordinary answer by its shape. One gap remains and this module cannot close it: a referral returned in 10ms where an answer takes 2s is observable by timing, and closing that needs the channel adapter to hold the reply for the time an ordinary one would have taken.</p>
   <ol class="plain">
     <li><strong>Durable execution.</strong> Hatchet is the default; Temporal if scale demands it. The LangGraph re-drive driver is ours to build. Confirm before stage 5.</li>
-    <li><strong>Not yet designed:</strong> multi-language retrieval including Chinese lexical search and Singapore NRIC/FIN recognisers; accessibility, particularly screen-reader-safe streaming; mobile and PWA; conversation export and eDiscovery; retention and DSAR mechanics; sensitive-topic interception for HR and grievance; API versioning policy.</li>
+    <li><strong>Not yet designed:</strong> multi-language retrieval including Chinese lexical search and Singapore NRIC/FIN recognisers; accessibility, particularly screen-reader-safe streaming; mobile and PWA; conversation export and eDiscovery; retention and DSAR mechanics; API versioning policy.</li>
     <li><strong>Not measured:</strong> the lane split and output tokens per answer. Instrument in stage 1, size in stage 3.</li>
     <li><strong>Per client:</strong> whether their VPS exposes <code>/dev/kvm</code>, which decides what sandbox isolation can be promised.</li>
   </ol>
+</section>
+
+<section id="s25">
+  <h2><span class="sn">28</span>Decisions taken during the build</h2>
+  <p>Seventeen questions where the specification asked for two things that could not both be true, or where a choice had a cost worth writing down. Each is recorded in full, with what was rejected and why, at <a href="/build/needs-rupash">/build/needs-rupash</a>. The ones that changed this document:</p>
+  <div class="scroll">
+    <table>
+      <caption>Decided 5 September 2026</caption>
+      <thead><tr><th>Question</th><th>Decision</th><th>Why it was not the other way</th></tr></thead>
+      <tbody>
+        <tr><td>Before-and-after state in the audit ledger</td><td class="k">Changed field <em>names</em> only</td><td>Before-and-after state is field values. Hashing them instead does not help: a five-digit salary has ~90,000 candidates, so its digest is a lookup table away from being the salary</td></tr>
+        <tr><td>Capabilities in the ledger</td><td class="k">One yes, a list no</td><td>An audit view that cannot say what was granted is not an audit view. A list is the permission map, which is the document the strict rule existed to prevent</td></tr>
+        <tr><td>Content-policy refusal as a fallback trigger</td><td class="k">Not a trigger</td><td>A refusal is a property of the request, not the provider's health. Trying the next model shops for a yes, which makes the answer depend on which model was up</td></tr>
+        <tr><td>Overflow at the top tier</td><td class="k">Trim retrieval and retry</td><td>If a question needs more context than the largest model has, retrieval gathered too much. Routing is the wrong layer to paper over it</td></tr>
+        <tr><td>A count beside a filtered collection</td><td class="k">Withhold the count</td><td>A visible <code>ticket_count</code> of 40 beside a list filtered to 12 hands the asker "28 hidden" by subtraction, which is the number we promise never to give</td></tr>
+        <tr><td>Overlapping leash rules</td><td class="k">Strictest wins</td><td>Most-specific-wins reads more naturally and lets a company-wide safe setting be cancelled by adding a narrower row</td></tr>
+        <tr><td>Break-glass window</td><td class="k">4 hours, set per grant</td><td>The authoriser knows whether this is a password reset or a migration. A fixed window teaches everyone to ask for the maximum. The ceiling itself is not configurable</td></tr>
+        <tr><td>Approver role versus <code>approve</code> capability</td><td class="k">The capability decides</td><td>No role implies a capability anywhere else, including Super Admin. The role is a label the console filters on, and a mismatch is now reported as a misconfiguration rather than silence</td></tr>
+        <tr><td>Where the audit anchor lives</td><td class="k">A private GitHub repository, pulled</td><td>The server writing its own anchor needs a write credential on the one machine the anchor exists to be independent of</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p><strong>One question is open</strong> and it is custody rather than design: who holds the unseal pieces for the secrets vault, how many are needed to open it, and whether the root token is destroyed after setup. It is the one part of that vault which is not reversible, and it needs answering before real credentials go in rather than after.</p>
 </section>
 
 <footer>
