@@ -25,8 +25,8 @@ The policy is rebuilt here rather than imported from the unit suite. An invarian
 that borrows its fixtures from a unit suite stops being an independent check the first
 time somebody tidies the unit suite up.
 
-Task ids: M4.1.1, M4.1.3, M4.1.4, M4.1.5, M4.2.2, M4.2.4, M4.3.1, M4.3.2, M4.3.3, M4.4.1,
-M4.4.2, M4.4.3, M4.4.4
+Task ids: M4.1.1, M4.1.3, M4.1.4, M4.1.5, M4.2.2, M4.2.4, M4.2.5, M4.3.1, M4.3.2, M4.3.3,
+M4.3.4, M4.4.1, M4.4.2, M4.4.3, M4.4.4
 """
 
 from __future__ import annotations
@@ -37,16 +37,28 @@ from typing import Any
 
 import pytest
 
+from brain.core import access_route as access_route_module
 from brain.core import redaction as redaction_module
+from brain.core.access_route import CapabilityOwner, OwnerDirectory, route_access_request
 from brain.core.entitlement import Capability, EntitlementSet, Grant
-from brain.core.envelope import Entity, TypedResult
+from brain.core.envelope import Entity, Redaction, TypedResult
 from brain.core.errors import Denied
 from brain.core.field_policy import Classification, FieldPolicy, FieldRule, policy_from_rows
 from brain.core.redaction import (
+    ASKER_ACKNOWLEDGEMENT,
     LOCK_TEXT,
     RESERVED_KEYS,
+    UNREDACTED_TYPE_NAMES,
+    ChannelPathError,
     ChannelPayload,
+    DroppedObject,
+    LockedField,
+    Mask,
+    RedactedAnswer,
+    RedactionTrace,
     UntypedShapeError,
+    assert_channel_adapter,
+    assert_tool_returns_typed_result,
     compute_mask,
     redact,
     render_lock,
@@ -634,3 +646,290 @@ def test_a_generated_shape_that_should_survive_does_survive() -> None:
     shape = {"entity": "ticket", "id": "t_1", "status": "open", "subject": "SSL renewal"}
     out = redacted_payload([shape], GENERATIVE_ASKERS["wide"])
     assert out == [shape]
+
+
+# ============================================ counts over collections (M4.2.5)
+class CountingClient(Entity):
+    """A client whose summary count sits beside the collection it counts."""
+
+    name: str = "SNM Construction Pte Ltd"
+    department: str = "maintenance"
+    ticket_count: int = 2
+    tickets: tuple[Ticket, ...] = ()
+
+
+#: The same policy with the count declared. Added rather than folded in, so every property
+#: above still runs against a policy with no counts in it and the count rule cannot become
+#: load-bearing for a test that is about something else.
+COUNTING_POLICY: FieldPolicy = POLICY.with_rules(
+    FieldRule.of(
+        "client", "ticket_count", "read:client.name", Classification.INTERNAL, counts="tickets"
+    )
+)
+
+#: The same rule with the `counts` link removed, so a comparison isolates the declaration.
+#:
+#: Comparing against `POLICY` instead would compare two different things at once: `POLICY`
+#: classifies no `ticket_count` at all, so default-deny withholds it there, and the count
+#: rule would look like a widening when what actually widened was classifying the field.
+COUNTED_BUT_UNDECLARED: FieldPolicy = POLICY.with_rules(
+    FieldRule.of("client", "ticket_count", "read:client.name", Classification.INTERNAL)
+)
+
+
+def a_counted_client() -> CountingClient:
+    """Two tickets in two departments, and a count that is honestly two."""
+    return CountingClient(
+        entity="client",
+        id="c_0447",
+        tickets=(
+            Ticket(entity="ticket", id="t_1", department="maintenance"),
+            Ticket(entity="ticket", id="t_2", department="web"),
+        ),
+    )
+
+
+def test_a_count_that_survives_always_matches_the_list_beside_it() -> None:
+    """The arithmetic form of "never emit a count of hidden items", and the only form that
+    catches this leak. There is no canary token to grep for here: the leak is a subtraction
+    the asker performs, so the property has to be that no subtraction is ever available.
+    Either the count and the list agree, or the count is not there at all.
+
+    The last assertion is the half that stops the whole thing passing vacuously. A walker
+    that withheld every count would satisfy the loop above and be useless."""
+    seen_a_count = False
+    for pid in sorted(everyone()):
+        payload = serialise_for_channel(
+            TypedResult(records=(a_counted_client(),)),
+            entitlement=person(pid).entitlement(),
+            policy=COUNTING_POLICY,
+            now=NOW,
+        )
+        for record in payload.records:
+            if "ticket_count" not in record:
+                continue
+            seen_a_count = True
+            assert "tickets" in record, f"{pid} received a count with no list beside it"
+            assert record["ticket_count"] == len(record["tickets"]), (
+                f"{pid} can subtract {record['ticket_count']} from {len(record['tickets'])}"
+            )
+    assert seen_a_count, "no persona received a count, so the property above proved nothing"
+
+
+@pytest.mark.parametrize("pid", sorted(everyone()))
+def test_a_count_is_never_locked_however_it_was_withheld(pid: str) -> None:
+    """A lock on a count would appear exactly when the list beside it was filtered and
+    never otherwise, so its presence would tell anybody who knew the rule that records had
+    been withheld from that list. Withholding the count silently makes the answer identical
+    to a record whose source never carried a count."""
+    payload = serialise_for_channel(
+        TypedResult(records=(a_counted_client(),)),
+        entitlement=person(pid).entitlement(),
+        policy=COUNTING_POLICY,
+        now=NOW,
+    )
+    assert "ticket_count" not in {item.field for item in payload.locked}
+
+
+@pytest.mark.parametrize("pid", sorted(everyone()))
+def test_declaring_a_count_never_widens_what_a_persona_receives(pid: str) -> None:
+    """A rule that only ever takes away. If declaring a count could add a field to
+    somebody's answer, the declaration would be a permission written in the wrong table,
+    and nobody reviewing grants would ever see it."""
+    records = (a_counted_client(),)
+    entitlement = person(pid).entitlement()
+    without = serialise_for_channel(
+        TypedResult(records=records),
+        entitlement=entitlement,
+        policy=COUNTED_BUT_UNDECLARED,
+        now=NOW,
+    )
+    with_counts = serialise_for_channel(
+        TypedResult(records=records), entitlement=entitlement, policy=COUNTING_POLICY, now=NOW
+    )
+    for before, after in zip(without.records, with_counts.records, strict=False):
+        assert set(after) <= set(before)
+    assert len(with_counts.records) <= len(without.records)
+
+
+# =========================================== the request-access route (M4.3.4)
+#: Somebody owns client data; nobody owns HR salary. The pair is the point: the asker must
+#: not be able to tell the two apart, and an unowned classified field is the normal state
+#: of a company that has just started classifying.
+ROUTE_OWNERS: OwnerDirectory = OwnerDirectory(
+    owners=(CapabilityOwner(capability=Capability(value="read:client.*"), principal_id="u_aaron"),)
+)
+
+
+def test_the_asker_learns_the_same_sentence_from_every_refusal() -> None:
+    """The single most important property of the route, and the reason it exists as one
+    function. Owned or unowned, classified or not, whoever asked and whatever they asked
+    about, the reply is one constant. Any variation at all is an oracle that can be asked
+    repeatedly with different guesses until the shape of the company falls out."""
+    replies = set()
+    for pid in sorted(everyone()):
+        for entity, field in (
+            ("client", "contract_value"),
+            ("client", "margin"),
+            ("hr", "salary"),
+            ("invoice", "amount_due"),
+            ("agent", "system_prompt"),
+        ):
+            routed = route_access_request(
+                LockedField(entity=entity, record_id="c_0447", field=field),
+                asker_id=pid,
+                question=f"why can I not see {field} for SNM Construction",
+                policy=COUNTING_POLICY,
+                owners=ROUTE_OWNERS,
+            )
+            replies.add(routed.for_asker())
+    assert replies == {ASKER_ACKNOWLEDGEMENT}
+
+
+def test_nothing_about_a_request_survives_into_the_askers_reply() -> None:
+    """Stated separately from the constant above because the two fail for different
+    reasons. A reply could be one constant per asker and still pass the first test if the
+    loop happened to build only one; this one asserts the reply carries no canary, no name
+    and no field, whatever went in."""
+    routed = route_access_request(
+        LockedField(entity="client", record_id="c_0447", field="contract_value"),
+        asker_id="u_weiling",
+        question=f"SNM's figure is {CANARIES['client.contract_value']}, why is it hidden",
+        policy=COUNTING_POLICY,
+        owners=ROUTE_OWNERS,
+    )
+    reply = routed.for_asker()
+    assert all(token not in reply for token in canary_tokens())
+    assert "SNM" not in reply
+    assert "contract_value" not in reply
+    assert "u_weiling" not in reply
+
+
+def test_only_one_function_turns_a_refusal_into_a_request() -> None:
+    """ "The route is the single place that transition happens" has to be a shape rather
+    than a rule. A lock is the one refusal it is safe to offer a route from, because the
+    record was legitimately disclosed first; a second function taking one is a second
+    chance to offer the route from a record that was withheld whole."""
+    takes_a_lock = sorted(
+        name
+        for module in (redaction_module, access_route_module)
+        for name, obj in vars(module).items()
+        if inspect.isfunction(obj)
+        and not name.startswith("_")
+        and any(
+            "LockedField" in str(p.annotation) for p in inspect.signature(obj).parameters.values()
+        )
+    )
+    assert takes_a_lock == ["route_access_request"]
+
+
+# ================================ the only path to a channel, checkable (M4.4.1)
+def wants_a_typed_result(payload: ChannelPayload, result: TypedResult[Client]) -> None:
+    """Unredacted rows, straight from the tool."""
+
+
+def wants_a_redacted_answer(payload: ChannelPayload, answer: RedactedAnswer) -> None:
+    """The payload and the trace together, which is the trace."""
+
+
+def wants_a_trace(payload: ChannelPayload, trace: RedactionTrace) -> None:
+    """Counts of hidden items, by design."""
+
+
+def wants_a_redaction(payload: ChannelPayload, item: Redaction) -> None:
+    """A field name and a reason, and the reason is what leaks."""
+
+
+def wants_a_dropped_object(payload: ChannelPayload, item: DroppedObject) -> None:
+    """One entry per record nobody may see, which is a count of them."""
+
+
+def wants_a_mask(payload: ChannelPayload, mask: Mask) -> None:
+    """Exactly what this caller was refused, field by field."""
+
+
+def wants_an_entity(payload: ChannelPayload, record: Entity) -> None:
+    """A record the walker never saw."""
+
+
+#: One adapter per denied type, written out rather than generated, so that the name in the
+#: denylist and the annotation a real adapter would carry are checked against each other.
+UNREDACTED_ADAPTERS: tuple[tuple[str, Any], ...] = (
+    ("TypedResult", wants_a_typed_result),
+    ("RedactedAnswer", wants_a_redacted_answer),
+    ("RedactionTrace", wants_a_trace),
+    ("Redaction", wants_a_redaction),
+    ("DroppedObject", wants_a_dropped_object),
+    ("Mask", wants_a_mask),
+    ("Entity", wants_an_entity),
+)
+
+
+def test_every_name_on_the_denylist_has_an_adapter_proving_it_is_refused() -> None:
+    """Adding a shape to the denylist without a case here would leave the new entry
+    untested, and an untested denylist entry is a typo waiting to happen: `RedactionTrace`
+    misspelled once admits the trace to every channel in the company."""
+    assert {name for name, _ in UNREDACTED_ADAPTERS} == set(UNREDACTED_TYPE_NAMES)
+
+
+@pytest.mark.parametrize(
+    ("name", "adapter"), UNREDACTED_ADAPTERS, ids=[n for n, _ in UNREDACTED_ADAPTERS]
+)
+def test_a_channel_adapter_holding_an_unredacted_shape_is_refused(name: str, adapter: Any) -> None:
+    """Every one of these adapters also takes a ChannelPayload, so it is refused for
+    holding the forbidden shape rather than for missing the payload. That distinction is
+    the test: an adapter that takes the payload and reaches for the answer as well is
+    exactly the shortcut that looks reasonable while writing it."""
+    with pytest.raises(ChannelPathError, match=name):
+        assert_channel_adapter(adapter)
+
+
+def test_an_adapter_that_takes_only_a_payload_and_scalars_is_admitted() -> None:
+    """The opposite failure, and the one that makes the check worth having. A check that
+    refused every adapter would be removed within a day."""
+
+    def send(payload: ChannelPayload, room: str, thread: str | None) -> None:
+        """The shape every real adapter has."""
+
+    # A bare call is the assertion: it raises or it does not. Comparing the return value
+    # to None asserts that the function returns None, which every function does.
+    assert_channel_adapter(send)
+
+
+# ======================= no untyped shape from a tool, refused early (M4.4.2)
+def returns_a_dict(department: str) -> dict[str, Any]:
+    """No entity to ask a capability question about."""
+    raise NotImplementedError
+
+
+def returns_a_list(department: str) -> list[Client]:
+    """Entities, and no envelope, so no source and no fetched_at either."""
+    raise NotImplementedError
+
+
+def returns_nothing_stated(department: str) -> Any:
+    """A shape nobody has stated. Annotated `Any` because an unannotated function is a
+    type error here, and the point is a return type that promises nothing."""
+    raise NotImplementedError
+
+
+@pytest.mark.parametrize(
+    "tool", [returns_a_dict, returns_a_list, returns_nothing_stated], ids=["dict", "list", "bare"]
+)
+def test_a_tool_that_could_not_be_redacted_is_refused_before_it_is_ever_called(tool: Any) -> None:
+    """The same refusal `require_typed_result` makes, moved to registration. At request
+    time it is an outage in somebody's answer; at registration it is a build failure in
+    front of the person who wrote the tool, which is where a contract violation belongs."""
+    with pytest.raises(UntypedShapeError):
+        assert_tool_returns_typed_result(tool)
+
+
+def returns_a_typed_result(department: str) -> TypedResult[Client]:
+    """What every tool must look like."""
+    raise NotImplementedError
+
+
+def test_a_tool_returning_a_typed_result_of_entities_is_admitted() -> None:
+    """The opposite failure again. A check nothing passes is a check somebody deletes, and
+    the deletion looks like a cleanup rather than a permission change."""
+    assert_tool_returns_typed_result(returns_a_typed_result)

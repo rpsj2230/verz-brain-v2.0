@@ -28,17 +28,27 @@ sensitivity policy, artifact retention and reporting. A field classified PUBLIC 
 needs its capability, because a classification is a description of a field and a
 capability is a statement about a person.
 
-Task ids: M4.2.1, M4.2.2, M4.2.4
+**A count is not an ordinary number.** A rule may declare that its field counts a
+collection on the same record (M4.2.5). `ticket_count: 40` printed beside a list of
+tickets filtered to the twelve in the asker's own department hands them "28 hidden" by
+subtraction, which is the one thing `brain.core.redaction` promises never to say. The
+declaration lives here rather than in the walker for the reason everything else here does:
+the person who adds a summary column to a connector is not the person who reads the
+walker, and a rule that has to be written in the walker is a rule that does not get
+written. The walker enforces it; this module is where somebody says the field is a count.
+
+Task ids: M4.2.1, M4.2.2, M4.2.4, M4.2.5
 """
 
 from __future__ import annotations
 
 import enum
 import hashlib
+import re
 from collections.abc import Iterable
 from typing import Self
 
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
 from brain.core.entitlement import Capability
 
@@ -114,6 +124,50 @@ class FieldRule(BaseModel):
     field: str = Field(min_length=1, max_length=120, pattern=NAME_PATTERN)
     required_capability: Capability
     classification: Classification
+    #: The collection on this same record whose elements this field counts (M4.2.5). Empty
+    #: for the overwhelming majority of fields, which count nothing.
+    #:
+    #: A sibling key rather than a dotted path, because the walker can verify a sibling and
+    #: cannot verify anything else. It sees one record at a time, so a declaration pointing
+    #: at a collection somewhere else in the tree would be a declaration nothing checks,
+    #: and an unchecked declaration reads as a control while being a comment. A count over
+    #: a collection that lives elsewhere is therefore better modelled by moving the count
+    #: onto the record that carries the collection.
+    counts: str = Field(default="", max_length=120)
+
+    @field_validator("counts")
+    @classmethod
+    def _counts_names_a_field(cls, v: str) -> str:
+        """A collection is named, or nothing is named. Nothing else is a name.
+
+        Empty is the normal case and means "this field is not a count". Anything non-empty
+        has to be a field name, because the walker looks it up as a key on the record, and
+        a key that is not a name never survives the walk in the first place.
+        """
+        if v and not re.match(NAME_PATTERN, v):
+            msg = (
+                f"counts={v!r} is not a field name; a count declares the sibling collection "
+                "it counts, and the walker looks that up as a key on the same record"
+            )
+            raise ValueError(msg)
+        return v
+
+    @model_validator(mode="after")
+    def _a_count_does_not_count_itself(self) -> Self:
+        """`ticket_count` counting `ticket_count` is a rule with no answer.
+
+        Refused at authoring time rather than handled at request time, because the walker's
+        question is "was the collection filtered" and a field that counts itself makes that
+        question circular. Failing closed on it would hide the typo; failing loudly stops
+        the policy loading, which is where a typo should be caught.
+        """
+        if self.counts and self.counts == self.field:
+            msg = (
+                f"{self.entity}.{self.field} declares that it counts itself; a count "
+                "declares the collection it counts, which cannot be the count"
+            )
+            raise ValueError(msg)
+        return self
 
     @field_validator("required_capability", mode="before")
     @classmethod
@@ -147,7 +201,13 @@ class FieldRule(BaseModel):
 
     @classmethod
     def of(
-        cls, entity: str, field: str, capability: str | Capability, classification: Classification
+        cls,
+        entity: str,
+        field: str,
+        capability: str | Capability,
+        classification: Classification,
+        *,
+        counts: str = "",
     ) -> Self:
         """A rule from four positional values, with the capability as a string if you like.
 
@@ -156,6 +216,11 @@ class FieldRule(BaseModel):
         a strict type checker means spelling `Capability(value=...)` on every row. This is
         the typed door onto the same conversion, and the validator stays because a policy
         also arrives by being loaded from a table rather than written in code.
+
+        `counts` is keyword-only because it is the rare case. A fifth positional argument
+        on a call that already has four would be read as another classification-shaped
+        thing by whoever skims the row, and a count declaration read wrongly is a count
+        that keeps being emitted.
         """
         return cls(
             entity=entity,
@@ -164,11 +229,17 @@ class FieldRule(BaseModel):
                 capability if isinstance(capability, Capability) else Capability(value=capability)
             ),
             classification=classification,
+            counts=counts,
         )
 
     @property
     def key(self) -> tuple[str, str]:
         return (self.entity, self.field)
+
+    @property
+    def is_a_count(self) -> bool:
+        """Whether this rule declares a count over a collection (M4.2.5)."""
+        return bool(self.counts)
 
     @property
     def dotted(self) -> str:
@@ -252,10 +323,15 @@ class FieldPolicy(BaseModel):
         from a table with a different `ORDER BY` would invalidate every cached answer in
         the system and look like a policy change in the trace.
 
-        The separator is safe without length-prefixing because none of the four parts can
-        contain a pipe: entity and field match `NAME_PATTERN`, the capability grammar
-        admits only letters, digits, underscore, colon, dot and a trailing star, and a
-        classification is one of four fixed words.
+        The count declaration is part of the digest for exactly the reason the capability
+        is (M4.2.5). Declaring that a field counts a collection tightens what an answer may
+        contain, and a tightening that did not move the epoch would leave every cached
+        answer still emitting the count it was just told to withhold.
+
+        The separator is safe without length-prefixing because none of the five parts can
+        contain a pipe: entity, field and the count declaration match `NAME_PATTERN` or are
+        empty, the capability grammar admits only letters, digits, underscore, colon, dot
+        and a trailing star, and a classification is one of four fixed words.
         """
         parts = sorted(
             "|".join(
@@ -264,6 +340,7 @@ class FieldPolicy(BaseModel):
                     rule.field,
                     rule.required_capability.value,
                     rule.classification.value,
+                    rule.counts,
                 )
             )
             for rule in self.rules
@@ -300,22 +377,28 @@ class FieldPolicy(BaseModel):
         return len(self._index)
 
 
-def policy_from_rows(
-    rows: Iterable[tuple[str, str, str, Classification]],
-) -> FieldPolicy:
-    """Build a policy from `(entity, field, capability, classification)` tuples.
+#: One row of a policy table. The fifth element is the count declaration (M4.2.5) and is
+#: optional, because almost no field is a count and a row that had to spell out `""` on
+#: every line is a row people write with a helper.
+type PolicyRow = tuple[str, str, str, Classification] | tuple[str, str, str, Classification, str]
+
+
+def policy_from_rows(rows: Iterable[PolicyRow]) -> FieldPolicy:
+    """Build a policy from `(entity, field, capability, classification[, counts])` tuples.
 
     The shape a policy table hands back, so that whatever eventually persists these rules
     has one obvious way to turn rows into a policy rather than each caller inventing one.
     """
-    return FieldPolicy(
-        rules=tuple(
+    built: list[FieldRule] = []
+    for row in rows:
+        entity, field, capability, classification, *rest = row
+        built.append(
             FieldRule(
                 entity=entity,
                 field=field,
                 required_capability=Capability(value=capability),
                 classification=classification,
+                counts=rest[0] if rest else "",
             )
-            for entity, field, capability, classification in rows
         )
-    )
+    return FieldPolicy(rules=tuple(built))

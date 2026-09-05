@@ -15,6 +15,7 @@ M4.3.1, M4.3.2, M4.3.3, M4.3.4, M4.4.1, M4.4.2, M4.4.4
 from __future__ import annotations
 
 import inspect
+from collections.abc import Callable
 from typing import Any
 
 import pytest
@@ -37,12 +38,17 @@ from brain.core.redaction import (
     OPAQUE_CAPABILITY,
     OPAQUE_LABEL,
     AccessRequest,
+    ChannelAdapterRegistry,
+    ChannelPathError,
     ChannelPayload,
     DropReason,
+    RedactedAnswer,
     RedactionReason,
     RedactionTrace,
     SimulationReport,
     UntypedShapeError,
+    assert_channel_adapter,
+    assert_tool_returns_typed_result,
     compute_mask,
     redact,
     render_lock,
@@ -81,6 +87,37 @@ class Blob(Entity):
     payload: Any = None
 
 
+class ClientWithCount(Entity):
+    """A client carrying a summary count beside the collection it counts (M4.2.5).
+
+    The shape that makes the leak: `ticket_count` is an ordinary classified field, held
+    under an ordinary capability, and printing it beside a filtered list of tickets hands
+    the asker the difference.
+    """
+
+    name: str = "SNM Construction Pte Ltd"
+    department: str = "maintenance"
+    ticket_count: int = 2
+    tickets: tuple[Ticket, ...] = ()
+
+
+class SummaryClient(Entity):
+    """A count with no collection beside it. The case that must keep working."""
+
+    name: str = "SNM Construction Pte Ltd"
+    department: str = "maintenance"
+    ticket_count: int = 40
+
+
+class ClientWithOneTicket(Entity):
+    """A count declared over something that is not a sequence."""
+
+    name: str = "SNM Construction Pte Ltd"
+    department: str = "maintenance"
+    ticket_count: int = 1
+    tickets: Ticket | None = None
+
+
 def a_client(**kw: Any) -> Client:
     return Client(entity="client", id="c_0447", **kw)
 
@@ -115,6 +152,16 @@ POLICY: FieldPolicy = policy_from_rows(
         ("ticket", "internal_note", "read:ticket.internal_note", Classification.CONFIDENTIAL),
         ("blob", "payload", "read:blob.payload", Classification.INTERNAL),
     ]
+)
+
+
+#: The same policy with the count declaration added (M4.2.5). Written as an addition rather
+#: than folded into `POLICY`, so that every test above still runs against a policy with no
+#: counts in it at all and the count rule cannot quietly become load-bearing for them.
+COUNTING_POLICY: FieldPolicy = POLICY.with_rules(
+    FieldRule.of(
+        "client", "ticket_count", "read:client.name", Classification.INTERNAL, counts="tickets"
+    )
 )
 
 
@@ -1054,3 +1101,420 @@ def test_a_scope_clause_reads_the_row_the_record_actually_carries() -> None:
     )
     assert hidden.records == ()
     assert shown.records[0]["name"] == "SNM Construction Pte Ltd"
+
+
+# ================================================== M4.2.5 counts over collections
+def test_a_count_of_a_filtered_collection_is_withheld() -> None:
+    """The leak this leaf exists to close. Wei Ling may read a client's summary count and
+    may read tickets only in maintenance, so a client carrying two tickets hands her one
+    ticket and the number two. Two minus one is the hidden-item count the module promises
+    never to emit, arriving through a field she legitimately holds."""
+    record = ClientWithCount(
+        entity="client", id="c_0447", tickets=(a_ticket(), a_ticket(department="web"))
+    )
+    kept = payload_for("u_weiling", record, policy=COUNTING_POLICY).records[0]
+    assert len(kept["tickets"]) == 1
+    assert "ticket_count" not in kept
+
+
+def test_a_count_of_an_unfiltered_collection_is_still_visible() -> None:
+    """The over-correction, and the failure that gets the rule switched off. If a count
+    disappeared whenever anything anywhere was redacted, every count in the company would
+    vanish within a week and somebody would delete the declaration rather than debug it."""
+    record = ClientWithCount(entity="client", id="c_0447", tickets=(a_ticket(), a_ticket()))
+    kept = payload_for("u_weiling", record, policy=COUNTING_POLICY).records[0]
+    assert len(kept["tickets"]) == 2
+    assert kept["ticket_count"] == 2
+
+
+def test_a_count_of_a_collection_the_record_does_not_carry_stays_visible() -> None:
+    """A summary record with a count and no bodies is the ordinary shape of a list view.
+    There is nothing on screen to subtract the count from, so withholding it would refuse
+    the feature in the exact case it was built for."""
+    kept = payload_for(
+        "u_weiling", SummaryClient(entity="client", id="c_0447"), policy=COUNTING_POLICY
+    ).records[0]
+    assert kept["ticket_count"] == 40
+    assert "tickets" not in kept
+
+
+def test_a_count_of_a_collection_withheld_whole_is_withheld() -> None:
+    """The strongest form of the leak rather than an exemption from it. Forty beside no
+    tickets at all says every one of the forty was withheld, which is a more complete
+    answer than the subtraction a partly filtered list gives."""
+    answer = redact(
+        result_of(ClientWithCount(entity="client", id="c_0447", tickets=(a_ticket(),))),
+        entitlement=ent("read:client.name"),
+        policy=COUNTING_POLICY,
+    )
+    kept = answer.payload.records[0]
+    assert "ticket_count" not in kept
+    assert "tickets" not in kept
+
+
+def test_a_count_over_something_that_is_not_a_sequence_is_withheld() -> None:
+    """Default-deny applied to the declaration itself. A count over a mapping or a scalar
+    is a claim this walker cannot check, and a check that cannot run is not a reason to
+    emit a number."""
+    record = ClientWithOneTicket(entity="client", id="c_0447", tickets=a_ticket())
+    kept = payload_for("u_weiling", record, policy=COUNTING_POLICY).records[0]
+    assert "ticket_count" not in kept
+    assert kept["tickets"]["status"] == "open"
+
+
+def test_a_count_over_a_nested_array_sees_a_loss_in_the_inner_array() -> None:
+    """An array of arrays is one collection. Comparing only the outer length would keep a
+    count of two beside one visible ticket, because the outer list still has both of its
+    elements after the inner one lost a ticket."""
+    entitlement = EntitlementSet(
+        principal_id="u_test",
+        grants=(
+            Grant(capability=Capability(value="read:blob.payload"), scope=Scope.unrestricted()),
+            Grant(capability=Capability(value="read:client.name"), scope=Scope.unrestricted()),
+            Grant(
+                capability=Capability(value="read:ticket.status"),
+                scope=Scope.department("maintenance"),
+            ),
+        ),
+    )
+    nested = {
+        "entity": "client",
+        "id": "c_0447",
+        "name": "SNM Construction Pte Ltd",
+        "department": "maintenance",
+        "ticket_count": 2,
+        "tickets": [
+            [{"entity": "ticket", "id": "t_1", "status": "open", "department": "maintenance"}],
+            [{"entity": "ticket", "id": "t_2", "status": "open", "department": "web"}],
+        ],
+    }
+    answer = redact(result_of(a_blob(nested)), entitlement=entitlement, policy=COUNTING_POLICY)
+    kept = answer.payload.records[0]["payload"]
+    assert [len(inner) for inner in kept["tickets"]] == [1, 0]
+    assert "ticket_count" not in kept
+
+
+def test_a_drop_inside_a_surviving_element_does_not_withhold_the_count() -> None:
+    """A record absorbs what was pruned inside it. A ticket that survives is one ticket
+    however much was removed from within it, so an untagged blob dropped inside one must
+    not withhold the count of the list that ticket sits in. Delete this and the flag
+    propagates upward, one odd shape from a connector empties every count in the company,
+    and the rule gets switched off rather than fixed."""
+    policy = COUNTING_POLICY.with_rules(
+        FieldRule.of("ticket", "nested", "read:ticket.status", Classification.INTERNAL)
+    )
+    nested = {
+        "entity": "client",
+        "id": "c_0447",
+        "name": "SNM Construction Pte Ltd",
+        "department": "maintenance",
+        "ticket_count": 1,
+        "tickets": [
+            {
+                "entity": "ticket",
+                "id": "t_1",
+                "status": "open",
+                "department": "maintenance",
+                "nested": {"note": "untagged"},
+            }
+        ],
+    }
+    answer = redact(
+        result_of(a_blob(nested)),
+        entitlement=ent("read:blob.payload", "read:client.name", "read:ticket.status"),
+        policy=policy,
+    )
+    kept = answer.payload.records[0]["payload"]
+    assert DropReason.UNTAGGED in [d.reason for d in answer.trace.dropped]
+    assert len(kept["tickets"]) == 1
+    assert kept["ticket_count"] == 1
+
+
+def test_a_withheld_count_carries_no_lock() -> None:
+    """A lock here would appear exactly when the list beside it was filtered and never
+    otherwise, so its presence would say "records were withheld from that list" to anybody
+    who knew the rule. It would also lead nowhere: the caller already holds the count's
+    capability, so granting it again changes nothing."""
+    record = ClientWithCount(
+        entity="client", id="c_0447", tickets=(a_ticket(), a_ticket(department="web"))
+    )
+    payload = payload_for("u_weiling", record, policy=COUNTING_POLICY)
+    assert "ticket_count" not in {item.field for item in payload.locked}
+
+
+def test_a_withheld_count_is_recorded_in_the_trace_with_its_own_reason() -> None:
+    """The auditor has to be able to tell a count withheld because the caller lacked the
+    grant from one withheld because the list beside it came back short. They are different
+    events: the first is a permission answer, the second is a policy declaration doing its
+    job, and only the second says a collection was filtered."""
+    record = ClientWithCount(
+        entity="client", id="c_0447", tickets=(a_ticket(), a_ticket(department="web"))
+    )
+    answer = redact(
+        result_of(record),
+        entitlement=person("u_weiling").entitlement(),
+        policy=COUNTING_POLICY,
+        now=NOW,
+    )
+    reasons = {r.field: r.reason for r in answer.trace.redactions}
+    assert reasons["ticket_count"] == RedactionReason.FILTERED_COLLECTION.value
+    assert "client.ticket_count" in answer.trace.withheld_field_names()
+
+
+def test_a_record_whose_only_visible_field_was_a_withheld_count_is_absent() -> None:
+    """The count check has to run before the substance check, and this is what proves it.
+    A record whose one remaining field is a count of a collection the caller may not see
+    is a record they can learn nothing about, so it collapses into nothing-found like any
+    other record with no visible field."""
+    answer = redact(
+        result_of(
+            a_blob(
+                {
+                    "entity": "client",
+                    "id": "c_0447",
+                    "ticket_count": 2,
+                    "tickets": [{"entity": "ticket", "id": "t_1", "status": "open"}],
+                }
+            )
+        ),
+        entitlement=ent("read:blob.payload", "read:client.name"),
+        policy=COUNTING_POLICY,
+    )
+    assert answer.payload.records == ()
+    assert DropReason.NO_VISIBLE_FIELD in [d.reason for d in answer.trace.dropped]
+
+
+def test_a_rule_may_declare_the_collection_its_field_counts() -> None:
+    """The declaration lives on the policy rather than in the walker, because the person
+    adding a summary column to a connector is not the person who reads the walker, and a
+    rule that has to be written in the walker is a rule that does not get written."""
+    rule = COUNTING_POLICY.rule_for("client", "ticket_count")
+    assert rule is not None
+    assert rule.counts == "tickets"
+    assert rule.is_a_count
+    plain = COUNTING_POLICY.rule_for("client", "name")
+    assert plain is not None
+    assert not plain.is_a_count
+
+
+def test_a_field_cannot_declare_that_it_counts_itself() -> None:
+    """A count of itself makes the walker's question circular. Refused at authoring time,
+    where a typo is cheap, rather than handled at request time, where failing closed would
+    hide it."""
+    with pytest.raises(ValidationError, match="counts itself"):
+        FieldRule.of(
+            "client",
+            "ticket_count",
+            "read:client.name",
+            Classification.INTERNAL,
+            counts="ticket_count",
+        )
+
+
+def test_a_count_declaration_must_name_a_field() -> None:
+    """The walker looks the declaration up as a key on the record, and a key that is not a
+    name never survives the walk, so a declaration that is not a name could never match
+    anything and would quietly mean "never filtered"."""
+    with pytest.raises(ValidationError, match="not a field name"):
+        FieldRule.of(
+            "client",
+            "ticket_count",
+            "read:client.name",
+            Classification.INTERNAL,
+            counts="SNM Construction",
+        )
+
+
+def test_declaring_a_count_changes_the_policy_epoch() -> None:
+    """Declaring a count tightens what an answer may contain. An epoch that ignored it
+    would leave every cached answer still emitting the number it was just told to withhold,
+    which is the same window a capability change without an epoch bump leaves."""
+    assert COUNTING_POLICY.epoch() != POLICY.epoch()
+    undeclared = COUNTING_POLICY.with_rules(
+        FieldRule.of("client", "ticket_count", "read:client.name", Classification.INTERNAL)
+    )
+    assert undeclared.epoch() != COUNTING_POLICY.epoch()
+
+
+# ============================================== M4.4.1 the only path to a channel
+def a_slack_adapter(payload: ChannelPayload, room: str) -> None:
+    """An adapter shaped the way every adapter should be: a payload and some scalars."""
+
+
+def an_adapter_handed_the_whole_answer(answer: RedactedAnswer, room: str) -> None:
+    """The mistake this refuses: reaching for the answer to get the source name too."""
+
+
+def an_adapter_handed_the_trace(payload: ChannelPayload, trace: RedactionTrace) -> None:
+    """The same mistake dressed as telemetry."""
+
+
+def an_adapter_with_an_unannotated_parameter(payload: ChannelPayload, extra) -> None:  # type: ignore[no-untyped-def]
+    """An unannotated parameter can hold the unredacted answer.
+
+    The missing annotation is the test input, so mypy is told to allow it here rather than
+    the fixture being annotated into something the check would pass."""
+
+
+def an_adapter_taking_anything(payload: ChannelPayload, **kw: object) -> None:
+    """A signature that accepts anything has declared nothing."""
+
+
+def an_adapter_that_fetches_its_own_data(room: str) -> None:
+    """No payload at all, which means it is getting its data from somewhere else."""
+
+
+def test_a_channel_adapter_taking_only_a_payload_and_scalars_is_accepted() -> None:
+    """The check has to admit the shape every real adapter has, or nobody registers one
+    and the guarantee goes back to being a comment."""
+    assert_channel_adapter(a_slack_adapter)
+
+
+def test_a_channel_adapter_handed_the_whole_answer_is_refused() -> None:
+    """The rule is enforced on what an adapter can be given rather than on what it does.
+    An adapter handed a RedactedAnswer reaches the trace, the reasons and the dropped
+    records, and every one of those is a hidden-item count or a value."""
+    with pytest.raises(ChannelPathError, match="RedactedAnswer"):
+        assert_channel_adapter(an_adapter_handed_the_whole_answer)
+
+
+def test_a_channel_adapter_handed_the_trace_is_refused() -> None:
+    """The trace is the longest-lived artifact of an answer and it holds counts by design,
+    so an adapter that can read it can serialise a count of hidden items to a person."""
+    with pytest.raises(ChannelPathError, match="RedactionTrace"):
+        assert_channel_adapter(an_adapter_handed_the_trace)
+
+
+def test_a_channel_adapter_with_an_unannotated_parameter_is_refused() -> None:
+    """Default-deny, in the same shape as an unclassified field. An unannotated parameter
+    can hold anything at all, including the whole answer, so it cannot be shown safe."""
+    with pytest.raises(ChannelPathError, match="unannotated"):
+        assert_channel_adapter(an_adapter_with_an_unannotated_parameter)
+
+
+def test_a_channel_adapter_taking_kwargs_is_refused() -> None:
+    """A signature that accepts anything has declared nothing, so there is nothing here to
+    read and no basis on which to accept it."""
+    with pytest.raises(ChannelPathError, match=r"\*args or \*\*kwargs"):
+        assert_channel_adapter(an_adapter_taking_anything)
+
+
+def test_a_channel_adapter_that_takes_no_payload_is_refused() -> None:
+    """An adapter with no payload is fetching its own data, which is precisely the path
+    around the serialiser this exists to close."""
+    with pytest.raises(ChannelPathError, match="takes no ChannelPayload"):
+        assert_channel_adapter(an_adapter_that_fetches_its_own_data)
+
+
+def test_the_registry_returns_the_adapter_unchanged_and_records_that_it_passed() -> None:
+    """Returning a wrapper would put the redaction module in the call path of every message
+    the company sends, and a redaction module that can break message delivery is one
+    somebody eventually routes around."""
+    registry = ChannelAdapterRegistry()
+    assert registry.register(a_slack_adapter) is a_slack_adapter
+    assert registry.names() == ("a_slack_adapter",)
+    assert len(registry) == 1
+
+
+def test_the_registry_refuses_an_adapter_that_would_not_pass_the_check() -> None:
+    """The registry is where the check is unavoidably applied. If it registered first and
+    checked afterwards, the guarantee would depend on somebody reading a log."""
+    registry = ChannelAdapterRegistry()
+    with pytest.raises(ChannelPathError):
+        registry.register(an_adapter_handed_the_whole_answer)
+    assert registry.names() == ()
+
+
+def test_two_different_adapters_cannot_share_one_name() -> None:
+    """One of them would be unreachable and which one is decided by import order, so the
+    channel a message went out on would depend on the order two modules were loaded."""
+
+    def build() -> Callable[[ChannelPayload], None]:
+        def an_adapter(payload: ChannelPayload) -> None:
+            """A fresh function object with the same qualified name every time."""
+
+        return an_adapter
+
+    registry = ChannelAdapterRegistry()
+    registry.register(build())
+    with pytest.raises(ChannelPathError, match="two different channel adapters"):
+        registry.register(build())
+
+
+def test_registering_the_same_adapter_twice_is_not_a_clash() -> None:
+    """A module imported twice, or a registry rebuilt in a test, is normal. Refusing it
+    would teach people to guard registration with a flag, and that flag is where a real
+    clash would then hide."""
+    registry = ChannelAdapterRegistry()
+    registry.register(a_slack_adapter)
+    registry.register(a_slack_adapter)
+    assert len(registry) == 1
+
+
+# ============================================ M4.4.2 the tool side of the boundary
+class NotAnEntity(BaseModel):
+    """A valid TypedResult member carrying no entity tag."""
+
+    name: str
+
+
+def a_well_typed_tool(department: str) -> TypedResult[Ticket]:
+    """What every tool must look like."""
+    raise NotImplementedError
+
+
+def a_tool_returning_a_dict(department: str) -> dict[str, Any]:
+    """The shape the redactor has no entity to ask a capability question about."""
+    raise NotImplementedError
+
+
+def a_tool_with_no_return_annotation(department: str):  # type: ignore[no-untyped-def]
+    """A shape nobody has stated. Unannotated on purpose; see the adapter fixture above."""
+    raise NotImplementedError
+
+
+def a_tool_returning_a_bare_typed_result(department: str) -> TypedResult:  # type: ignore[type-arg]
+    """Type-checks, and promises only that something came back in a box."""
+    raise NotImplementedError
+
+
+def a_tool_returning_untagged_records(department: str) -> TypedResult[NotAnEntity]:
+    """A TypedResult of a model carrying no entity tag."""
+    raise NotImplementedError
+
+
+def test_a_tool_declaring_a_typed_result_passes_registration() -> None:
+    """The check has to admit the shape every real tool has, or a registry applying it can
+    register nothing and gets bypassed."""
+    assert_tool_returns_typed_result(a_well_typed_tool)
+
+
+def test_a_tool_returning_an_untyped_shape_is_refused_at_registration() -> None:
+    """`require_typed_result` is this same rule one request too late: by then somebody has
+    asked a question, a connector has been called, and the answer is an exception.
+    Refusing at registration means the tool never becomes callable at all."""
+    with pytest.raises(UntypedShapeError, match="only TypedResult"):
+        assert_tool_returns_typed_result(a_tool_returning_a_dict)
+
+
+def test_a_tool_with_no_declared_return_is_refused_at_registration() -> None:
+    """Default-deny for shapes. An unannotated return is not "probably fine", it is a
+    shape nobody has stated, and the redactor cannot check one of those."""
+    with pytest.raises(UntypedShapeError, match="declares no return type"):
+        assert_tool_returns_typed_result(a_tool_with_no_return_annotation)
+
+
+def test_a_bare_typed_result_is_refused_at_registration() -> None:
+    """It type-checks and it promises nothing. TypedResult is generic over BaseModel, so a
+    bare one says only that something came back in a box, and the entity parameter is the
+    whole promise the redactor depends on."""
+    with pytest.raises(UntypedShapeError, match="only TypedResult"):
+        assert_tool_returns_typed_result(a_tool_returning_a_bare_typed_result)
+
+
+def test_a_typed_result_of_something_that_is_not_an_entity_is_refused() -> None:
+    """The second half of the hole `require_typed_result` closes at request time. A model
+    with no entity tag satisfies the generic bound and still gives the redactor nothing to
+    look a capability up by."""
+    with pytest.raises(UntypedShapeError, match="not an Entity"):
+        assert_tool_returns_typed_result(a_tool_returning_untagged_records)

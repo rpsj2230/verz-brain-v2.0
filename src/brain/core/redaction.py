@@ -38,6 +38,16 @@ exactly how much they were not allowed to know, and repeated with different filt
 a search interface over data they cannot read. Counts belong in the trace, which is read
 by an auditor, and `ChannelPayload` has no field that could carry one.
 
+That rule has a second half, and the walker enforcing the first half strictly is exactly
+what hides it (M4.2.5). A count can survive as an ordinary field. A client record showing
+`ticket_count: 40` beside a list of tickets filtered to the twelve in the asker's own
+department has told them "28 hidden" by subtraction, through a field the policy classified
+and a capability they legitimately hold. So a field policy rule may declare the collection
+its field counts, and this module withholds such a field whenever the collection it names
+was filtered for this asker. A count over a collection that came back whole stays visible,
+because the alternative is that every count in the system disappears and somebody switches
+the rule off.
+
 **The trace records names and never values.** It is the one artifact of an answer that
 outlives the answer, so it is the worst possible place to put the thing that was just
 withheld. `RedactionTrace` refuses anything that is not a name, in the same way and for
@@ -46,15 +56,16 @@ the same reason as `brain.audit.ledger`.
 Scope: this is domain logic. Nothing here touches a database, a channel or a model. The
 policy is a value passed in, not a table read.
 
-Task ids: M4.1.1, M4.1.2, M4.1.3, M4.1.4, M4.1.5, M4.1.6, M4.2.3, M4.3.1, M4.3.2, M4.3.3,
-M4.3.4, M4.4.1, M4.4.2, M4.4.4
+Task ids: M4.1.1, M4.1.2, M4.1.3, M4.1.4, M4.1.5, M4.1.6, M4.2.3, M4.2.5, M4.3.1, M4.3.2,
+M4.3.3, M4.3.4, M4.4.1, M4.4.2, M4.4.4
 """
 
 from __future__ import annotations
 
 import enum
+import inspect
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from datetime import datetime
@@ -145,6 +156,11 @@ class RedactionReason(enum.StrEnum):
     NO_GRANT = "no grant"
     #: The caller holds the capability, and not in a scope that admits this row.
     OUT_OF_SCOPE = "out of scope"
+    #: The field counts a collection, and that collection was filtered for this caller
+    #: (M4.2.5). The one reason here that is not about the field at all: the caller may hold
+    #: every grant the count needs and still not be told the number, because the number and
+    #: the list they were shown differ by exactly what was withheld from them.
+    FILTERED_COLLECTION = "count of a filtered collection"
 
 
 class DropReason(enum.StrEnum):
@@ -466,6 +482,17 @@ class _Node:
     redactions: tuple[Redaction, ...] = ()
     dropped: tuple[DroppedObject, ...] = ()
     locked: tuple[LockedField, ...] = dataclass_field(default=())
+    #: True when this node returned fewer elements than it was given (M4.2.5). Only a
+    #: sequence ever sets it, and a record absorbs it rather than passing it up.
+    #:
+    #: The absorbing is the whole design of the flag, and the alternative was tried first.
+    #: If a record passed its children's filtering upward, one untagged blob dropped inside
+    #: one ticket would mark the client that holds it as filtered, then the list of clients,
+    #: then every count anywhere above it. Every count in the company would vanish the first
+    #: time a connector returned an odd shape, which is how a control gets switched off. A
+    #: record that survives is one element of whatever holds it however much was pruned
+    #: inside it, so counting is unaffected by anything below the element boundary.
+    filtered: bool = False
 
 
 @dataclass(frozen=True)
@@ -518,17 +545,26 @@ def _walk_sequence(
 
     Elements that drop are removed rather than replaced with a placeholder. A placeholder
     would be a hidden-item count written one element at a time.
+
+    Removing them silently is right for the array and wrong for anything that counted it,
+    which is what `filtered` is for (M4.2.5). An array that came back shorter than it went
+    in is the subtraction a count field would complete.
     """
     kept_values: list[Any] = []
     redactions: list[Redaction] = []
     dropped: list[DroppedObject] = []
     locked: list[LockedField] = []
+    filtered = False
 
     for index, item in enumerate(node):
         child = _walk(item, path=f"{path}[{index}]", row=row, depth=depth + 1, ctx=ctx)
         redactions.extend(child.redactions)
         dropped.extend(child.dropped)
         locked.extend(child.locked)
+        # An array of arrays is one collection, so a loss in the inner array is a loss in
+        # this one. Without this, `[[t1, t2], [t3]]` losing t2 keeps its outer length and a
+        # count over it stays visible while the asker can see one ticket fewer than it says.
+        filtered = filtered or child.filtered
         if child.kept:
             kept_values.append(child.value)
 
@@ -538,7 +574,51 @@ def _walk_sequence(
         redactions=tuple(redactions),
         dropped=tuple(dropped),
         locked=tuple(locked),
+        filtered=filtered or len(kept_values) != len(node),
     )
+
+
+def _count_would_be_subtractable(
+    collection: str,
+    *,
+    present: frozenset[str],
+    out: Mapping[str, Any],
+    children: Mapping[str, _Node],
+) -> bool:
+    """Whether emitting a count over `collection` would hand this caller a subtraction.
+
+    Four cases, and the first is the one that keeps the rule usable (M4.2.5).
+
+    **The record does not carry the collection at all.** The count stays. A summary record
+    with `ticket_count` and no ticket bodies is the ordinary case, and there is nothing on
+    screen to subtract the count from. Withholding here is the over-correction that empties
+    every count in the system and gets the rule switched off a week later.
+
+    **The record carries it and it did not come back.** Withheld. This is the mask having
+    refused the collection, or the walk having dropped it whole, and it is the strongest
+    version of the leak rather than an exemption from it: `ticket_count: 40` beside no
+    tickets says all forty were withheld.
+
+    **It came back and it is not a sequence.** Withheld, on the default-deny principle the
+    rest of the module runs on. A count over a mapping or a scalar is a declaration this
+    walker cannot check, and a check that cannot run is not a reason to emit the number.
+
+    **It came back as a sequence.** Withheld if that sequence lost an element anywhere
+    inside it, and emitted otherwise.
+    """
+    if collection not in present:
+        return False
+    if collection not in out:
+        return True
+    child = children.get(collection)
+    if child is None:
+        # Unreachable: a key reaches `out` only by way of `children`. Written as a refusal
+        # rather than an assert because the one thing this function must never do is fall
+        # through to emitting a count it did not manage to check.
+        return True
+    if not isinstance(child.value, list):
+        return True
+    return child.filtered
 
 
 def _walk_mapping(
@@ -626,6 +706,7 @@ def _walk_mapping(
     redactions: list[Redaction] = []
     dropped: list[DroppedObject] = list(unnamed)
     locked: list[LockedField] = []
+    children: dict[str, _Node] = {}
 
     for key, value in named_items:
         if key not in mask.allowed:
@@ -642,11 +723,26 @@ def _walk_mapping(
             depth=depth + 1,
             ctx=ctx,
         )
+        children[key] = child
         redactions.extend(child.redactions)
         dropped.extend(child.dropped)
         locked.extend(child.locked)
         if child.kept:
             out[key] = child.value
+
+    # M4.2.5, and it has to run here rather than in `compute_mask`. Whether a collection
+    # was filtered is not knowable until the collection has been walked, so a count cannot
+    # be decided at the same time as the fields around it. The mask has already applied the
+    # count's own capability; this only ever takes away, never gives back.
+    present = frozenset(key for key, _ in named_items)
+    counts_withheld: list[tuple[str, RedactionReason]] = []
+    for key in list(out):
+        rule = ctx.policy.rule_for(tag, key)
+        if rule is None or not rule.is_a_count:
+            continue
+        if _count_would_be_subtractable(rule.counts, present=present, out=out, children=children):
+            del out[key]
+            counts_withheld.append((key, RedactionReason.FILTERED_COLLECTION))
 
     if not has_substance(out):
         # M4.3.3, and the single enforcement point for it. The question is asked of what
@@ -663,10 +759,26 @@ def _walk_mapping(
             ),
         )
 
-    for name, reason in mask.withheld:
+    # Sorted so that the order a source returned its columns in cannot be read back out of
+    # the order the trace lists them, in the same way and for the same reason as `locked`.
+    for name, reason in sorted([*mask.withheld, *counts_withheld]):
         redactions.append(
             Redaction(entity=tag, record_id=record_id, field=name, reason=reason.value)
         )
+        if reason is RedactionReason.FILTERED_COLLECTION:
+            # No lock, for the same reason an unclassified field gets none, arrived at from
+            # the other direction. A lock is an offer to go and ask for the capability that
+            # would reach the field, and here the caller may well hold that capability
+            # already: what stopped them is that the collection beside it was filtered.
+            # Granting the capability would change nothing, so the lock would route them
+            # into a dead end.
+            #
+            # It also closes a side channel the lock would have opened. A lock here would
+            # appear exactly when the collection beside it was filtered and not otherwise,
+            # so its presence would say "records were withheld from that list" to anybody
+            # who knew the rule. Withholding the count silently makes the answer identical
+            # to a record whose source never carried a count at all.
+            continue
         if reason is RedactionReason.UNCLASSIFIED:
             # No lock for a field nothing classifies, and the difference matters. A lock is
             # an offer: it says this field exists, somebody owns it, and there is a
@@ -723,6 +835,253 @@ def require_typed_result(value: object) -> TypedResult[Entity]:
         )
         raise UntypedShapeError(msg)
     return cast("TypedResult[Entity]", value)
+
+
+#: A return annotation of `TypedResult[Something]`, however it is spelled.
+#:
+#: Both spellings have to be admitted because both occur. A module with
+#: `from __future__ import annotations` hands this a string exactly as written, and one
+#: without it hands over a generic alias whose `str()` is fully dotted. Matching the text
+#: rather than resolving the object is what lets the check run against a tool whose module
+#: has not finished importing, which is when a registry actually runs it.
+_TYPED_RESULT_RE = re.compile(
+    r"^(?:[A-Za-z_][A-Za-z0-9_]*\.)*TypedResult\[\s*"
+    r"(?:[A-Za-z_][A-Za-z0-9_]*\.)*([A-Za-z_][A-Za-z0-9_]*)\s*\]$"
+)
+
+
+def _annotation_text(annotation: object) -> str:
+    """One rendering of an annotation, whether it arrived as a string or an object."""
+    if isinstance(annotation, str):
+        return annotation
+    if isinstance(annotation, type):
+        return annotation.__name__
+    return str(annotation)
+
+
+def assert_tool_returns_typed_result(tool: Callable[..., object]) -> None:
+    """Refuse a tool whose declared return the redactor could not walk (M4.4.2).
+
+    `require_typed_result` is the same rule enforced one request too late. By the time it
+    fires, somebody has asked a question, a connector has been called, rows have been
+    fetched, and the answer is an exception. This is the half a tool registry applies at
+    registration, so the tool that cannot be redacted never becomes callable at all.
+
+    Three refusals, and the first is the one that matters most:
+
+    **No return annotation.** Refused, on the same default-deny principle as an
+    unclassified field. An unannotated return is not "probably fine", it is a shape nobody
+    has stated, and the redactor cannot check a shape nobody stated.
+
+    **A return that is not a `TypedResult`.** Refused. A tool returning a dict gives the
+    redactor no entity to ask a capability question about.
+
+    **A bare `TypedResult`.** Refused too, and deliberately, even though it type-checks.
+    `TypedResult` is generic over `BaseModel`, so a bare one promises only that something
+    came back in a box; the entity parameter is the whole promise.
+
+    The record type is checked against `Entity` when the name resolves in the tool's own
+    module globals, and skipped when it does not, which happens for a class defined inside
+    a function. A name that cannot be resolved is not evidence of anything, and refusing on
+    it would refuse correct tools for where their types happen to be declared. mypy is the
+    defence there, and `require_typed_result` is the one behind it.
+
+    This checks a declaration rather than a value, and a tool can still lie by annotating
+    one thing and returning another. That is why it does not replace `require_typed_result`
+    at the boundary: this one catches the mistake, that one catches the lie.
+    """
+    try:
+        signature = inspect.signature(tool)
+    except (TypeError, ValueError) as exc:  # a builtin, or something not really a function
+        msg = f"{getattr(tool, '__name__', tool)!r} has no readable signature to check"
+        raise UntypedShapeError(msg) from exc
+
+    name = getattr(tool, "__name__", repr(tool))
+    if signature.return_annotation is inspect.Signature.empty:
+        msg = (
+            f"tool {name!r} declares no return type; the redactor cannot walk a shape "
+            "nobody has stated, so an unannotated tool is refused at registration"
+        )
+        raise UntypedShapeError(msg)
+
+    text = _annotation_text(signature.return_annotation)
+    match = _TYPED_RESULT_RE.match(text.strip())
+    if match is None:
+        msg = (
+            f"tool {name!r} declares it returns {text!r}; only TypedResult[SomeEntity] can "
+            "be redacted, because only it carries the entity tag a capability is asked about"
+        )
+        raise UntypedShapeError(msg)
+
+    record_type = getattr(tool, "__globals__", {}).get(match.group(1))
+    if isinstance(record_type, type) and not issubclass(record_type, Entity):
+        msg = (
+            f"tool {name!r} returns TypedResult[{match.group(1)}], and {match.group(1)} is "
+            "not an Entity; a record with no entity tag cannot be masked, cited or audited"
+        )
+        raise UntypedShapeError(msg)
+
+
+# --------------------------------------------------- the path to a channel (M4.4.1)
+
+
+class ChannelPathError(Exception):
+    """A channel adapter was declared that could be handed something unredacted.
+
+    Outside the user-facing taxonomy for the reason `UntypedShapeError` is: nobody asking a
+    question should ever see this. It is a contract violation by an adapter, and it should
+    stop that adapter being registered rather than degrade an answer at request time.
+    """
+
+
+#: What a channel adapter may never be given. Every one of these carries either data the
+#: gate has not walked or the record of what the gate withheld, and an adapter holding one
+#: is one line away from serialising it.
+#:
+#: `SimulationReport` is deliberately absent. It has nowhere to put a value, it is what
+#: screen 13 renders, and the console is a channel like any other; banning it would refuse
+#: the one legitimate adapter that shows an admin what a policy would withhold.
+UNREDACTED_TYPE_NAMES: Final[frozenset[str]] = frozenset(
+    {
+        "TypedResult",
+        "RedactedAnswer",
+        "RedactionTrace",
+        "Redaction",
+        "DroppedObject",
+        "Mask",
+        "Entity",
+    }
+)
+
+
+def _names_in(annotation: object) -> frozenset[str]:
+    """Every identifier appearing in an annotation, however it is spelled.
+
+    Crude on purpose. `ChannelPayload`, `"ChannelPayload | None"`,
+    `redaction.ChannelPayload` and `list[ChannelPayload]` all have to read the same, and a
+    parser that understood the type algebra would be a second, subtly different opinion
+    about what an annotation means.
+    """
+    return frozenset(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", _annotation_text(annotation)))
+
+
+def assert_channel_adapter(adapter: Callable[..., object]) -> None:
+    """Refuse an adapter that could reach a channel by any route but the serialiser (M4.4.1).
+
+    `serialise_for_channel` being the only function that returns a `ChannelPayload` is a
+    proof about this module, and the invariant suite checks it. It says nothing at all
+    about the code on the other side, which is where a channel adapter lives and where the
+    rule is actually broken: an adapter handed a `RedactedAnswer` "because it needed the
+    source name too" reaches the trace, the reasons and the dropped records, and every one
+    of those is a hidden-item count or a value.
+
+    So the rule is enforced on what an adapter can be given rather than on what it does. An
+    adapter whose parameters are a `ChannelPayload` and some scalars cannot serialise
+    unredacted data, because it was never handed any. That is checkable by reading a
+    signature, in the same way and for the same reason `render_lock` is checked by reading
+    a signature rather than by trusting its body.
+
+    Four refusals:
+
+    **An unannotated parameter.** Default-deny. An unannotated parameter can hold anything,
+    including the whole answer, so it cannot be shown safe.
+
+    **`*args` or `**kwargs`.** The same argument. A signature that accepts anything has
+    declared nothing.
+
+    **A parameter naming an unredacted type.** The leak itself.
+
+    **No `ChannelPayload` parameter at all.** An adapter that takes no payload is either
+    fetching its own data, which is the bypass this exists to stop, or is not a channel
+    adapter and should not be registered as one.
+
+    Rejected: scanning the adapter's source for `redact(` or `.trace`. It reads as
+    stricter and is weaker, because it is defeated by any indirection at all, and it
+    forbids an adapter's own tests from importing the module they test.
+    """
+    try:
+        signature = inspect.signature(adapter)
+    except (TypeError, ValueError) as exc:
+        msg = f"{getattr(adapter, '__name__', adapter)!r} has no readable signature to check"
+        raise ChannelPathError(msg) from exc
+
+    name = getattr(adapter, "__name__", repr(adapter))
+    takes_a_payload = False
+    for parameter in signature.parameters.values():
+        if parameter.kind in (parameter.VAR_POSITIONAL, parameter.VAR_KEYWORD):
+            msg = (
+                f"channel adapter {name!r} takes {parameter.name!r} as *args or **kwargs; "
+                "a signature that accepts anything has declared nothing, and an adapter "
+                "that could be handed the whole answer is a path around the serialiser"
+            )
+            raise ChannelPathError(msg)
+        if parameter.annotation is inspect.Parameter.empty:
+            msg = (
+                f"channel adapter {name!r} has an unannotated parameter {parameter.name!r}; "
+                "an unannotated parameter can hold the unredacted answer, so it is refused "
+                "for the same reason an unclassified field is withheld"
+            )
+            raise ChannelPathError(msg)
+        names = _names_in(parameter.annotation)
+        forbidden = sorted(names & UNREDACTED_TYPE_NAMES)
+        if forbidden:
+            msg = (
+                f"channel adapter {name!r} would be handed {forbidden} in {parameter.name!r}; "
+                "only a ChannelPayload may cross to a channel, and an adapter holding "
+                "anything else can serialise what the gate removed"
+            )
+            raise ChannelPathError(msg)
+        takes_a_payload = takes_a_payload or "ChannelPayload" in names
+
+    if not takes_a_payload:
+        msg = (
+            f"channel adapter {name!r} takes no ChannelPayload; an adapter with no payload "
+            "is fetching its own data, which is the path around the serialiser this refuses"
+        )
+        raise ChannelPathError(msg)
+
+
+@dataclass
+class ChannelAdapterRegistry:
+    """The door a channel adapter passes through, and the list of the ones that did.
+
+    An instance rather than a module-level singleton, because a singleton is process state
+    in a module whose whole claim is that it holds none: it would make one test's
+    registration visible to the next, and "which adapters are registered" would depend on
+    import order. Whoever owns the channel layer owns one of these.
+
+    The registry is not the guarantee. `assert_channel_adapter` is, and it can be called
+    on its own by a test that never registers anything. This exists so that the check has
+    somewhere it is unavoidably applied, and so that an operator can ask what passed it.
+    """
+
+    _adapters: dict[str, Callable[..., object]] = dataclass_field(default_factory=dict)
+
+    def register[F: Callable[..., object]](self, adapter: F) -> F:
+        """Check an adapter and record it. Usable as a decorator; returns it unchanged.
+
+        Returning the function unchanged rather than a wrapper is deliberate. A wrapper
+        would put this module in the call path of every message the company sends, and a
+        redaction module that can break message delivery is one somebody routes around.
+        """
+        assert_channel_adapter(adapter)
+        name = getattr(adapter, "__qualname__", "") or adapter.__name__
+        existing = self._adapters.get(name)
+        if existing is not None and existing is not adapter:
+            msg = (
+                f"two different channel adapters are registered as {name!r}; one of them "
+                "would be unreachable, and which one is decided by import order"
+            )
+            raise ChannelPathError(msg)
+        self._adapters[name] = adapter
+        return adapter
+
+    def names(self) -> tuple[str, ...]:
+        """Every registered adapter, sorted. What an operator asks this object."""
+        return tuple(sorted(self._adapters))
+
+    def __len__(self) -> int:
+        return len(self._adapters)
 
 
 # ---------------------------------------------------------------- the entry point
