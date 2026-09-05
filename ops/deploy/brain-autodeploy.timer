@@ -1,0 +1,14 @@
+[Unit]
+Description=Check for a new Company Brain image every two minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+# Two minutes is a choice, not the smallest number available. The check is one manifest read
+# against a registry, so it costs almost nothing, and what the interval buys is at most two
+# minutes of a merged change not being live. Checking every few seconds would turn a
+# registry outage into a retry storm from this host and would not make anybody's day better.
+AccuracySec=15s
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# Install and start the automatic deploy timer. Run once, as root, on the VPS.
+#
+# This exists as a script rather than as a list of commands to paste because installing a
+# systemd unit is a privileged change to the machine and should be one reviewable thing that
+# a person deliberately runs, not six lines copied out of a chat window in the right order.
+#
+# It is idempotent: running it again re-writes the units and restarts the timer, which is
+# what you want after editing either file.
+set -euo pipefail
+
+if [ "$(id -u)" -ne 0 ]; then
+  echo "run this as root: it writes to /etc/systemd/system" >&2
+  exit 1
+fi
+
+for required in /usr/local/bin/brain-autodeploy /usr/local/bin/brain-deploy; do
+  if [ ! -x "$required" ]; then
+    echo "missing $required - the deploy scripts are not installed yet" >&2
+    exit 1
+  fi
+done
+
+cat > /etc/systemd/system/brain-autodeploy.service <<'UNIT'
+[Unit]
+Description=Deploy Company Brain when a new image is published
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/brain-autodeploy
+# Longer than the timer interval on purpose. A deploy that recreates the app and waits for
+# health takes a couple of minutes; systemd will not start a second run of a oneshot unit
+# while the first is still going, so the overlap resolves itself without a lock file.
+TimeoutStartSec=600
+UNIT
+
+cat > /etc/systemd/system/brain-autodeploy.timer <<'UNIT'
+[Unit]
+Description=Check for a new Company Brain image every two minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+# Two minutes is a choice, not the smallest number available. The check is one manifest read
+# against a registry, so it costs almost nothing, and what the interval buys is at most two
+# minutes of a merged change not being live. Checking every few seconds would turn a
+# registry outage into a retry storm from this host and would help nobody.
+AccuracySec=15s
+
+[Install]
+WantedBy=timers.target
+UNIT
+
+systemctl daemon-reload
+systemctl enable --now brain-autodeploy.timer
+
+echo
+echo "--- timer ---"
+systemctl status brain-autodeploy.timer --no-pager | head -6 || true
+echo
+echo "--- next run ---"
+systemctl list-timers brain-autodeploy.timer --no-pager | head -3 || true
+echo
+echo "Installed. It will check every two minutes and deploy when a new image appears."
+echo "Watch it with:  journalctl -u brain-autodeploy.service -f"

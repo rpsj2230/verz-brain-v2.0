@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# The only thing the GitHub deploy key can run. Installed at /usr/local/bin/brain-deploy
+# and named in a `command=` restriction in root's authorized_keys, so a holder of that key
+# gets this and nothing else - no shell, no arbitrary command, no port forwarding.
+#
+# WHY THIS EXISTS RATHER THAN AN OPEN PORT. Coolify's API is on :8000 and ufw allows only
+# 22, 80 and 443 from the internet. Reaching it from GitHub Actions would mean allowlisting
+# GitHub's Actions ranges, which are thousands of CIDRs that change without notice and from
+# which anybody with a GitHub account can run a job. That exposes the panel that controls
+# every container on this box, including the database, to a large slice of the internet.
+# SSH is already open, so this adds no new exposure and bounds the credential to one action.
+#
+# WHY IT PREFERS COOLIFY'S API. Coolify owns the stored compose, and a deploy it does not
+# know about leaves its UI describing a state that is not real. The compose fallback exists
+# because it is what was run by hand on 2026-09-05 and it worked, and because a deploy
+# mechanism that needs a token to exist at all is one more thing that can be missing.
+set -euo pipefail
+
+SERVICE_DIR="/data/coolify/services/c74hlhygvg7scjttu8ydwnqi"
+TOKEN_FILE="/root/.coolify-deploy-token"
+UUID_FILE="/root/.coolify-service-uuid"
+IMAGE="ghcr.io/rpsj2230/verz-brain-v2.0:latest"
+HEALTH_URL="http://127.0.0.1:8000"
+
+log() { printf '%s %s\n' "$(date -u +%H:%M:%SZ)" "$*"; }
+
+log "pulling $IMAGE"
+docker pull -q "$IMAGE" >/dev/null
+
+if [ -s "$TOKEN_FILE" ] && [ -s "$UUID_FILE" ]; then
+  uuid="$(cat "$UUID_FILE")"
+  log "asking Coolify to deploy service $uuid"
+  code=$(curl -sS -o /tmp/coolify-deploy.out -w '%{http_code}' \
+    -X POST "http://127.0.0.1:8000/api/v1/deploy?uuid=$uuid" \
+    -H "Authorization: Bearer $(cat "$TOKEN_FILE")" \
+    -H "Content-Type: application/json") || code=000
+  cat /tmp/coolify-deploy.out || true
+  echo
+  if [ "$code" -ge 300 ] || [ "$code" = "000" ]; then
+    log "Coolify returned $code; falling back to compose so the deploy still happens"
+  else
+    log "Coolify accepted the deploy ($code)"
+    exit 0
+  fi
+fi
+
+# No token, or Coolify refused. Same compose file Coolify itself uses, from its own
+# directory, so the result is what Coolify would have produced minus its own record.
+log "deploying with compose from $SERVICE_DIR"
+cd "$SERVICE_DIR"
+docker compose up -d --force-recreate --no-deps migrate app
+
+# Do not report success until it is actually serving. A deploy that reports success while
+# the container crash-loops is the failure this whole exercise was about.
+for i in $(seq 1 30); do
+  sleep 4
+  status=$(docker inspect --format '{{.State.Health.Status}}' app-c74hlhygvg7scjttu8ydwnqi 2>/dev/null || echo unknown)
+  if [ "$status" = "healthy" ]; then
+    log "app is healthy after $((i * 4))s"
+    docker exec db-c74hlhygvg7scjttu8ydwnqi psql -U brain -d brain -tAc \
+      'select version_num from alembic_version' 2>/dev/null | sed 's/^/alembic: /' || true
+    exit 0
+  fi
+done
+
+log "app did not become healthy; last 40 lines follow"
+docker compose logs --tail 40 app || true
+exit 1

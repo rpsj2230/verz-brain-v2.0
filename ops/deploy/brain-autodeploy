@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# Deploy when a new image is published, without anything on the internet being able to
+# reach this machine.
+#
+# WHY THE SERVER PULLS INSTEAD OF GITHUB PUSHING. Coolify's API is on :8000 and ufw allows
+# only 22, 80 and 443 inbound. Letting GitHub Actions call it means allowlisting GitHub's
+# Actions ranges: thousands of CIDRs, changed without notice, and any GitHub account can run
+# a job from them. That exposes the panel controlling every container here, including the
+# database, to a large slice of the internet, in order to save a minute of latency.
+#
+# THE CI GATE IS PRESERVED, WHICH IS THE PART WORTH CHECKING. This watches the `:latest`
+# tag, and `:latest` is only moved by the Deploy workflow, which runs on `workflow_run`
+# after CI succeeds. So the tag moving *is* the statement that the gate passed. Watching a
+# branch or a commit instead would deploy code that never passed anything.
+#
+# SILENT FAILURE IS THE THING TO AVOID HERE. A poller that dies stops deploying and says
+# nothing, which is exactly the bug this replaces. Two answers: this writes a heartbeat on
+# every run whether or not it acts, and the Deploy workflow separately polls the live site
+# and fails if the commit it published never appears there. The second is the real guard,
+# because it runs on GitHub and does not depend on this machine being well.
+set -euo pipefail
+
+IMAGE="ghcr.io/rpsj2230/verz-brain-v2.0:latest"
+CONTAINER="app-c74hlhygvg7scjttu8ydwnqi"
+HEARTBEAT="/var/lib/brain-deploy/heartbeat.json"
+mkdir -p "$(dirname "$HEARTBEAT")"
+
+note() {
+  printf '{"checked_at":"%s","action":"%s","detail":"%s"}\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" > "$HEARTBEAT"
+}
+
+# The digest the registry currently serves for the tag.
+remote=$(docker manifest inspect --verbose "$IMAGE" 2>/dev/null \
+  | grep -m1 '"digest"' | cut -d'"' -f4 || true)
+if [ -z "$remote" ]; then
+  note "error" "could not read the remote manifest"
+  echo "could not read the remote manifest for $IMAGE" >&2
+  exit 1
+fi
+
+# What the local tag resolves to, by registry digest rather than by image id. The image id
+# is a local content hash and is not what the registry names, so comparing it to a remote
+# digest never matches and would redeploy on every run.
+local_digest=$(docker image inspect "$IMAGE" --format '{{index .RepoDigests 0}}' 2>/dev/null \
+  | cut -d'@' -f2 || true)
+
+# What the container is actually serving. Checked separately from the tag because a pull
+# moves the tag without restarting anything, and a deploy that stopped half way would
+# otherwise look complete for ever.
+running=$(docker inspect "$CONTAINER" --format '{{.Image}}' 2>/dev/null || true)
+tag_id=$(docker image inspect "$IMAGE" --format '{{.Id}}' 2>/dev/null || true)
+
+if [ -n "$remote" ] && [ "$local_digest" = "$remote" ] && [ -n "$running" ] && [ "$running" = "$tag_id" ]; then
+  note "up-to-date" "$remote"
+  exit 0
+fi
+
+note "deploying" "$remote"
+/usr/local/bin/brain-deploy
+note "deployed" "$remote"

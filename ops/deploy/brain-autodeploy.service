@@ -1,0 +1,12 @@
+[Unit]
+Description=Deploy Company Brain when a new image is published
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/brain-autodeploy
+# A deploy takes a couple of minutes when it recreates the app and waits for health, which
+# is longer than the timer interval. systemd will not start a second run of a oneshot unit
+# while the first is still going, so the overlap resolves itself rather than needing a lock.
+TimeoutStartSec=600

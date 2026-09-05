@@ -176,6 +176,48 @@ jobs:
           fi
           echo "deployed=true" >> "$GITHUB_OUTPUT"
 
+      - name: The site is actually serving this commit
+        # THE REAL GUARD, and the reason it is here rather than on the server.
+        #
+        # Every previous version of this job asserted that a *trigger* was sent. Today's
+        # failure was that no trigger was ever sent and the summary said otherwise, so the
+        # site ran a March image for months while every run looked green. A trigger is not
+        # an outcome. This asks the only question that matters, from outside the machine
+        # that would be lying: does the live site report the commit this run published.
+        #
+        # It fails rather than warns. A red build here is self-clearing - it goes green the
+        # moment deployment works - which is the good kind of red, unlike a permanent one
+        # that trains people to ignore the tab.
+        env:
+          SHA: ${{ needs.build.outputs.sha }}
+          SITE: https://brain.194.233.66.89.sslip.io
+        run: |
+          # Eight minutes: the server checks for a new image every two, and a deploy that
+          # recreates the app and waits for health takes about two more. Four would be
+          # enough on a good day, which is the wrong thing to size a timeout against.
+          deadline=$((SECONDS + 480))
+          live=""
+          while [ $SECONDS -lt $deadline ]; do
+            live=$(curl -fsS --max-time 20 "$SITE/api/status.json" 2>/dev/null                    | python3 -c "import sys,json;print(json.load(sys.stdin).get('commit',''))" 2>/dev/null || echo "")
+            case "$SHA" in
+              "$live"*) echo "live is serving $live"; exit 0 ;;
+            esac
+            echo "live=$live want=${SHA:0:7}; waiting"
+            sleep 20
+          done
+          echo "::error::the site still reports '$live' after 8 minutes, not ${SHA:0:7}."
+          echo "::error::The image is published and signed. Nothing pulled it."
+          echo "### NOT LIVE" >> "$GITHUB_STEP_SUMMARY"
+          echo "The image \`${{ needs.build.outputs.sha }}\` is published, and the site is" >> "$GITHUB_STEP_SUMMARY"
+          echo "still serving \`$live\`." >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "If the auto-deploy timer is not installed yet, run this once on the VPS:" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo '    ssh verz-vps /usr/local/bin/brain-install-autodeploy' >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Otherwise check it: \`journalctl -u brain-autodeploy.service -n 50\`" >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+
       - name: Record what shipped
         if: success()
         run: |
