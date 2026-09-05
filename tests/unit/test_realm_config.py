@@ -265,8 +265,7 @@ def test_an_access_token_expires_well_inside_the_idle_window() -> None:
     realm = _realm()
     effective = realm["ssoSessionIdleTimeout"] + realm["accessTokenLifespan"]
     assert effective <= realm["ssoSessionIdleTimeout"] * 1.25, (
-        f"the real idle window is {effective}s against a stated "
-        f"{realm['ssoSessionIdleTimeout']}s"
+        f"the real idle window is {effective}s against a stated {realm['ssoSessionIdleTimeout']}s"
     )
 
 

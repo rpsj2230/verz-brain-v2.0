@@ -37,9 +37,7 @@ def _holders(count: int) -> tuple[Holder, ...]:
     Named rather than placeholder, and distinct rather than repeated, so that a test about
     arithmetic fails on the arithmetic rather than on a rule it was not asking about.
     """
-    return tuple(
-        Holder(f"person-{i}", f"Person {i}", on_call=i != 1) for i in range(1, count + 1)
-    )
+    return tuple(Holder(f"person-{i}", f"Person {i}", on_call=i != 1) for i in range(1, count + 1))
 
 
 # ------------------------------------------------- combinations OpenBao would accept
