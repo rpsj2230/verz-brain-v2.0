@@ -5,6 +5,8 @@ Task ids: M0.4.4, M0.4.5
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from brain import seed as seed_mod
@@ -70,3 +72,37 @@ def test_main_needs_a_database_url(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.delenv("BRAIN_DATABASE_URL", raising=False)
     assert seed_mod.main([]) == 2
+
+
+# --------------------------------------------- the guard reads more than an estimate
+def test_the_guard_does_not_rely_on_statistics_alone() -> None:
+    """`n_live_tup` is an estimate maintained by the statistics collector, not a count. It
+    is zero for a freshly restored database until autovacuum or ANALYZE has run, so a
+    production dump restored ten minutes ago read as empty and this guard said it was safe
+    to truncate.
+
+    Asserted by reading the source, because the failure needs a real Postgres with cold
+    statistics and a table full of rows, which no unit test can stand up. What a test can do
+    is fail the moment somebody removes the exact probe and leaves the estimate.
+    """
+    source = (Path(__file__).resolve().parents[2] / "src" / "brain" / "seed.py").read_text(
+        encoding="utf-8"
+    )
+    assert "LIMIT 1" in source, "the exact probe is gone; only the estimate remains"
+    assert "n_live_tup" in source, "the estimate is gone; it covers a blind spot in the probe"
+
+
+def test_the_guard_looks_in_every_schema_that_exists() -> None:
+    """It used to check seven while nine existed. `obs` was one of the two missing, and
+    `obs` holds the audit ledger, which is the one thing here that re-running the seeder
+    cannot undo."""
+    from brain.db import SCHEMAS
+
+    source = (Path(__file__).resolve().parents[2] / "src" / "brain" / "seed.py").read_text(
+        encoding="utf-8"
+    )
+    assert "sorted(SCHEMAS)" in source, (
+        "the schema list is hard-coded again; it drifts from brain.db.SCHEMAS the next time "
+        "a schema is added, and the one that gets forgotten is the new one"
+    )
+    assert "obs" in SCHEMAS
