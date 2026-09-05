@@ -636,6 +636,21 @@ class CircuitBreaker:
             )
         return replace(self, live=live, consecutive_failures=consecutive)
 
+    def open(self, now: datetime, *, jitter: float = 0.0) -> CircuitBreaker:
+        """Open the breaker without recording a live failure.
+
+        Exists for the prober. A probe is one synthetic request, and letting it push an
+        outcome into the live ring would let the prober drive its own verdict, so the
+        health layer needs a way to say "open, on evidence that is not live traffic".
+        Before this existed it reached for `_open` directly, which is a coupling that
+        survives exactly until somebody renames a private method.
+
+        Deliberately not a general escape hatch: it takes the same arguments as the
+        internal transition and applies the same streak, jitter floor and claim reset, so
+        there is one implementation of opening rather than two that drift.
+        """
+        return self._open(now, jitter=jitter)
+
     def _open(self, now: datetime, *, jitter: float) -> CircuitBreaker:
         return replace(
             self,
