@@ -120,6 +120,38 @@ def check_commit_message(message: str) -> Refusal | None:
     return None
 
 
+def already_closed(message: str, repo: Path) -> tuple[str, ...]:
+    """Leaf ids on this message's `Closes:` line that an earlier commit already closed.
+
+    A warning rather than a refusal, and the distinction is the point. Re-claiming is
+    sometimes exactly right: a leaf claimed on a thin implementation and later given the
+    test that proves it should say so, and the count is a set so nothing double-counts.
+    What is wrong is doing it *without noticing*, which produces a commit message
+    announcing eight closures that moves the number by nothing.
+
+    Written after doing that twice in one session. Both times the mistake was the same:
+    listing leaves that had no test naming them, and reading "untested" as "unclaimed".
+    They are different questions and the second one was never asked.
+
+    Returns the ids, so the hook can say which. Silence is what let this happen twice.
+    """
+    claimed = set(leaf_ids_in(message))
+    if not claimed:
+        return ()
+    # Imported here rather than at module scope: this module is called from a git hook on
+    # every commit, and `brain.status` pulls in the WBS loader, which is a cost the other
+    # two rules do not need to pay.
+    from brain.status import closed_task_ids
+
+    try:
+        closed, _ = closed_task_ids(repo)
+    except Exception:
+        # Outside a repository, or git is unavailable. A hook that fails because it could
+        # not answer an advisory question would block a commit for no reason.
+        return ()
+    return tuple(sorted(claimed & closed))
+
+
 def check_branch_name(name: str) -> Refusal | None:
     """None if the branch may exist, a Refusal otherwise."""
     if name in EXEMPT_BRANCHES:
@@ -150,6 +182,16 @@ def main(argv: list[str] | None = None) -> int:
     if refusal is not None:
         print(f"refused: {refusal}", file=sys.stderr)
         return 1
+
+    # Advisory, and printed after the refusals so it is the last thing on screen. Exit
+    # code stays 0: this is a note, not a veto.
+    repeats = already_closed(message, Path(__file__).resolve().parents[3])
+    if repeats:
+        print(
+            f"note: already closed by an earlier commit: {', '.join(repeats)}\n"
+            "      Fine if you are adding the test that proves it. The count will not move.",
+            file=sys.stderr,
+        )
     return 0
 
 

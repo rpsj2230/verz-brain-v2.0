@@ -19,10 +19,12 @@ from pathlib import Path
 import pytest
 
 from brain.ops.conventions import (
+    already_closed,
     check_branch_name,
     check_commit_message,
     leaf_ids_in,
 )
+from brain.status import closed_task_ids
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -91,6 +93,42 @@ def test_a_refusal_quotes_what_was_written() -> None:
     assert refusal is not None
     assert "M12" in str(refusal)
     assert "Add the registry" in str(refusal)
+
+
+# ------------------------------------------- noticing a re-claim (M38.1.1.2)
+def test_a_leaf_an_earlier_commit_already_closed_is_reported() -> None:
+    """Advisory, not a refusal, and the difference is deliberate. Re-claiming is sometimes
+    right: a leaf claimed on a thin implementation and later given the test that proves it
+    should say so, and the count is a set, so nothing double-counts.
+
+    What is wrong is doing it without noticing, which produces a commit message announcing
+    eight closures that moves the number by nothing. This exists because that happened
+    twice in one session, both times from reading "no test names this leaf" as "this leaf
+    is unclaimed". They are different questions and the second one was never asked.
+
+    Asserted against this repository's own history, because a fixture repository would only
+    prove the fixture."""
+    repo = Path(__file__).resolve().parents[2]
+    # M0.1.1 is closed if anything is; if this repository has no history the check below is
+    # vacuous rather than wrong, which is why it asserts on a specific known id.
+    closed, _ = closed_task_ids(repo)
+    known = next(iter(sorted(closed)), None)
+    if known is None:
+        pytest.skip("no commit history to check against")
+    assert already_closed(f"Something\n\nCloses: {known}", repo) == (known,)
+
+
+def test_a_leaf_nobody_has_closed_is_not_reported() -> None:
+    """Otherwise the note fires on every commit and stops being read, which is the ordinary
+    death of a warning."""
+    repo = Path(__file__).resolve().parents[2]
+    assert already_closed("Something\n\nCloses: M99.9.9", repo) == ()
+
+
+def test_the_note_never_fires_outside_a_repository() -> None:
+    """A hook that failed because it could not answer an advisory question would block a
+    commit for no reason at all."""
+    assert already_closed("x\n\nCloses: M0.1.1", Path("/nonexistent")) == ()
 
 
 # -------------------------------------------------- the branch name (M38.1.1.1)
