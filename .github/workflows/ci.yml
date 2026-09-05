@@ -104,6 +104,11 @@ jobs:
         run: uv run python -m brain.ops.sweeps grant_isolation
       - name: Tool naming grammar
         run: uv run python -m brain.ops.sweeps tool_registry
+      - name: One tool-name grammar, not four
+        # There were three copies and they disagreed, so a name that passed validation and
+        # passed CI was refused at registration. This catches the next copy at the moment
+        # somebody writes it rather than the day the two halves are asked the same thing.
+        run: uv run python -m brain.ops.sweeps one_tool_grammar
       - name: Traceability — nothing claimed without a test id
         run: uv run python -m brain.ops.sweeps traceability
       - name: Slug collisions — one name means one thing
