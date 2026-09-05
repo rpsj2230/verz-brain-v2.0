@@ -184,3 +184,60 @@ def test_a_caller_cannot_name_its_own_role() -> None:
         VaultRole.WORKER,
         VaultRole.BROWSER_RUNNER,
     }
+
+
+# ------------------------------------------------- rotation without redeploy (M31.3.2.5)
+class RotatingVault(FakeVault):
+    """A vault whose stored credential changes between calls, as rotation does."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.current = "sk-live-BEFORE"
+
+    def issue(self, ref: SecretRef, ttl: timedelta) -> Lease:
+        lease = super().issue(ref, ttl)
+        return Lease(
+            lease_id=lease.lease_id,
+            ref=ref,
+            secret=self.current,
+            issued_at=NOW,
+            expires_at=NOW + ttl,
+        )
+
+
+def test_a_rotated_credential_is_picked_up_without_a_restart() -> None:
+    """M31.3.2.5. The whole reason nothing holds a credential: rotation is somebody changing
+    a value in the vault, and the next run simply borrows the new one. A process that read
+    its key once at startup would keep using the old one until somebody redeployed, and the
+    old one is the one being rotated away from."""
+    vault = RotatingVault()
+    with borrow(vault, REF, now=NOW) as before:
+        assert before.reveal(NOW) == "sk-live-BEFORE"
+
+    vault.current = "sk-live-AFTER"
+
+    with borrow(vault, REF, now=NOW) as after:
+        assert after.reveal(NOW) == "sk-live-AFTER"
+
+
+def test_nothing_caches_a_secret_between_borrows() -> None:
+    """A cache would reintroduce exactly the lifetime that leasing removes, and it would do
+    it invisibly: the code would still look like it borrowed."""
+    vault = RotatingVault()
+    with borrow(vault, REF, now=NOW):
+        pass
+    vault.current = "sk-live-AFTER"
+    with borrow(vault, REF, now=NOW) as second:
+        assert second.reveal(NOW) == "sk-live-AFTER"
+    assert len(vault.issued) == 2, "the second borrow did not reach the vault"
+
+
+def test_a_reference_survives_rotation_unchanged() -> None:
+    """The reference is what configuration and the connector row hold, so rotating a
+    credential must not require editing either. If it did, rotation would be a deploy."""
+    vault = RotatingVault()
+    with borrow(vault, REF, now=NOW):
+        pass
+    vault.current = "sk-live-AFTER"
+    with borrow(vault, REF, now=NOW) as after:
+        assert after.ref == REF
