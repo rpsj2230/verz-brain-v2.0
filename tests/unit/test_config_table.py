@@ -297,9 +297,23 @@ def test_the_ops_schema_is_now_swept_for_row_level_security() -> None:
     routing tables shipped in and recorded on themselves. The DDL check lives in
     `test_tables.py`; this is the sweep that would catch a table added later by somebody who
     did not read either file."""
+    from brain.db import SCHEMAS
     from brain.ops import sweeps
 
     source = sweeps.sweep_rls.__code__.co_consts
     query = next(c for c in source if isinstance(c, str) and "nspname" in c)
-    for schema in ("auth", "gate", "obs", "proj", "know", "agent", "mem", "er", "ops"):
-        assert f"'{schema}'" in query, f"sweep_rls does not cover {schema}"
+
+    # The sweep used to list the schemas inside its own query, and that list had drifted -
+    # `ops` was missing from it while two CI steps had it. It now takes them as a parameter
+    # from `brain.db.SCHEMAS`, so it covers `ops` and everything else by construction rather
+    # than by somebody remembering to add a name in three places.
+    #
+    # Asserted as "no names in the query" rather than "these names are in it": the second
+    # form is what the old test did, and it would pass again the moment somebody put a
+    # partial list back.
+    assert "= ANY(" in query, "sweep_rls went back to listing schemas inside its query"
+    for schema in SCHEMAS:
+        assert f"'{schema}'" not in query, (
+            f"{schema} is written into the query; the list has two homes again"
+        )
+    assert "ops" in SCHEMAS

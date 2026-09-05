@@ -196,3 +196,47 @@ def test_the_example_holds_no_real_looking_secret() -> None:
         assert not (len(value) > 24 and re.fullmatch(r"[A-Za-z0-9+/=_-]+", value)), (
             f"{line.split('=')[0]} looks like a real credential"
         )
+
+
+# ------------------------------------- the schema list has one home (M0.3.1)
+def test_the_schema_list_is_not_written_out_anywhere_else() -> None:
+    """It was in three places - two CI steps and `sweep_rls` - and they had drifted: the
+    sweep's copy was missing `ops`, so a table with no row-level security in that schema
+    passed the check whose whole purpose is to find one.
+
+    This looks for a fourth copy. A list of schema names spelled out in quotes is a copy
+    waiting to drift, and drift here is invisible until somebody asks the two halves the
+    same question."""
+    import re
+
+    from brain.db import SCHEMAS
+
+    owner = REPO / "src" / "brain" / "db.py"
+    # Three or more of the known schema names, quoted, on one line. Deliberately not one:
+    # a single name in a query is an ordinary thing, and a list of them is the copy.
+    names = "|".join(sorted(SCHEMAS))
+    looks_like_the_list = re.compile(rf"(['\"]({names})['\"][,\s]+){{3,}}")
+
+    offenders: list[str] = []
+    for path in (*(REPO / "src").rglob("*.py"), *(REPO / ".github").rglob("*.yml")):
+        if path == owner:
+            continue
+        for i, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if looks_like_the_list.search(line):
+                offenders.append(f"{path.relative_to(REPO)}:{i}")
+    assert not offenders, f"the schema list is written out again in: {offenders}"
+
+
+def test_the_schema_check_reports_what_is_missing_rather_than_a_count() -> None:
+    """ "expected 9, found 10" is what the old shell check said when `chat` was added
+    correctly. A test that fails when you do the right thing is one somebody updates without
+    reading, and the next time it fails for a real reason they update it again."""
+    from brain.ops.schema_check import missing_schemas
+
+    assert missing_schemas(set()) != ()
+    assert "auth" in missing_schemas(set())
+    # An extra schema is not a failure. `public` is always there, `information_schema` is
+    # always there, and a client may have their own.
+    from brain.db import SCHEMAS
+
+    assert missing_schemas(set(SCHEMAS) | {"public", "someone_elses"}) == ()

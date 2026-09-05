@@ -43,6 +43,7 @@ Task ids: M0.2.3, M1.2.1, M1.2.2, M1.4.1, M1.4.3, M4.2.1, M24.1.1, M31.3.1.4
 from __future__ import annotations
 
 from brain.tables.audit import AuditEntryRow
+from brain.tables.chat import ConversationRow, MessageRole, MessageRow
 from brain.tables.config import SettingRow, SettingType
 from brain.tables.gate import (
     CapabilityGrantRow,
@@ -86,6 +87,9 @@ TABLES_IN_DEPENDENCY_ORDER: tuple[str, ...] = (
     # 0004_capability_registry_and_config
     "gate.capability_registry",
     "ops.setting",
+    # 0005_chat
+    "chat.conversation",
+    "chat.message",
 )
 
 __all__ = [
@@ -95,9 +99,12 @@ __all__ = [
     "CapabilityPackAssignmentRow",
     "CapabilityPackRow",
     "CapabilityRegistryRow",
+    "ConversationRow",
     "DepartmentRow",
     "FieldPolicyRow",
     "GrantsVersionRow",
+    "MessageRole",
+    "MessageRow",
     "ModelAttemptRow",
     "PolicyEpochRow",
     "PrincipalIdentityRow",

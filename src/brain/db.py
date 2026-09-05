@@ -43,6 +43,14 @@ SCHEMAS: dict[str, str] = {
     "proj": "projected connector fields, never payloads",
     "er": "entity resolution: candidates, merges, pre-images",
     "ops": "scheduled jobs, budgets, deployment records",
+    # Conversations, and the messages in them. Its own schema rather than a table in `mem`
+    # or `obs`, because it is neither. `mem` holds the three memory kinds - things the
+    # system learnt and recalls - and a transcript is not learnt, it is what happened.
+    # `obs` holds metadata and no payloads, and a message has text in it. Putting a
+    # transcript in either would mean one of those two rules stops being true, and both are
+    # load-bearing: the first governs what a later answer may draw on, the second is why the
+    # ledger can be retained for years.
+    "chat": "conversations and the messages in them",
 }
 
 #: Extensions the schema depends on. pgvector for embeddings; pg_trgm for the trigram

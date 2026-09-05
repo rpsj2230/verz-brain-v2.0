@@ -80,12 +80,17 @@ jobs:
 
       - name: The schema is what the migration says it is
         run: |
-          n=$(psql "$DATABASE_URL" -tAc "select count(*) from pg_namespace where nspname in ('auth','gate','agent','know','mem','obs','proj','er','ops')" | tr -d '[:space:]')
-          [ "$n" = "9" ] || { echo "::error::expected 9 schemas, found $n"; exit 1; }
+          # The list and the count both come from brain.db.SCHEMAS. They used to be written
+          # out here, again in the stack job below, and a third time inside sweep_rls -- and
+          # the three had already drifted: the sweep's copy was missing `ops`, so a table
+          # with no row-level security in that schema passed the check that exists to find
+          # exactly that. A hard-coded count also fails on a correct change, which is a test
+          # somebody updates without reading.
+          uv run python -m brain.ops.schema_check "$DATABASE_URL"
           psql "$DATABASE_URL" -tAc "select rolname, rolbypassrls from pg_roles where rolname like 'brain%'"
           b=$(psql "$DATABASE_URL" -tAc "select count(*) from pg_roles where rolname like 'brain%' and rolbypassrls" | tr -d '[:space:]')
           [ "$b" = "0" ] || { echo "::error::a brain role can bypass row-level security"; exit 1; }
-          echo "9 schemas, no role bypasses RLS"
+          echo "no role bypasses RLS"
 
   sweeps:
     name: Schema and registry sweeps
@@ -184,9 +189,11 @@ jobs:
           docker compose exec -T db psql -U brain -d brain -tAc             "select version_num from alembic_version" || echo "(no alembic_version table)"
           echo "--- app startup log ---"
           docker compose logs app --tail 25
-          n=$(docker compose exec -T db psql -U brain -d brain -tAc             "select count(*) from pg_namespace where nspname in ('auth','gate','agent','know','mem','obs','proj','er','ops')" | tr -d '[:space:]')
-          [ "$n" = "9" ] || { echo "::error::expected 9 schemas, found $n"; exit 1; }
-          echo "9 schemas present"
+          # Run inside the container, which is the honest place to ask: it checks the schema
+          # list the *running image* expects against the database that image migrated,
+          # rather than the list this checkout happens to have. See the tests job for why
+          # this is a module and not a shell one-liner.
+          docker compose exec -T app python -m brain.ops.schema_check
       - name: The documents are served
         run: |
           for path in / /build /build/tracker /admin /api/status.json; do

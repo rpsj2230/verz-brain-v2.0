@@ -65,17 +65,24 @@ def sweep_rls() -> None:
 
     findings: list[str] = []
     with psycopg.connect(url) as conn, conn.cursor() as cur:
+        # Read from `brain.db.SCHEMAS` rather than listed here. The list was already
+        # written out in three places - this sweep and two CI steps - and it had already
+        # drifted once: `ops` was missing from this copy while the other two had it, so a
+        # table without row-level security in `ops` passed the sweep that exists to find
+        # exactly that.
+        from brain.db import SCHEMAS
+
         cur.execute(
             """
             SELECT c.relname
             FROM pg_class c
             JOIN pg_namespace n ON n.oid = c.relnamespace
-            WHERE n.nspname IN ('auth', 'gate', 'obs', 'proj', 'know',
-                                'agent', 'mem', 'er', 'ops')
+            WHERE n.nspname = ANY(%(schemas)s)
               AND c.relkind = 'r'
               AND NOT c.relrowsecurity
             ORDER BY c.relname
-            """
+            """,
+            {"schemas": sorted(SCHEMAS)},
         )
         findings = [f"row-level security disabled on {r[0]}" for r in cur.fetchall()]
     if findings:

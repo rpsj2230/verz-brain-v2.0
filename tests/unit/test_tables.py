@@ -74,6 +74,7 @@ VERSIONS = REPO / "migrations" / "versions"
 MIGRATION = VERSIONS / "0002_core_tables.py"
 MIGRATION_RESOLVER = VERSIONS / "0003_resolver_and_tables.py"
 MIGRATION_REGISTRY = VERSIONS / "0004_capability_registry_and_config.py"
+MIGRATION_CHAT = VERSIONS / "0005_chat.py"
 
 #: The seven tables 0002 built, in the order it builds them. Written out here rather than
 #: read from `brain.tables.TABLES_IN_DEPENDENCY_ORDER`, which now covers all eighteen: a
@@ -103,8 +104,9 @@ RESOLVER_TABLES: tuple[str, ...] = (
 #: And the two 0004 adds: the capability registry M0.2.3 asks for, and the settings table
 #: M31.3.1.4 does.
 REGISTRY_TABLES: tuple[str, ...] = ("gate.capability_registry", "ops.setting")
+CHAT_TABLES: tuple[str, ...] = ("chat.conversation", "chat.message")
 
-ALL_TABLES = CORE_TABLES + RESOLVER_TABLES + REGISTRY_TABLES
+ALL_TABLES = CORE_TABLES + RESOLVER_TABLES + REGISTRY_TABLES + CHAT_TABLES
 
 
 def _soft_deleted(qualified: tuple[str, ...]) -> tuple[str, ...]:
@@ -696,16 +698,20 @@ def test_the_migration_creates_exactly_the_tables_the_models_declare() -> None:
     core = migration_module()
     resolver = migration_module(MIGRATION_RESOLVER)
     registry = migration_module(MIGRATION_REGISTRY)
+    chat = migration_module(MIGRATION_CHAT)
     assert core.TABLES == CORE_TABLES
     assert resolver.TABLES == RESOLVER_TABLES
     assert registry.TABLES == REGISTRY_TABLES
+    assert chat.TABLES == CHAT_TABLES
     # The package tuple is the three migrations end to end. Stated as an equality rather
     # than as a set comparison, because the order is what a downgrade depends on.
-    end_to_end = tuple(core.TABLES) + tuple(resolver.TABLES) + tuple(registry.TABLES)
+    end_to_end = (
+        tuple(core.TABLES) + tuple(resolver.TABLES) + tuple(registry.TABLES) + tuple(chat.TABLES)
+    )
     assert end_to_end == tables.TABLES_IN_DEPENDENCY_ORDER
     # Every table has a migration and every migration has a model. The union is the check
     # that matters: either half on its own would let a table be created twice or not at all.
-    every = (set(core.TABLES), set(resolver.TABLES), set(registry.TABLES))
+    every = (set(core.TABLES), set(resolver.TABLES), set(registry.TABLES), set(chat.TABLES))
     assert set().union(*every) == set(metadata.tables)
     assert sum(len(s) for s in every) == len(set().union(*every)), "a table is created twice"
 

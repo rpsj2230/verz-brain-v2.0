@@ -32,11 +32,21 @@ def test_a_password_containing_the_scheme_is_not_mangled() -> None:
 
 
 def test_every_schema_is_named_and_described() -> None:
-    """Nine namespaces, each a classification boundary. A table in `public` is a table
-    nobody decided the classification of."""
-    assert len(SCHEMAS) == 9
+    """Each namespace is a classification boundary. A table in `public` is a table nobody
+    decided the classification of, and a schema with no description is a boundary nobody
+    stated the meaning of - which is how the tenth one gets added for convenience.
+
+    Deliberately not asserting a count. The number changed from nine to ten when `chat`
+    arrived, and a hard-coded count is a test that fails on a correct change and gets
+    updated without thought - which is exactly what it did in CI, where the same number was
+    written out twice more. What matters is that every schema is named and described, and
+    that `public` is not one of them."""
+    assert SCHEMAS, "there are no schemas at all"
     assert "public" not in SCHEMAS
     assert all(desc for desc in SCHEMAS.values())
+    # The one property a count was standing in for: nothing may be added without a note
+    # saying what belongs in it.
+    assert all(len(desc) > 10 for desc in SCHEMAS.values()), "a schema has a token description"
 
 
 def test_the_extensions_entity_resolution_depends_on_are_declared() -> None:
