@@ -1,0 +1,63 @@
+# The secrets vault, deployed beside the Brain on the same host.
+#
+# Task ids: M31.3.2.1
+#
+# Its own compose project rather than a service in the Brain's stack, and the reason is the
+# restart. `docker compose up` on the application stack restarts what it manages; if the
+# vault were in that stack, every routine deploy would seal it and every deploy would need
+# three people to reopen it. Separate projects means a Brain deploy leaves the vault alone.
+#
+# Nothing is published to the host. The vault listens on the container network only, and the
+# Brain reaches it by service name. The box has ufw on and Coolify's own port already closed,
+# and a vault reachable from outside is the one component where that would matter most.
+
+name: brain-vault
+
+services:
+  vault:
+    image: openbao/openbao:2.4.1
+    container_name: brain-vault
+    restart: unless-stopped
+    cap_add:
+      # Lets the process lock its memory so secrets are never written to swap. Without it
+      # the vault warns and continues, and the swap file becomes a copy of every key it
+      # has decrypted since boot.
+      - IPC_LOCK
+    environment:
+      BAO_LOCAL_CONFIG: |
+        storage "file" { path = "/openbao/file" }
+        listener "tcp" {
+          address     = "0.0.0.0:8200"
+          tls_disable = 1
+        }
+        disable_mlock = false
+        ui = false
+    command: server
+    volumes:
+      - brain-vault-data:/openbao/file
+    expose:
+      - "8200"
+    networks:
+      - brain-vault
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    healthcheck:
+      # 501 is "sealed", which is healthy: the container is up and waiting to be opened.
+      # Treating sealed as unhealthy would restart it on a loop and no amount of unsealing
+      # would stick.
+      test: ["CMD-SHELL", "bao status 2>&1 | grep -qE 'Sealed +(true|false)'"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  brain-vault-data:
+
+networks:
+  brain-vault:
+    # Joined by the application stack as an external network, so the Brain can reach the
+    # vault by name without the vault being reachable from anywhere else.
+    name: brain-vault
