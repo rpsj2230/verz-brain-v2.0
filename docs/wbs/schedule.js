@@ -18,6 +18,28 @@ module.exports = {
     // W5 hands, delivery, scale, go-live
     M19:5, M30:5, M36:5, M37:5
   },
+  // Leaves whose module sits in one wave but whose own work cannot happen until a later
+  // one. M38 is continuous delivery: the pipeline is wave 0, but "what is live after each
+  // wave" and go-live against real credentials are, by definition, those waves.
+  //
+  // Without this the wave-0 denominator contains work that wave 0 cannot do, so wave 0 can
+  // never reach 100% and the figure on /build understates real progress. Nothing is removed
+  // from the programme by this map; the total is unchanged and the work is only re-dated to
+  // the wave that can actually do it.
+  LEAF_WAVE:{
+    // "What is live after each wave" - each line is that wave's own exit criterion.
+    "M38.2.2.2":1, "M38.2.2.3":2, "M38.2.2.4":3, "M38.2.2.5":4, "M38.2.2.6":5,
+    // A smoke test needs a real person asking a real question, so the gate must exist.
+    "M38.2.1.4":1,
+    // "Restore drill from wave three onward" - the task says so itself.
+    "M38.2.1.5":3,
+    // The evening report is sent into Lark, which W2 ships.
+    "M38.3.3.1":2, "M38.3.3.2":2, "M38.3.3.3":2, "M38.3.3.4":2,
+    // Contract tests need the connector adapters they test.
+    "M38.4.1.2":2,
+    // Go-live: real credentials against live APIs.
+    "M38.4.2.1":5, "M38.4.2.2":5, "M38.4.2.3":5, "M38.4.2.4":5, "M38.4.2.5":5
+  },
   NAMES:{
     0:"Foundation", 1:"The gate", 2:"Data, channels, retrieval",
     3:"Agents, knowledge, console", 4:"Doing, lifecycle, extensions",

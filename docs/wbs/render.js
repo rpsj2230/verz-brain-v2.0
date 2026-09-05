@@ -22,8 +22,20 @@ let LEAVES = 0, NODES = 0, MAXD = 0;
 function walk(n, d) { NODES++; MAXD = Math.max(MAXD, d); if (!n.k.length) LEAVES++; else n.k.forEach(c => walk(c, d + 1)); }
 TREE.forEach(m => m.k.forEach(t => walk(t, 2)));
 
+// A leaf can belong to a later wave than its module. M38's pipeline is wave 0, but "what
+// is live after wave 3" cannot be done before wave 3. Counting by module would both put
+// undoable work in wave 0's denominator and size wave 0's schedule window for work that
+// is not in it.
+const LW = SCH.LEAF_WAVE || {};
+const waveOfLeaf = (id, modWave) => (LW[id] !== undefined ? LW[id] : modWave);
 const waves = {};
-TREE.forEach(m => { let c = 0; m.k.forEach(t => { const f = n => n.k.length ? n.k.forEach(f) : c++; f(t); }); waves[m.wave] = (waves[m.wave] || 0) + c; });
+TREE.forEach(m => {
+  const walkIds = (n, id) => {
+    if (!n.k.length) { const w = waveOfLeaf(id, m.wave); waves[w] = (waves[w] || 0) + 1; return; }
+    n.k.forEach((c, i) => walkIds(c, id + "." + (i + 1)));
+  };
+  m.k.forEach((t, i) => walkIds(t, m.id + "." + (i + 1)));
+});
 
 // ---- wave windows
 const modLeaves = {};

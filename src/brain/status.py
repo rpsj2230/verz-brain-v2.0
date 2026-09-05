@@ -178,20 +178,26 @@ def build_status(repo: Path, wbs: dict[str, Any], ref: str = "HEAD") -> Status:
 
     for m in wbs.get("modules", []):
         leaves: list[str] = m.get("leaf_ids", [])
+        wave = int(m.get("wave", 0))
+        # A leaf can sit in a later wave than its module. M38 is the reason: the delivery
+        # pipeline is wave 0, but "what is live after wave 3" cannot be done before wave 3.
+        # Counting those against wave 0 puts work in the denominator that wave 0 cannot do,
+        # so the wave could never reach 100% and the figure understated real progress.
+        leaf_waves: dict[str, int] = m.get("leaf_waves", {})
         m_done = 0
         for leaf in leaves:
-            if _is_closed(leaf, closed):
+            leaf_done = _is_closed(leaf, closed)
+            if leaf_done:
                 m_done += 1
                 matched.add(leaf)
-        wave = int(m.get("wave", 0))
+            bucket = per_wave.setdefault(int(leaf_waves.get(leaf, wave)), [0, 0])
+            bucket[0] += 1
+            bucket[1] += int(leaf_done)
         modules.append(
             ModuleProgress(
                 module=m["id"], name=m["name"], wave=wave, total=len(leaves), done=m_done
             )
         )
-        bucket = per_wave.setdefault(wave, [0, 0])
-        bucket[0] += len(leaves)
-        bucket[1] += m_done
         total += len(leaves)
         done += m_done
 
