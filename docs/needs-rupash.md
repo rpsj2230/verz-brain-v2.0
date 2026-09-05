@@ -2,8 +2,9 @@
 
 Decisions and access I cannot resolve alone. Served at `/build/needs-rupash`.
 
-**3 items are open: 24, 25 and 26.** None blocks anything today and none is urgent this
-week. 27 is closed: automatic deploys now work, verified end to end. 24 is a disclosure trade-off that starts to
+**4 items are open: 24, 25, 26 and 28.** 28 is new and it is the only one with a live
+cost: production is restarting roughly every three minutes and I can tell you exactly why,
+but the fix is a change to your Coolify configuration. The other three block nothing. 24 is a disclosure trade-off that starts to
 matter when people with narrow permissions begin using the system, which is wave 4. 25 is a
 measured capacity limit that needs a decision before wave 4 rather than during it. 26 is a
 product question about the website widget, and the machinery around it is being built
@@ -16,6 +17,48 @@ in.
 ---
 
 # Open
+
+## 28. Production restarts every few minutes, and the cause is one redundant service
+
+**Nothing is broken and nothing is lost.** The app is healthy, it is serving the right
+commit, and every restart passes its health check. But it is being recreated roughly every
+three minutes, which drops in-flight requests and is not a state to leave a system in.
+
+**What is happening, measured rather than guessed.** Your Coolify stack defines a `migrate`
+service: a one-shot container that applies database migrations and then exits. It exits with
+status 0, which is success. Coolify reads any exited container in a project as a service that
+needs repair, and heals it by bringing the whole project up again, which recreates the `app`
+container underneath it. Then the one-shot exits again, and the cycle repeats.
+
+I confirmed each link rather than inferring the chain: `migrate` carries `restart: 'no'`, so
+Docker itself is not restarting it; the app container shows a restart count of zero with a
+`StartedAt` that moves every few minutes, which is recreation and not restart; and my own
+deploy timer logged no deploys across the same window, so it is not me.
+
+**The fix is one deletion, and it is safe.** The `migrate` service is redundant. The
+application already applies migrations itself at startup, before it reports ready, under an
+advisory lock so that two replicas cannot race each other. That is in `brain/app.py` and you
+can see it in the container's own log: `migrations up to date` appears on every boot. So the
+one-shot is doing the same work a second time and buying nothing.
+
+Removing the `migrate` service from Coolify's stored compose ends the loop, because there is
+then no permanently-exited container for Coolify to keep healing.
+
+**Why I have not done it.** That file is your infrastructure configuration rather than this
+repository's, and editing it changes how your server brings the stack up. It is also the file
+the memory note about Coolify resolving `${VAR:-default}` at save time is about, so an edit
+made carelessly can change more than the line it touches. It is yours to make.
+
+**What I did do.** My deploy script now recreates only `app` and no longer touches `migrate`,
+so it stops adding to the churn. That does not fix it: Coolify heals the exited container
+whether or not my script goes near it.
+
+**How to do it, when you want to.** Open the Brain service in Coolify, edit the compose, delete
+the whole `migrate:` block, and save. Then check the app comes up and the log still says
+`migrations up to date`. If you would rather I prepared the exact edit for you to review
+first, say so and I will write it out line by line.
+
+---
 
 ## 26. The chat widget on a client's marketing site: what may a stranger ask it?
 

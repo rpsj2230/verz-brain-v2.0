@@ -46,9 +46,21 @@ fi
 
 # No token, or Coolify refused. Same compose file Coolify itself uses, from its own
 # directory, so the result is what Coolify would have produced minus its own record.
+#
+# ONLY `app`, NOT `migrate`. The app applies migrations itself before it reports ready, under
+# an advisory lock so two replicas cannot race, so the separate one-shot `migrate` service is
+# doing the same work a second time. Recreating it also makes a bad situation worse: it exits
+# 0 as designed, Coolify reads an exited container as a service needing repair, and heals it
+# by bringing the whole project up again, which recreates `app` underneath. Production was
+# turning over roughly every three minutes for that reason.
+#
+# This does not fix that on its own, because Coolify goes on healing whether or not this
+# script touches `migrate`. It stops this script contributing to it. The fix is to take the
+# `migrate` service out of Coolify's stored compose, which is a change to the owner's
+# infrastructure configuration and is recorded in docs/needs-rupash.md rather than made here.
 log "deploying with compose from $SERVICE_DIR"
 cd "$SERVICE_DIR"
-docker compose up -d --force-recreate --no-deps migrate app
+docker compose up -d --force-recreate --no-deps app
 
 # Do not report success until it is actually serving. A deploy that reports success while
 # the container crash-loops is the failure this whole exercise was about.
