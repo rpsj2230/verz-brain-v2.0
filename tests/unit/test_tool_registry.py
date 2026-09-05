@@ -10,7 +10,7 @@ M12.2.6, M12.2.7, M12.2.8, M12.2.9
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from pydantic import ValidationError
@@ -897,3 +897,106 @@ def test_required_capabilities_are_read_off_the_tools() -> None:
         "read:client.contract_value",
         "read:client.name",
     ]
+
+
+# ------------------------------------------------- the review queue (M12.2.6)
+def _pending(name: str = "hosting-expiry", **overrides: object) -> ImportedSkill:
+    return _imported(_skill(name=name, **overrides))
+
+
+def test_the_queue_holds_only_what_is_waiting_for_a_decision() -> None:
+    """A rejection is a decision. A queue showing decisions alongside things awaiting one
+    makes its own count meaningless, and the number a person looks at is "how many are
+    waiting for me"."""
+    from brain.tools.review import pending
+
+    waiting = _pending("waiting")
+    decided = _pending("decided").approved_by("u_weiling", NOW)
+    refused = _pending("refused").rejected_by("u_weiling", NOW)
+    names = [e.skill.skill.name for e in pending([waiting, decided, refused], now=NOW)]
+    assert names == ["waiting"]
+
+
+def test_the_queue_is_ordered_by_how_long_something_has_waited() -> None:
+    """And there is no priority argument. A priority field is a way for whoever submits to
+    jump the queue, and the person who most wants their skill approved is exactly the person
+    who would set it. Time waited is the one ordering nobody can game by caring more."""
+    from brain.tools.review import pending
+
+    older = NOW - timedelta(days=3)
+    entries = pending(
+        [_pending("newer"), _pending("older")],
+        submitted_at={"older": older, "newer": NOW},
+        now=NOW,
+    )
+    assert [e.skill.skill.name for e in entries] == ["older", "newer"]
+
+
+def test_an_unknown_submission_time_does_not_jump_the_queue() -> None:
+    """Defaulting to the epoch would put every entry with no recorded time at the top of a
+    queue ordered by age, which is the opposite of what "unknown" means."""
+    from brain.tools.review import pending
+
+    entries = pending(
+        [_pending("unknown"), _pending("old")],
+        submitted_at={"old": NOW - timedelta(days=30)},
+        now=NOW,
+    )
+    assert [e.skill.skill.name for e in entries] == ["old", "unknown"]
+
+
+def test_an_edit_shows_which_fields_changed_and_not_a_version() -> None:
+    """A review showing "1.0.0 to 1.0.1" lets an author change the body while bumping a
+    patch number. The body is the part that matters and the version is the part an author
+    types."""
+    from brain.tools.review import pending
+
+    was = _skill(body="1. read the client")
+    now_skill = _skill(body="1. read the client\n2. email finance", version="1.0.1")
+    entry = pending([_imported(now_skill)], previous={"hosting-expiry": was}, now=NOW)[0]
+    assert entry.is_edit
+    assert "body" in entry.changed
+
+
+def test_a_first_submission_is_not_shown_as_an_edit() -> None:
+    """A new skill has to be read in full; an edit to an approved one needs only the changed
+    fields read. That difference is what decides whether a review happens or is postponed."""
+    from brain.tools.review import pending
+
+    entry = pending([_pending()], now=NOW)[0]
+    assert not entry.is_edit
+    assert entry.changed == ()
+
+
+def test_no_previous_version_means_everything_reads_as_new() -> None:
+    """The safe direction: it asks for more reading rather than less."""
+    from brain.tools.review import pending
+
+    assert not pending([_pending()], previous=None, now=NOW)[0].is_edit
+
+
+def test_something_waiting_too_long_is_reported_and_never_auto_rejected() -> None:
+    """An auto-rejection is a decision nobody made. The author resubmits, and the queue is
+    the same length with one more round trip in it."""
+    from brain.tools.review import STALE_AFTER, pending, stale
+
+    long_ago = NOW - STALE_AFTER - timedelta(days=1)
+    entries = pending([_pending("old")], submitted_at={"old": long_ago}, now=NOW)
+    assert len(stale(entries, NOW)) == 1
+    # Still in the queue, still awaiting a person.
+    assert entries[0].skill.state is SkillState.IMPORTED
+
+
+def test_the_summary_counts_and_never_names() -> None:
+    """A summary naming the skills waiting is readable by whoever can see the console, and a
+    skill's name describes a procedure somebody wants to run - a fact about what a team is
+    doing. The list below it is the place for names, behind the same permission."""
+    import dataclasses
+
+    from brain.tools.review import pending, summarise
+
+    summary = summarise(pending([_pending("hosting-expiry")], now=NOW), NOW)
+    assert summary.waiting == 1
+    for field in dataclasses.fields(summary):
+        assert field.type == "int", f"QueueSummary.{field.name} could hold something else"
+    assert "hosting-expiry" not in str(summary)
