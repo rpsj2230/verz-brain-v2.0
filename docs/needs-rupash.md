@@ -2,9 +2,8 @@
 
 Decisions and access I cannot resolve alone. Served at `/build/needs-rupash`.
 
-**4 items are open: 24, 25, 26 and 27.** 27 is the one to do first and it takes about
-five minutes: automatic deploys have never actually worked, and I deployed by hand today
-to get your changes live. The other three block nothing and none is urgent this week. 24 is a disclosure trade-off that starts to
+**3 items are open: 24, 25 and 26.** None blocks anything today and none is urgent this
+week. 27 is closed: automatic deploys now work, verified end to end. 24 is a disclosure trade-off that starts to
 matter when people with narrow permissions begin using the system, which is wave 4. 25 is a
 measured capacity limit that needs a decision before wave 4 rather than during it. 26 is a
 product question about the website widget, and the machinery around it is being built
@@ -17,89 +16,6 @@ in.
 ---
 
 # Open
-
-## 27. Automatic deploys have never worked, and the pipeline said they had
-
-**This is the one open item with a real cost, and it needs about five minutes from you.**
-
-**What I found.** You asked me to push everything live. I did, and nothing happened. The
-build ran, the image was published to the registry and signed, and then the step that tells
-your server to pull it printed `Coolify secrets not set - skipping deploy` and exited
-successfully. The next step printed **"Deployed"**. So every run since this was built has
-looked like a deploy on the summary page and has been a no-op.
-
-**What it cost.** Your server was running commit `d58b3ce` showing 24.1% while the work was
-at 31.3%. Roughly a hundred closed tasks were finished, tested, pushed and not live.
-
-**What I did about it.** I deployed by hand over SSH: took a verified database backup first,
-pulled the new image, applied the three pending migrations (0005, 0006, 0007 - production
-went from revision 0004 to 0007), and restarted. The site now serves commit `1a9527f` at
-31.3%, the app is healthy, and I checked the new tables and the widened constraint exist
-rather than trusting the migration's exit code. I also fixed the pipeline so it can never
-again print "Deployed" for a run that did not deploy: it now says "Published, NOT deployed"
-and names the missing secret.
-
-**What I need from you: one command.** That is the whole of it now. The rest is built and
-installed.
-
-```
-ssh verz-vps bash /tmp/brain-install-autodeploy
-```
-
-Run it in your terminal. It prints what it installed and when the next check runs.
-
-**This command was wrong the first time and you hit the error.** I told you to run
-`/usr/local/bin/brain-install-autodeploy`, and that file was not there: writing it was
-blocked as a privileged change and I recorded the two things I could not do without noticing
-that the installer itself was one of them. The script is now staged at `/tmp`, which is not
-privileged, so the command above works. My error, and the lesson is narrow: I checked that
-the *blocked* steps were listed and did not check that the *unblocked* ones had actually
-happened.
-
-**What that command does, so you are not running something opaque.** It writes two systemd
-files and starts a timer that checks every two minutes whether a new image has been
-published, and deploys when one has. The script it starts is already on the server at
-`/usr/local/bin/brain-autodeploy`, and both it and `/usr/local/bin/brain-deploy` are in this
-repository under `ops/deploy/` so you can read them before or after.
-
-**Why you have to run it and I could not.** Installing a systemd unit is a privileged change
-to your machine, and so is editing the root key file. My sandbox refused both, which is the
-correct refusal, and I did not go looking for a way around it. Everything that was not a
-privileged change is already done.
-
-**Why the server pulls rather than GitHub pushing, which changes what you asked for.** You
-were going to give me a Coolify URL for GitHub to call. I have not used it, and here is the
-reasoning rather than just the decision. Coolify's API is on port 8000, and your firewall
-allows only 22, 80 and 443 from the internet, which is the only thing making that port
-private. Letting GitHub reach it means allowlisting GitHub's Actions address ranges: there
-are thousands of them, they change without notice, and anybody with a GitHub account can run
-a job from one. That would put the panel that controls every container on the box, including
-the database, in front of a large slice of the internet, and the thing bought is about a
-minute of latency. Not worth it. The server checking for itself needs nothing opened, no key
-in GitHub, and no token leaving the machine.
-
-**Your Coolify token is still useful and still optional.** If you put it on the server, the
-deploy goes through Coolify's own API so its UI stays truthful about what is running.
-Without it, the deploy uses Coolify's own compose file directly, which is what I ran by hand
-today and it worked. Two commands in your own terminal, and the token never passes through
-me or through GitHub:
-
-```
-ssh verz-vps "printf %s 'PASTE_TOKEN_HERE' > /root/.coolify-deploy-token; chmod 600 /root/.coolify-deploy-token"
-```
-
-```
-ssh verz-vps "printf %s 'c74hlhygvg7scjttu8ydwnqi' > /root/.coolify-service-uuid; chmod 600 /root/.coolify-service-uuid"
-```
-
-**How you will know it is working, without checking anything.** The deploy workflow now
-polls the live site for eight minutes after publishing and fails unless the site reports the
-commit it just built. So a deploy that does not happen is a red build with the reason in it,
-which is the opposite of what has been happening. Until you run the install command, expect
-that step to be red on each push. That is correct: deploys genuinely are not happening yet,
-and it will go green by itself the moment they do.
-
----
 
 ## 26. The chat widget on a client's marketing site: what may a stranger ask it?
 
@@ -234,6 +150,48 @@ undersized a component on purpose in September".
 ---
 
 # Answered
+
+## 27. Automatic deploys have never worked, and the pipeline said they had - DONE
+
+**Closed 2026-09-05. Deploys are automatic and verified.** You ran the installer, the timer
+fired on install, deployed, and reported the app healthy at schema revision 0007. Next check
+was scheduled two minutes later. Nothing further is needed from you.
+
+**What was wrong.** The deploy step checked for three Coolify secrets, did not find them,
+printed `Coolify secrets not set - skipping deploy` and exited *successfully*. The next step
+then printed **"Deployed"**. So every run looked like a deploy on the summary page and was a
+no-op. Your server ran commit `d58b3ce` at 24.1% while the work was at 31.3%: roughly a
+hundred tasks finished, tested, pushed and not live.
+
+**How it works now, and why it is not what you were asked for.** You were going to give me a
+Coolify URL for GitHub to call. I did not use it. That port is private only because your
+firewall allows 22, 80 and 443, and letting GitHub reach it means allowlisting GitHub's
+Actions ranges: thousands of them, changed without notice, and anybody with a GitHub account
+can run a job from one. That would put the panel controlling every container, database
+included, in front of a large slice of the internet to save about a minute of latency.
+
+So the server watches instead. A timer checks every two minutes whether the `:latest` image
+has moved and deploys when it has. The CI gate survives, which is the part worth checking
+rather than assuming: that tag is only moved by the Deploy workflow, which runs after CI
+passes, so the tag moving is itself the statement that the gate passed.
+
+**Two things stop this failing silently the way the last one did.** The deploy script waits
+for the container to report healthy before reporting success, and the Deploy workflow polls
+the live site for eight minutes and fails unless it reports the commit that run published. A
+trigger is not an outcome, and the previous version only ever checked the trigger.
+
+**One mistake of mine in the middle of this**, recorded because it is the same class as the
+bug: my first install command named `/usr/local/bin/brain-install-autodeploy`, which had
+never been installed, because writing it was blocked as a privileged change. I listed the
+steps I could not do and did not check that the ones I could had actually happened. You hit
+the error. Checking that a file exists after claiming to install it costs one command.
+
+**Your Coolify token is still unused and still optional.** With it on the server the deploy
+goes through Coolify's API so its UI stays truthful about what is running; without it the
+deploy uses Coolify's own compose file, which is what runs today. The two commands are in
+this repository at `ops/deploy/brain-deploy`.
+
+---
 
 ## 23. Should the client's audit trail show your deployment history? — DECIDED: leave the two chains separate
 
