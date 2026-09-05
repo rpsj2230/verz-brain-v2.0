@@ -56,6 +56,23 @@ class Finding:
         return f"{self.file}: {self.rule} — {self.detail}"
 
 
+def _function_body(text: str, name: str) -> str:
+    """The source of one top-level function, or an empty string.
+
+    Parsed rather than sliced on indentation, so a nested definition or a string containing
+    `def upgrade()` does not confuse it. Returns empty for a file that will not parse, which
+    the downgrade check reports separately and more usefully.
+    """
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return ""
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name == name:
+            return ast.get_source_segment(text, node) or ""
+    return ""
+
+
 def _is_docstring(stmt: ast.stmt) -> bool:
     """Whether this statement is a docstring rather than something the migration does."""
     return (
@@ -134,13 +151,24 @@ def check_file(path: Path) -> list[Finding]:
             )
         )
 
-    if DROP_COLUMN.search(text) and ADD_COLUMN.search(text):
+    # Within `upgrade` alone, not across the file. A column addition puts `add_column` in
+    # `upgrade` and `drop_column` in `downgrade`, which is the correct shape and not a
+    # rename, and reading the whole file flagged every such migration: the first one written
+    # after this rule existed tripped it, which is how the false positive was found.
+    #
+    # The message also used to offer an escape the rule did not implement, saying a comment
+    # would satisfy it when nothing looked for one. A rule whose message describes a way out
+    # that does not exist is worse than a strict rule, because the person who follows the
+    # instruction and still fails concludes the check is broken and reaches for the
+    # suppression.
+    upgrade_body = _function_body(text, "upgrade")
+    if DROP_COLUMN.search(upgrade_body) and ADD_COLUMN.search(upgrade_body):
         findings.append(
             Finding(
                 name,
                 "possible rename written as drop plus add",
                 "identical on an empty database, silently destructive on a populated one; "
-                "use alter_column or say in a comment why the data may be lost",
+                "use alter_column, which preserves the data",
             )
         )
 

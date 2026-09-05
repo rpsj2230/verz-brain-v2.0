@@ -65,7 +65,12 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from typing import Final
 
-from brain.knowledge.search import CHUNK, EMBEDDING_DIMENSIONS, INDEXABLE_DIMENSION_CEILING
+from brain.knowledge.search import (
+    CHUNK,
+    EMBEDDING_DIMENSIONS,
+    EMBEDDING_MODEL_FIELD,
+    INDEXABLE_DIMENSION_CEILING,
+)
 
 # ------------------------------------------------------------------ written-down reasons
 
@@ -133,7 +138,7 @@ class MixedEmbeddingError(EmbeddingError):
 #: The column the identity is stored in, beside the vector. It does not exist yet: see the
 #: module docstring on what is not claimed. Named here so the migration that adds it, the
 #: writer that fills it and the reader below cannot spell it three ways.
-EMBEDDING_MODEL_FIELD: Final = "embedding_model"
+# `EMBEDDING_MODEL_FIELD` is imported from `search`, which owns the column it names.
 
 #: The column the vector is stored in, taken from the table rather than typed out. A key
 #: spelled differently reads every row as unembedded, which fails closed into "the vector leg

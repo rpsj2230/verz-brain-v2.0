@@ -365,6 +365,18 @@ OWNER_ID_CHARS: Final = 128
 DEPARTMENT_CHARS: Final = 60
 TITLE_CHARS: Final = 300
 SECTION_CHARS: Final = 300
+#: `name@revision:dimensions`, so wide enough for a provider's longest model name plus a
+#: revision string. Bounded rather than `Text` because it is compared in a WHERE clause on
+#: every vector query and an unbounded column there invites somebody to store a description.
+EMBEDDING_MODEL_CHARS: Final = 200
+
+#: The column recording which model produced a row's vector.
+#:
+#: Defined here rather than in `brain.knowledge.embedding`, which is where it started, because
+#: that module imports this one: the table owns its own column names and the module reasoning
+#: about models reads them. Putting it the other way round is a circular import, which is the
+#: compiler telling you the layering is upside down.
+EMBEDDING_MODEL_FIELD: Final = "embedding_model"
 
 #: The shared registry, so `know.chunk` is a table this project knows it has.
 #:
@@ -414,6 +426,19 @@ CHUNK: Final = sa.Table(
     # depend on the embedding provider being reachable, so an outage there would stop
     # ingestion rather than delay the vector leg.
     sa.Column("embedding", Vector(EMBEDDING_DIMENSIONS), nullable=True),
+    # Which model produced the vector beside it, as `name@revision:dimensions`. Nullable for
+    # the same reason the vector is, and always written with it: a vector whose model nobody
+    # recorded cannot be compared with anything, because the distance between two models'
+    # embeddings is a number with no meaning rather than an error.
+    #
+    # **This column is what makes the mixed-model guarantee the database's rather than a
+    # caller's.** `brain.knowledge.embedding.corpus_identity` already refuses a corpus holding
+    # two models, and it can only refuse rows somebody hands it. Changing the embedding model
+    # is the failure with no symptom: old and new vectors sit in one column under one index,
+    # every distance between them is meaningless, and retrieval degrades quietly rather than
+    # breaking. Conjoining the identity in `vector_query` means a query cannot reach across a
+    # model change even if a caller never consults the corpus check.
+    sa.Column(EMBEDDING_MODEL_FIELD, sa.String(EMBEDDING_MODEL_CHARS), nullable=True),
     # The document's permissions, copied onto every chunk of it by `chunk_document` and
     # never recomputed here. These three columns are what the reach predicate tests, and the
     # first two take their names from the constants the scope builders use, which is what
@@ -558,6 +583,11 @@ CHUNK_LAYOUT: Final = ColumnLayout(alias="chunk", promoted=frozenset(SCOPE_COLUM
 PRINCIPAL_PARAM: Final = "principal_id"
 QUESTION_PARAM: Final = "question"
 EMBEDDING_PARAM: Final = "embedding"
+
+#: The bound parameter carrying the model identity. Bound rather than interpolated for the
+#: same reason every other value here is: it arrives from a corpus check and a value that
+#: reaches SQL as text is a value somebody eventually builds with a format string.
+MODEL_PARAM: Final = "embedding_model"
 DEPARTMENT_PARAM_PREFIX: Final = "reach"
 
 #: The session settings the row-level security policy in 0009 reads. `app.principal_id` is
@@ -893,7 +923,11 @@ def lexical_query(question: str, *, reach: Reach, depth: int = CANDIDATE_DEPTH) 
 
 
 def vector_query(
-    embedding: Sequence[float], *, reach: Reach, depth: int = CANDIDATE_DEPTH
+    embedding: Sequence[float],
+    *,
+    reach: Reach,
+    model: str,
+    depth: int = CANDIDATE_DEPTH,
 ) -> Select[Any]:
     """The nearest-neighbour leg (M15.2.2, M15.2.3, M15.2.6).
 
@@ -914,7 +948,19 @@ def vector_query(
     distance = CHUNK.c.embedding.op("<=>", return_type=sa.Float)(target)
     return (
         sa.select(CHUNK.c.chunk_id, distance.label("distance"))
-        .where(sa.and_(reach_predicate(reach), CHUNK.c.embedding.is_not(None)))
+        .where(
+            sa.and_(
+                reach_predicate(reach),
+                CHUNK.c.embedding.is_not(None),
+                # The model is a conjunct rather than a caller's responsibility. Two models'
+                # embeddings occupy one column under one index and the distance between them
+                # is a number with no meaning, so a query spanning a model change returns
+                # confident nonsense rather than an error. `corpus_identity` refuses a mixed
+                # corpus and can only refuse rows somebody hands it; this refuses them in the
+                # statement, which is the same argument the scope predicate makes one line up.
+                CHUNK.c[EMBEDDING_MODEL_FIELD] == sa.bindparam(MODEL_PARAM, model),
+            )
+        )
         .order_by(distance.asc(), CHUNK.c.chunk_id.asc())
         .limit(_depth(depth))
     )

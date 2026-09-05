@@ -38,7 +38,7 @@ from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from sqlalchemy import CheckConstraint, create_engine
 from sqlalchemy.pool import NullPool
-from sqlalchemy.schema import CreateIndex, CreateTable
+from sqlalchemy.schema import CreateColumn, CreateIndex, CreateTable
 from sqlalchemy.sql import ClauseElement
 
 from brain.core.department import SLUG_RE
@@ -51,6 +51,7 @@ from brain.knowledge.search import (
     CHUNK,
     DEPARTMENTS_SETTING,
     EMBEDDING_DIMENSIONS,
+    EMBEDDING_MODEL_CHARS,
     INDEXABLE_DIMENSION_CEILING,
     INDEXES,
     ITERATIVE_SCAN,
@@ -102,6 +103,10 @@ DEPARTMENTS = (
 
 NARROW = Reach(principal_id="p_ada", departments=("web",))
 WIDE = Reach(principal_id="p_root", departments=DEPARTMENTS)
+
+#: The identity a corpus holds, in the `name@revision:dimensions` form the column
+#: stores. Named in every vector query now that the model is a conjunct.
+A_MODEL = "bge-m3@1.0:1536"
 
 AN_EMBEDDING = [0.01] * EMBEDDING_DIMENSIONS
 
@@ -280,7 +285,7 @@ def test_both_legs_carry_exactly_the_same_reach_predicate() -> None:
     standalone = rendered_sql(bare_predicate(NARROW))
     predicate = standalone.split(" WHERE ", 1)[1]
     assert predicate in rendered_sql(lexical_query("client sla", reach=NARROW))
-    assert predicate in rendered_sql(vector_query(AN_EMBEDDING, reach=NARROW))
+    assert predicate in rendered_sql(vector_query(AN_EMBEDDING, reach=NARROW, model=A_MODEL))
 
 
 def test_every_visibility_level_has_a_branch_in_the_predicate() -> None:
@@ -521,7 +526,7 @@ def test_the_vector_leg_orders_by_distance_and_limits_in_the_same_statement() ->
     the index is not used at all: pgvector reaches an HNSW index through exactly that shape,
     and any wrapping turns it into a sequential scan with a sort, which returns the right
     answer and cannot be told apart from a correct query by its output."""
-    sql = rendered_sql(vector_query(AN_EMBEDDING, reach=NARROW))
+    sql = rendered_sql(vector_query(AN_EMBEDDING, reach=NARROW, model=A_MODEL))
     assert sql.count("SELECT") == 1
     assert " ORDER BY (know.chunk.embedding <=> " in sql
     assert sql.index(" ORDER BY ") < sql.index(" LIMIT ")
@@ -533,7 +538,7 @@ def test_the_vector_leg_excludes_rows_that_have_not_been_embedded_yet() -> None:
     with no distance at all, and fusion would rank them as though a retriever had chosen
     them."""
     assert "know.chunk.embedding IS NOT NULL" in rendered_sql(
-        vector_query(AN_EMBEDDING, reach=NARROW)
+        vector_query(AN_EMBEDDING, reach=NARROW, model=A_MODEL)
     )
 
 
@@ -545,7 +550,7 @@ def test_an_embedding_of_the_wrong_width_is_refused_before_the_server_sees_it() 
     Delete this and the first symptom of an embedding model change is an insert failing in
     production."""
     with pytest.raises(SearchError, match="the column's width is the model's"):
-        vector_query([0.1] * (EMBEDDING_DIMENSIONS - 1), reach=NARROW)
+        vector_query([0.1] * (EMBEDDING_DIMENSIONS - 1), reach=NARROW, model=A_MODEL)
 
 
 def test_the_stored_vector_is_narrow_enough_that_an_index_can_be_built_on_it() -> None:
@@ -729,17 +734,55 @@ def test_the_migration_follows_the_one_before_it() -> None:
     assert module.down_revision == "0008"
 
 
-def test_the_migration_builds_the_table_the_declaration_declares() -> None:
-    """The migration copies the declaration's predicates rather than importing them, so that
-    it keeps describing the database it actually built, which means the copy needs something
-    comparing it or it rots without saying so.
+def _columns_added_later() -> tuple[str, ...]:
+    """Columns that a migration after 0009 added to this table.
 
-    Compared on rendered DDL rather than on source text, so a difference in type, width,
-    nullability, default, generated expression or constraint is caught rather than a
-    difference in wording."""
+    Read from the migrations themselves rather than listed here, so adding a column is one
+    file to edit. A migration that adds one declares `ADDS_COLUMNS`; one that does not touch
+    columns declares nothing and is skipped.
+    """
+    import importlib.util
+
+    added: list[str] = []
+    versions = Path(__file__).resolve().parents[2] / "migrations" / "versions"
+    for path in sorted(versions.glob("*.py")):
+        spec = importlib.util.spec_from_file_location(path.stem, path)
+        if spec is None or spec.loader is None:  # pragma: no cover - every file has both
+            continue
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        added.extend(getattr(module, "ADDS_COLUMNS", ()))
+    return tuple(added)
+
+
+def test_the_migration_builds_the_table_the_declaration_declares() -> None:
+    """The migration copies the declaration rather than importing it, so the copy needs
+    something comparing it or it rots without saying so.
+
+    Compared column by column rather than on one rendered string, because 0009 built this
+    table and a later migration added `embedding_model`: the model now describes the database
+    and 0009 describes history, so holding one whole DDL against the other fails for being
+    accurate. The columns a later migration added are read from that migration's own
+    `ADDS_COLUMNS`, so adding another is one file to edit and not two.
+
+    Delete this and the migration and the declaration drift apart at the first edit, silently,
+    because nothing else compares them."""
     assert migration().TABLES == ("know.chunk",)
-    expected = squash(str(CreateTable(CHUNK).compile(dialect=POSTGRES)))
-    assert expected in squash(rendered("upgrade"))
+
+    built = squash(rendered("upgrade"))
+    added = set(_columns_added_later())
+
+    for column in CHUNK.columns:
+        if column.name in added:
+            assert column.name not in built, (
+                f"{column.name} is declared by a later migration and 0009 should not build it"
+            )
+            continue
+        # One column's rendered definition, which carries its type, width and nullability.
+        rendered_column = squash(str(CreateColumn(column).compile(dialect=POSTGRES)))
+        assert rendered_column in built, f"0009 does not build {column.name} as declared"
+
+    assert added, "no later migration adds a column; this test is comparing nothing extra"
 
 
 def test_the_migration_builds_every_index_the_declaration_declares() -> None:
@@ -881,3 +924,57 @@ def test_a_fused_page_is_drawn_from_two_lists_that_are_already_in_reach() -> Non
     assert page[0].corroborated
     with pytest.raises(SearchError, match="asks for no results"):
         hybrid(lexical=lexical, vector=vector, limit=0)
+
+
+# --------------------------- the model a vector came from, as a conjunct not a convention
+def test_the_vector_leg_names_the_model_in_its_where_clause() -> None:
+    """**The failure this closes has no symptom.** Changing the embedding model invalidates
+    every stored vector, and old and new sit in one column under one index: every distance
+    between them is a number rather than an error, so results come back confident and wrong
+    and retrieval degrades instead of breaking.
+
+    `corpus_identity` refuses a mixed corpus and can only refuse rows a caller hands it. In
+    the WHERE clause the statement itself cannot span a model change, which is the same
+    argument the scope predicate makes one line above it: a rule a caller has to remember is
+    a rule that holds until the second caller.
+
+    Delete this and the conjunct is a one-line simplification that no other assertion here
+    would notice, because every test corpus holds one model."""
+    sql = rendered_sql(vector_query(AN_EMBEDDING, reach=NARROW, model=A_MODEL))
+
+    assert "embedding_model" in sql
+    assert sql.count("SELECT") == 1, "the model must be conjoined, not applied to a subquery"
+
+
+def test_the_model_is_bound_rather_than_written_into_the_statement() -> None:
+    """It arrives from a corpus check, and a value reaching SQL as text is a value somebody
+    eventually builds with a format string. Every other value in this statement is bound and
+    this one is no different."""
+    statement = vector_query(AN_EMBEDDING, reach=NARROW, model=A_MODEL)
+    compiled = statement.compile(dialect=POSTGRES)
+
+    assert A_MODEL not in str(compiled), "the model was pasted into the statement"
+    assert A_MODEL in compiled.params.values()
+
+
+def test_the_migrations_column_width_matches_the_declarations() -> None:
+    """Two statements of one width, in two files. The migration says so in its own docstring
+    and this is what makes that sentence true rather than a hope.
+
+    Delete this and widening the declaration leaves a database column that silently truncates
+    a longer model name, which reads as a model that does not match anything."""
+    assert migration_module_0010().MODEL_CHARS == EMBEDDING_MODEL_CHARS
+
+
+def migration_module_0010() -> ModuleType:
+    """The column-adding migration, loaded the way `migration()` loads the table-building one."""
+    import importlib.util
+
+    path = (
+        Path(__file__).resolve().parents[2] / "migrations" / "versions" / "0010_embedding_model.py"
+    )
+    spec = importlib.util.spec_from_file_location(path.stem, path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module

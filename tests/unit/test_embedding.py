@@ -12,7 +12,6 @@ import pytest
 from brain.knowledge.embedding import (
     DEFAULT_BATCH_SIZE,
     EMBEDDING_FIELD,
-    EMBEDDING_MODEL_FIELD,
     MODEL_IDENTITY_CHARS,
     REBUILD_COMMAND,
     EmbeddedVector,
@@ -29,7 +28,12 @@ from brain.knowledge.embedding import (
     next_batch,
     vector_leg_is_available,
 )
-from brain.knowledge.search import CHUNK, EMBEDDING_DIMENSIONS, INDEXABLE_DIMENSION_CEILING
+from brain.knowledge.search import (
+    CHUNK,
+    EMBEDDING_DIMENSIONS,
+    EMBEDDING_MODEL_FIELD,
+    INDEXABLE_DIMENSION_CEILING,
+)
 
 MODEL = EmbeddingModel(name="qwen3-embedding", revision="a1b2c3d", dimensions=EMBEDDING_DIMENSIONS)
 NEWER = EmbeddingModel(name="qwen3-embedding", revision="e4f5g6h", dimensions=EMBEDDING_DIMENSIONS)
