@@ -43,8 +43,8 @@ REGISTRY: tuple[ToolDefinition, ...] = (
     _tool("client.read_money", "read:client.contract_value"),
     _tool("ticket.read_status", "read:ticket.status"),
     _tool("ticket.set_status", "write:ticket.status", SideEffect.WRITE),
-    _tool("invoice.send", "write:invoice.status", SideEffect.SEND),
-    _tool("payment.release", "approve:payment.release", SideEffect.MONEY),
+    _tool("invoice.send_invoice", "write:invoice.status", SideEffect.SEND),
+    _tool("payment.release_payment", "approve:payment.release", SideEffect.MONEY),
 )
 
 ALL_TOOLS = frozenset(t.name for t in REGISTRY)
@@ -125,7 +125,7 @@ def test_the_money_boundary_needs_an_explicit_ceiling() -> None:
     caller = _ents("approve:payment.release")
     for effect in (SideEffect.NONE, SideEffect.DRAFT, SideEffect.WRITE, SideEffect.SEND):
         ceiling = AgentCeiling(agent_id="a", allowed_tools=ALL_TOOLS, max_side_effect=effect)
-        assert "payment.release" not in project(REGISTRY, caller, ceiling, now=NOW).names
+        assert "payment.release_payment" not in project(REGISTRY, caller, ceiling, now=NOW).names
 
 
 # -------------------------------------------------------------- unreachable is absent
@@ -142,9 +142,9 @@ def test_an_unreachable_tool_is_absent_rather_than_described_and_refused() -> No
 def test_a_malformed_capability_makes_a_tool_unreachable_not_unrestricted() -> None:
     """A typo in a manifest must not become an open door. Treating an unparseable
     requirement as "no requirement" is the failure mode."""
-    broken = _tool("client.oops", "reed:client.name")
+    broken = _tool("client.oops_typo", "reed:client.name")
     caller = _ents("read:client.name")
-    ceiling = AgentCeiling(agent_id="a", allowed_tools=frozenset({"client.oops"}))
+    ceiling = AgentCeiling(agent_id="a", allowed_tools=frozenset({"client.oops_typo"}))
     assert project((broken,), caller, ceiling, now=NOW).names == ()
 
 
@@ -169,7 +169,7 @@ def test_an_agent_requiring_a_tool_it_is_not_allowed_is_refused_at_configuration
         AgentCeiling(
             agent_id="a",
             allowed_tools=frozenset({"ticket.read_status"}),
-            required_tools=frozenset({"payment.release"}),
+            required_tools=frozenset({"payment.release_payment"}),
         )
 
 

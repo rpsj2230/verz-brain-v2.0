@@ -13,15 +13,24 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
+from pydantic import ValidationError
 
 from brain.core.entitlement import Capability, EntitlementSet, Grant
-from brain.core.envelope import Entity, IdentityMode, SideEffect, ToolDefinition, TypedResult
+from brain.core.envelope import (
+    TOOL_NAME_PATTERN,
+    Entity,
+    IdentityMode,
+    SideEffect,
+    ToolDefinition,
+    TypedResult,
+)
 from brain.core.redaction import OPAQUE_CAPABILITY, UntypedShapeError
 from brain.core.scope import Clause, Op, Scope
 from brain.gate.catalogue import AgentCeiling
 from brain.gate.injection import AutonomyTier
 from brain.tools.registry import (
     RUN_SKILL_SCRIPT,
+    TOOL_NAME_RE,
     ResultContract,
     ToolRegistrationError,
     ToolRegistry,
@@ -157,13 +166,33 @@ def test_a_name_that_is_not_source_verb_noun_is_refused(name: str) -> None:
         assert_tool_name(name)
 
 
-def test_the_registry_refuses_a_name_the_envelope_would_accept() -> None:
-    """`ToolDefinition` and `brain.ops.sweeps` both admit `client.read`, because both are
-    written as name-dot-name. Delete this and the strict half of the grammar is gone, and
-    the only tools that lose it are the ones whose names stopped saying what they act on."""
+def test_the_model_and_the_registry_refuse_the_same_names() -> None:
+    """There were three copies of this grammar and they disagreed: `ToolDefinition` and
+    `brain.ops.sweeps` both said name-dot-name, this module said `source.verb_noun`, and
+    `client.read` therefore passed validation, passed CI, and was refused only at
+    registration. They are now one string in `brain.core.envelope`.
+
+    Delete this and the copies can drift apart again without any test noticing, because
+    drift in this rule is invisible until both halves are asked the same question."""
+    with pytest.raises(ValidationError):
+        _definition("client.read")
+    assert TOOL_NAME_RE.pattern == TOOL_NAME_PATTERN
+
+
+def test_the_registry_still_checks_a_name_the_model_did_not_validate() -> None:
+    """Defence in depth, and it is reachable rather than theoretical. `model_construct`
+    skips validation by design, which is exactly how a definition assembled from a connector
+    manifest at run time can arrive unchecked. The registry is the second of the two gates
+    and it is the one closest to the tool actually being callable."""
+    unvalidated = ToolDefinition.model_construct(
+        name="client.read",
+        description="d",
+        entity="client",
+        required_capability="read:client.name",
+    )
     registry = ToolRegistry()
     with pytest.raises(ToolRegistrationError, match=r"source\.verb_noun"):
-        registry.register(_definition("client.read"), a_typed_handler)
+        registry.register(unvalidated, a_typed_handler)
 
 
 def test_a_declared_source_that_disagrees_with_the_name_is_refused() -> None:
@@ -175,12 +204,24 @@ def test_a_declared_source_that_disagrees_with_the_name_is_refused() -> None:
 
 
 def test_an_object_name_no_field_policy_could_match_is_refused() -> None:
-    """`ToolDefinition.entity` carries no pattern of its own. Without this check a tool can
-    declare `Client Ltd`, match no policy rule, and have every field of every record it
-    returns withheld as unclassified, which reads as a permission bug for weeks."""
+    """A tool declaring `Client Ltd` matches no rule in `brain.core.field_policy`, which
+    looks its rules up by exactly this name. Default-deny then withholds every field of
+    every record the tool returns, and that reads as a permission bug rather than as the
+    typo it is: nobody debugging "why is this empty" starts at the entity spelling.
+
+    Refused twice, at the model and again at registration, for the same reason as the name:
+    `model_construct` skips the first."""
+    with pytest.raises(ValidationError):
+        _definition(entity="Client Ltd")
+    unvalidated = ToolDefinition.model_construct(
+        name="client.read_summary",
+        description="d",
+        entity="Client Ltd",
+        required_capability="read:client.name",
+    )
     registry = ToolRegistry()
     with pytest.raises(ToolRegistrationError, match="not a name"):
-        registry.register(_definition(entity="Client Ltd"), a_typed_handler)
+        registry.register(unvalidated, a_typed_handler)
 
 
 # ------------------------------------------------------ the capability (M12.1.2)
@@ -759,6 +800,38 @@ def test_a_pin_refuses_a_different_skill_with_the_same_digest_field() -> None:
     wrong = SkillPin(agent_id="a", skill_name="other-skill", digest=approved.skill.digest())
     with pytest.raises(SkillError, match="pin names"):
         resolve_pin(wrong, approved)
+
+
+def test_a_pin_refuses_a_re_import_of_the_same_bytes_that_nobody_has_reviewed() -> None:
+    """The digest check cannot catch this one, and that is the point of the test.
+
+    A nightly re-import from the source produces a fresh record with identical bytes, so it
+    hashes to exactly what the agent is pinned to and the digest comparison is satisfied. Its
+    state is `imported`, because a new record has not been reviewed. Only the executability
+    check stands between the agent and a procedure whose approval belongs to a row that was
+    replaced.
+
+    Deleting this test leaves a guard that no test reaches: mutating it away passes the whole
+    file, which is how it was found.
+    """
+    approved = _imported().approved_by("u_weiling", NOW)
+    pin = pin_skill("a_helpdesk", approved)
+    fetched_again = _imported()
+    assert fetched_again.skill.digest() == pin.digest
+    with pytest.raises(SkillError, match="not executable"):
+        resolve_pin(pin, fetched_again)
+
+
+def test_a_pin_refuses_a_skill_whose_approval_was_withdrawn() -> None:
+    """Withdrawing an approval has to reach the agents already pinned to it, or revocation
+    means "no new agents may use this" and every agent that had it keeps it. The bytes do not
+    change when somebody decides a procedure was a mistake, so the digest still matches and
+    the pin still resolves."""
+    approved = _imported().approved_by("u_weiling", NOW)
+    pin = pin_skill("a_helpdesk", approved)
+    withdrawn = approved.model_copy(update={"state": SkillState.REJECTED, "approved_digest": ""})
+    with pytest.raises(SkillError, match="not executable"):
+        resolve_pin(pin, withdrawn)
 
 
 # ------------------------------------------------------------ the diff (M12.2.6)

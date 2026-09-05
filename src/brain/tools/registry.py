@@ -48,35 +48,29 @@ from dataclasses import dataclass, field
 from typing import Final, Self, assert_never
 
 from brain.core.entitlement import Capability
-from brain.core.envelope import IdentityMode, SideEffect, ToolDefinition
+from brain.core.envelope import (
+    OBJECT_NAME_PATTERN,
+    TOOL_NAME_PATTERN,
+    IdentityMode,
+    SideEffect,
+    ToolDefinition,
+)
 from brain.core.redaction import OPAQUE_CAPABILITY, assert_tool_returns_typed_result
 from brain.core.scope import Scope
 from brain.gate.injection import AutonomyTier
 
 # --------------------------------------------------------------------- grammars
 
-#: `source.verb_noun`, and deliberately stricter than either grammar already in the tree.
-#:
-#: `brain.core.envelope.ToolDefinition.name` and `brain.ops.sweeps.TOOL_NAME_RE` both admit
-#: `client.read`, because both are written as `name.name`. That is a floor rather than the
-#: rule: the second half is what tells a model what the tool does *to what*, and `read` on
-#: its own says only that something is read. The model has one line of description and this
-#: name to choose from, so the name carrying its object is not decoration.
-#:
-#: Rejected: also requiring the verb to be one of `brain.core.entitlement.VERBS`. The
-#: architecture's own examples include `ticket.set_status`, and `set` is not a capability
-#: verb. A grammar that refuses the specification's own examples is a grammar somebody
-#: edits out of the way, and then nothing checks the shape at all.
-TOOL_NAME_RE: Final = re.compile(
-    r"^(?P<source>[a-z][a-z0-9_]*)\.(?P<verb>[a-z][a-z0-9]*)_(?P<noun>[a-z][a-z0-9_]*)$"
-)
+#: Both compiled from the patterns in `brain.core.envelope`, which is the one place either
+#: shape is written down. They used to differ: this module was strict, the model and the
+#: sweep were not, and a name all three should have agreed on was refused in exactly one of
+#: them, at registration, which is the latest and least useful of the three places to find
+#: out. Compiling rather than restating means the next person to loosen one loosens all
+#: three, deliberately, in the file whose comment says why it is tight.
+TOOL_NAME_RE: Final = re.compile(TOOL_NAME_PATTERN)
 
-#: What a tool's object may be called. `ToolDefinition.entity` carries no pattern of its
-#: own, only a length, while `brain.core.envelope.Entity.entity` is `^[a-z][a-z0-9_]*$` and
-#: `brain.core.field_policy` looks its rules up by that name. A tool declaring `Client Ltd`
-#: as its object would therefore match no policy rule, and default-deny would withhold every
-#: field of every record it returned, which reads as a permission failure rather than a typo.
-OBJECT_NAME_RE: Final = re.compile(r"^[a-z][a-z0-9_]*$")
+#: What a tool's object may be called.
+OBJECT_NAME_RE: Final = re.compile(OBJECT_NAME_PATTERN)
 
 #: The one object name that may only be claimed by one tool, and the tool that claims it.
 #:

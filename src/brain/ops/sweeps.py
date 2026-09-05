@@ -21,11 +21,17 @@ import re
 import sys
 from pathlib import Path
 
+from brain.core.envelope import TOOL_NAME_PATTERN
+
 REPO = Path(__file__).resolve().parents[3]
 SRC = REPO / "src" / "brain"
 TESTS = REPO / "tests"
 
-TOOL_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$")
+#: Imported, not restated. This was the loosest of three copies of the tool-name grammar
+#: and it admitted `client.read`, which the registry refuses; CI therefore passed a name
+#: that could never be registered. A sweep that is looser than the thing it guards is worse
+#: than no sweep, because it reports "ok" about a rule it is not applying.
+TOOL_NAME_RE = re.compile(TOOL_NAME_PATTERN)
 TASK_ID_RE = re.compile(r"\bM\d+(?:\.\d+){1,4}\b")
 #: The one line a file may claim task ids on. Everything else is discussion.
 TASK_LINE_RE = re.compile(r"^\s*Task ids:\s*(.+)$", re.M)
@@ -64,7 +70,8 @@ def sweep_rls() -> None:
             SELECT c.relname
             FROM pg_class c
             JOIN pg_namespace n ON n.oid = c.relnamespace
-            WHERE n.nspname IN ('auth', 'gate', 'obs', 'proj', 'know', 'agent', 'mem', 'er')
+            WHERE n.nspname IN ('auth', 'gate', 'obs', 'proj', 'know',
+                                'agent', 'mem', 'er', 'ops')
               AND c.relkind = 'r'
               AND NOT c.relrowsecurity
             ORDER BY c.relname
@@ -115,16 +122,67 @@ def sweep_tool_registry() -> None:
     The catalogue is projected per request and the model picks from what it is shown, so
     a malformed name is a tool that either never gets selected or gets selected for the
     wrong reason.
+
+    **This reads source text, and that is a real limit rather than an implementation
+    detail.** It sees `ToolDefinition(name="...")` written out in a file; it sees nothing
+    built at run time from a connector manifest, which the architecture says is how most
+    tools will arrive. It becomes a real check the day there is a boot function that
+    populates a registry, at which point it should import that registry and read `.names()`
+    instead of grepping. Until then it guards the literals and no more, and saying so here
+    is cheaper than somebody later mistaking a green sweep for coverage of the manifest
+    path. The registry itself refuses a bad name at registration either way, so the
+    run-time path is guarded; it is guarded later, not never.
     """
     findings: list[str] = []
+    names_seen: set[str] = set()
     pattern = re.compile(r'ToolDefinition\(\s*\n?\s*name\s*=\s*"([^"]+)"')
     for path in SRC.rglob("*.py"):
+        # This file, skipped. It defines no tools, and the docstring above quotes the very
+        # shape being searched for, so scanning it makes the checker fail on its own
+        # explanation of itself. Found by writing that docstring.
+        if path == Path(__file__).resolve():
+            continue
         for name in pattern.findall(path.read_text(encoding="utf-8")):
+            names_seen.add(name)
             if not TOOL_NAME_RE.match(name):
                 findings.append(f"{path.relative_to(REPO)}: bad tool name {name!r}")
     if findings:
         raise SweepFailure(findings)
-    print("ok: every tool name matches the grammar")
+    print(f"ok: every tool name matches the grammar ({len(names_seen)} literals checked)")
+
+
+# --------------------------------------------------- one grammar, not several
+def sweep_one_tool_grammar() -> None:
+    """The tool-name grammar is written down once, in `brain.core.envelope`.
+
+    There were three copies and they disagreed. The model and this file both said
+    `name.name`; the registry said `source.verb_noun`. A tool called `client.read` passed
+    validation, passed CI, and was refused only at registration. Nobody had loosened
+    anything: the copies were written at different times by people reading the same
+    sentence, which is what copies of a rule do.
+
+    This sweep looks for a fourth. Any regex in the tree shaped like a tool name, outside
+    the module that owns it, is a copy waiting to drift, and drift in this particular rule
+    is invisible until the two halves are asked the same question.
+    """
+    owner = SRC / "core" / "envelope.py"
+    # A dotted lowercase-identifier pattern, however it is spelled. Deliberately broad:
+    # the point is to catch a restatement, and a restatement that differs slightly from
+    # the canonical text is exactly the case worth catching.
+    looks_like_the_grammar = re.compile(r'r?"\^\[a-z\]\[a-z0-9_\]\*(?:\)?)\\\.')
+    findings: list[str] = []
+    for path in (*SRC.rglob("*.py"), *TESTS.rglob("*.py")):
+        if path == owner:
+            continue
+        for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if looks_like_the_grammar.search(line):
+                findings.append(
+                    f"{path.relative_to(REPO)}:{line_no}: a second copy of the tool-name "
+                    "grammar; import TOOL_NAME_PATTERN from brain.core.envelope instead"
+                )
+    if findings:
+        raise SweepFailure(findings)
+    print("ok: one tool-name grammar, in brain/core/envelope.py")
 
 
 # ------------------------------------------------------------ traceability
@@ -240,6 +298,7 @@ SWEEPS = {
     "rls": sweep_rls,
     "grant_isolation": sweep_grant_isolation,
     "tool_registry": sweep_tool_registry,
+    "one_tool_grammar": sweep_one_tool_grammar,
     "traceability": sweep_traceability,
     "slug_collisions": sweep_slug_collisions,
     "dependencies": sweep_dependencies,
