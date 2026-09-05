@@ -256,6 +256,41 @@ directory-sourced grants in their own table that the sync owns and can also remo
 somebody leaves a group, and a process that can delete rows a person created is a worse
 thing to build than a process that owns its own table.
 
+**BUILT (2026-09-05).** `auth.directory_role_grant`, migration 0006, with the reconciliation
+in `brain.identity.directory`. The sync may delete anything in that table and nothing else,
+and that is structural rather than careful: the reconciler's signature has no parameter a
+hand-made grant fits into, and a guard refuses any future reconciler whose annotations admit
+one. A check inside the function would be removable by whoever adds the feature that needs
+it; a parameter that does not exist has to be added first, which is a diff with a reviewer
+on it.
+
+**The natural key is (person, role, group), not a generated id.** Two groups both conferring
+Approver are two rows, so leaving one group keeps the role. A generated id would let the same
+assertion be stored twice, and then removal would delete one row, report the role removed,
+and leave the person holding it from the other.
+
+**This is the first DELETE permission granted anywhere in the system**, and it is scoped to
+this one table. There is a test whose only job is to fail if any future migration grants
+DELETE on anything else, so it does not become a precedent by being copied.
+
+**One thing I got wrong in the brief, worth recording.** I told the agent to wire the union
+into the entitlement resolver. That resolver structurally refuses to see a role at all, which
+is a rule from earlier in the build, and the agent pushed back rather than breaking it. The
+union belongs in the role path and that is where it is. I verified the pushback before
+accepting it.
+
+**A near-miss worth stating because it looks like a bug and is not.** Two spellings of a
+group name reconcile as a delete plus an insert every run. In the vault holder list (item 17)
+I normalised exactly this, because those names are typed by a person and two spellings are
+one pair of hands. Here they are not: Keycloak treats `Sales` and `sales` as two groups, so
+folding them would merge two sources of one role, and leaving one group would then remove a
+role the other still justifies. Exact comparison is correct here. Same-looking problem,
+opposite answer.
+
+**Still not built, and not part of this:** the hand-made `role_grant` table (M1.3.2). Only
+the type exists. Every docstring in this change says so, so nobody mistakes the new table for
+it.
+
 ---
 
 ---
