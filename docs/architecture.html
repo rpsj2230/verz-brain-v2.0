@@ -1354,7 +1354,7 @@
 
 <section id="s25">
   <h2><span class="sn">28</span>Decisions taken during the build</h2>
-  <p>Seventeen questions where the specification asked for two things that could not both be true, or where a choice had a cost worth writing down. Each is recorded in full, with what was rejected and why, at <a href="/build/needs-rupash">/build/needs-rupash</a>. The ones that changed this document:</p>
+  <p>Twenty-three questions where the specification asked for two things that could not both be true, or where a choice had a cost worth writing down. Each is recorded in full, with what was rejected and why, at <a href="/build/needs-rupash">/build/needs-rupash</a>. The ones that changed this document:</p>
   <div class="scroll">
     <table>
       <caption>Decided 5 September 2026</caption>
@@ -1368,11 +1368,15 @@
         <tr><td>Overlapping leash rules</td><td class="k">Strictest wins</td><td>Most-specific-wins reads more naturally and lets a company-wide safe setting be cancelled by adding a narrower row</td></tr>
         <tr><td>Break-glass window</td><td class="k">4 hours, set per grant</td><td>The authoriser knows whether this is a password reset or a migration. A fixed window teaches everyone to ask for the maximum. The ceiling itself is not configurable</td></tr>
         <tr><td>Approver role versus <code>approve</code> capability</td><td class="k">The capability decides</td><td>No role implies a capability anywhere else, including Super Admin. The role is a label the console filters on, and a mismatch is now reported as a misconfiguration rather than silence</td></tr>
+        <tr><td>The deployment record and the audit ledger</td><td class="k">Two chains, not one</td><td>A deployment subject kind would give anybody holding <code>read:audit.*</code> the release history, and put engineering activity in a client’s compliance export. The cost is that an auditor wanting "did the code change between these two grants" merges two chains on timestamp</td></tr>
+        <tr><td>The script runner’s name</td><td class="k"><code>skill.run_script</code></td><td>Earlier drafts of this document said <code>run_skill_script</code>, which the closed grammar <code>source.verb_noun</code> cannot express. The code is the thing that runs, so the document moved</td></tr>
+        <tr><td>Where the tool-name grammar is written down</td><td class="k">Once, in <code>core.envelope</code></td><td>Three copies disagreed: two said <code>name.name</code>, the registry said <code>source.verb_noun</code>, and <code>client.read</code> therefore passed validation, passed CI, and was refused only at registration — the latest and least useful of the three</td></tr>
+        <tr><td>Which commit a running instance reports</td><td class="k">The image’s own manifest</td><td>Baking it into an environment variable was not enough: an explicit compose entry beats an image’s ENV, and Coolify’s stored copy set it to the literal <code>unknown</code>. A file cannot be overridden by a variable</td></tr>
         <tr><td>Where the audit anchor lives</td><td class="k">A private GitHub repository, pulled</td><td>The server writing its own anchor needs a write credential on the one machine the anchor exists to be independent of</td></tr>
       </tbody>
     </table>
   </div>
-  <p><strong>One question is open</strong> and it is custody rather than design: who holds the unseal pieces for the secrets vault, how many are needed to open it, and whether the root token is destroyed after setup. It is the one part of that vault which is not reversible, and it needs answering before real credentials go in rather than after.</p>
+  <p><strong>Six questions are open</strong>, listed in full at <a href="/build/needs-rupash">/build/needs-rupash</a>. Two are worth naming here. Whether production should deploy on every push, as it does now, or only from a tagged release that passed staging, as this plan says: both are reasonable and they cannot both hold. And one that is custody rather than design: who holds the unseal pieces for the secrets vault, how many are needed to open it, and whether the root token is destroyed after setup. It is the one part of that vault which is not reversible, and it needs answering before real credentials go in rather than after.</p>
 </section>
 
 <footer>
