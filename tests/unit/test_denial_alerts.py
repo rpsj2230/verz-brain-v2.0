@@ -24,6 +24,7 @@ from __future__ import annotations
 import ast
 import dataclasses
 import inspect
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -639,9 +640,13 @@ FORBIDDEN = frozenset(
 )
 
 
-def _public_callables() -> list[tuple[str, object]]:
-    """Every function, method and property getter this module puts on its public surface."""
-    found: list[tuple[str, object]] = []
+def _public_callables() -> list[tuple[str, Callable[..., object]]]:
+    """Every function, method and property getter this module puts on its public surface.
+
+    Typed as callables rather than as `object` so `inspect.signature` can be handed one
+    without a cast. mypy checks this file too, and `signature(object)` is an error it is
+    right to raise: not everything in a module's namespace has a signature."""
+    found: list[tuple[str, Callable[..., object]]] = []
     for name, obj in vars(module).items():
         if name.startswith("_"):
             continue

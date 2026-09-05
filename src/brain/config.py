@@ -91,12 +91,26 @@ def check(env: str, values: dict[str, str]) -> list[ConfigProblem]:
 
     # A production deployment with the interactive docs reachable publishes the name of
     # every tool and capability in the system. Cheap to check, unpleasant to discover.
-    if env == "production" and (values.get("cors_origins") or "").strip() == "*":
+    # Per entry, and not only in production. This was `== "*"` against the whole setting, and
+    # `serve.py` hands it the origins comma-joined, so `*,https://console.example.com`
+    # compared unequal to `*` and passed: a wildcard beside a real origin is the *likely*
+    # spelling, because somebody adds the real one and forgets to take the wildcard out.
+    # Staging was not covered at all, and staging holds a copy of the same shape of data.
+    #
+    # For CORS alone this is a browser convenience. It stops being one on the widget mint
+    # path, where an allowed origin is permission to mint anonymous credentials against a
+    # client's brain, so a wildcard there is every site on the internet.
+    #
+    # Development keeps the escape hatch: a developer's ports move, and a machine with no
+    # client data on it is not what this check is protecting.
+    origins = [part.strip() for part in (values.get("cors_origins") or "").split(",")]
+    if env != "development" and any(part == "*" for part in origins):
         problems.append(
             ConfigProblem(
                 setting="cors_origins",
-                problem="wildcard in production",
-                fix="name the console and widget origins explicitly",
+                problem=f"wildcard origin in {env}",
+                fix="name the console and widget origins explicitly; a wildcard beside them "
+                "is still a wildcard",
             )
         )
 

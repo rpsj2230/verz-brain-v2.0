@@ -68,6 +68,13 @@ CHANNEL_VERBS: dict[Channel, frozenset[str]] = {
     Channel.API: frozenset({"read", "write", "invoke"}),
     Channel.WEBHOOK: frozenset({"read", "invoke"}),
     Channel.SCHEDULER: frozenset({"read", "write", "invoke"}),
+    # Read and nothing else, and narrower than WhatsApp for a reason WhatsApp does not have:
+    # nobody has said who this is. The assurance ceiling already gives an unverified caller
+    # nothing at all, so today this changes no outcome. It matters the day a widget visitor
+    # identifies themselves, because they are then an ordinary authenticated principal whose
+    # verbs would otherwise be decided by the assurance level alone. A person may sign in
+    # through a widget; they may not approve a payment through one.
+    Channel.WIDGET: frozenset({"read"}),
 }
 
 #: The verbs each assurance level may carry.
@@ -96,6 +103,7 @@ def verbs_for_channel(channel: Channel) -> frozenset[str]:
             | Channel.API
             | Channel.WEBHOOK
             | Channel.SCHEDULER
+            | Channel.WIDGET
         ):
             return CHANNEL_VERBS[channel]
         case _:

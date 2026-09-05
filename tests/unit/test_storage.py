@@ -112,16 +112,34 @@ def test_a_bucket_holding_copies_of_governed_data_may_not_be_kept_for_ever() -> 
     assert all(days is not None for days in findings), findings
 
 
-def test_the_public_read_flag_exists_so_that_something_can_check_it() -> None:
-    """A public S3 bucket is the most reproduced breach in this category, and the reason is
-    that the setting is one click and invisible from inside the application. The field is
-    never true here, which is what makes it a value a reconciliation job can compare a live
-    bucket against. Delete this and the field looks like dead code and is removed."""
+def test_a_bucket_readable_without_credentials_is_reported() -> None:
+    """A public S3 bucket is the most reproduced breach in this category, because the setting
+    is one click and invisible from inside the application. The check is run here against a
+    bucket that is public, which is the only way to know the check works: run only against
+    the declared set, where nothing is public, it would pass with its body deleted. Delete
+    this and `public_read` becomes a field nothing reads and somebody removes it."""
     assert all(not b.public_read for b in BUCKETS)
-    leaky = _a_bucket(public_read=True)
-    assert "readable without credentials" in " ".join(
-        f"{b.name}: readable without credentials" for b in (leaky,) if b.public_read
+    findings = lifecycle_gaps([_a_bucket(public_read=True)])
+    assert any("readable without credentials" in f for f in findings), findings
+
+
+def test_an_unversioned_backup_bucket_is_reported() -> None:
+    """The other rule that is invisible against the declared set. A nightly job that starts
+    writing corrupt output destroys the good copy, and the retention window is then
+    irrelevant. Delete this and the versioning rule can be deleted with `lifecycle_gaps()`
+    still returning empty."""
+    findings = lifecycle_gaps([_a_bucket(name="backups", versioned=False)])
+    assert any("not versioned" in f for f in findings), findings
+
+
+def test_a_bucket_of_governed_copies_kept_indefinitely_is_reported() -> None:
+    """An export is a flattened copy whose permissions stopped applying the moment it was
+    written, so time is the only control left on it. Delete this and `retention_days=None`
+    on `exports` passes review as caution rather than as the removal of the last control."""
+    forever = _a_bucket(
+        name="exports", retention_days=None, retention_reason="kept until somebody deletes it"
     )
+    assert any("kept indefinitely" in f for f in lifecycle_gaps([forever]))
 
 
 # --------------------------------------------------- credentials (M32.3.1.4)

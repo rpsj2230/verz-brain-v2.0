@@ -43,6 +43,12 @@ class Channel(enum.StrEnum):
     API = "api"
     SCHEDULER = "scheduler"
     WEBHOOK = "webhook"
+    #: A chat widget embedded on a client's public website. Separate from API even though
+    #: both arrive over HTTP, because the two differ on the only question this enum exists to
+    #: answer: whether a person is waiting. `Channel.API` is AUTOMATION, and describing a
+    #: visitor watching a cursor blink as automation makes every degradation decision about
+    #: them wrong in the direction of queueing an answer nobody will come back for.
+    WIDGET = "widget"
 
 
 class TrafficClass(enum.StrEnum):
@@ -75,7 +81,7 @@ def traffic_class_for(channel: Channel) -> TrafficClass:
     happened to be.
     """
     match channel:
-        case Channel.CONSOLE | Channel.LARK | Channel.WHATSAPP:
+        case Channel.CONSOLE | Channel.LARK | Channel.WHATSAPP | Channel.WIDGET:
             return TrafficClass.HUMAN_INTERACTIVE
         case Channel.EMAIL:
             # A reply that arrives in four minutes is fine; a wrong one is not. Queue.

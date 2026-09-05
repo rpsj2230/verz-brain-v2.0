@@ -3,7 +3,7 @@
 Every test here is about a trace store that would end up holding the thing the rest of the
 system spent a wave withholding.
 
-Task ids: M32.1.2.1, M32.1.2.2, M32.1.2.3, M32.1.2.4, M32.1.2.5
+Task ids: M32.1.1.3, M32.1.2.1, M32.1.2.2, M32.1.2.3, M32.1.2.4, M32.1.2.5
 """
 
 from __future__ import annotations
@@ -18,11 +18,14 @@ from brain.config import REQUIRED
 from brain.identity.roles import Role
 from brain.ops.tracing import (
     PAYLOAD_ROLE,
+    RETENTION,
     SAFE_ATTRIBUTES,
     SAFE_VALUE_MAX_CHARS,
     TRACE_ENVIRONMENTS,
     PayloadRead,
+    Retention,
     Span,
+    TraceRecord,
     TracingError,
     assert_environment,
     assert_environment_vocabulary,
@@ -30,6 +33,8 @@ from brain.ops.tracing import (
     mask_value,
     may_read_payloads,
     read_payload,
+    retention_for,
+    retention_gaps,
 )
 
 #: One string, planted everywhere, looked for everywhere. Chosen so that no legitimate
@@ -210,6 +215,91 @@ def test_an_unknown_environment_is_refused_rather_than_defaulted() -> None:
     with pytest.raises(TracingError, match="is not one of"):
         Span(name="answer", environment="prod")
     assert assert_environment("staging") == "staging"
+
+
+# --------------------------------------------------- retention (M32.1.1.3)
+@pytest.mark.parametrize("record", list(TraceRecord))
+def test_every_kind_of_trace_record_has_a_window_and_a_reason(record: TraceRecord) -> None:
+    """A trace ledger with no expiry becomes the longest-lived copy of the business: it
+    outlives the records it describes, the permissions that governed them, and the people
+    who could read them. Delete this and a fourth kind of record can be added with no
+    retention at all, which in every system means the longest."""
+    entry = retention_for(record)
+    assert entry.days >= 1
+    assert entry.because.strip()
+
+
+def test_no_trace_record_is_kept_for_ever() -> None:
+    """There is no unbounded option and there must not be one, because the argument for this
+    whole module is that the ledger must not become the oldest copy of who asked what. Delete
+    this and `days` can be given a None branch as an operator convenience."""
+    assert all(isinstance(entry.days, int) and entry.days >= 1 for entry in RETENTION)
+
+
+def test_a_retention_of_zero_days_is_refused() -> None:
+    """Zero reads in an incident as the ledger being broken rather than as a policy, because
+    the traces somebody came to look at are already gone. Delete this and a half-finished
+    configuration deploys as one."""
+    with pytest.raises(TracingError, match="not a window"):
+        Retention(record=TraceRecord.TRACE, days=0, because="none given")
+
+
+def test_a_retention_with_no_stated_reason_is_refused() -> None:
+    """Same rule as the storage buckets, for the same reason: a window nobody can explain is
+    extended the first time an investigation wants an older trace, and the extension is
+    permanent because nobody knows what the number was protecting. Delete this and the next
+    entry arrives with an empty string."""
+    with pytest.raises(TracingError, match="states no reason"):
+        Retention(record=TraceRecord.BLOB, days=7, because="  ")
+
+
+def test_the_three_windows_nest_so_nothing_outlives_its_only_route_to_it() -> None:
+    """An observation is reached through its trace and a blob through its observation.
+    Outliving the parent is not extra safety, it is a bill for data with no route to it, and
+    it is the failure nobody notices because the only symptom is the invoice. Delete this and
+    the two nesting rules survive as a comment."""
+    assert retention_gaps() == ()
+    assert (
+        retention_for(TraceRecord.BLOB).days
+        <= retention_for(TraceRecord.OBSERVATION).days
+        <= retention_for(TraceRecord.TRACE).days
+    )
+
+
+def test_an_observation_outliving_its_trace_is_reported() -> None:
+    """Run against the declared set the nesting check passes with its body removed, so it is
+    run here against windows that break it. Delete this and both nesting rules can be deleted
+    with `retention_gaps()` still returning empty."""
+    findings = retention_gaps(
+        [
+            Retention(record=TraceRecord.TRACE, days=7, because="short"),
+            Retention(record=TraceRecord.OBSERVATION, days=30, because="longer than its parent"),
+            Retention(record=TraceRecord.BLOB, days=1, because="short"),
+        ]
+    )
+    assert any("outliving its trace" in f for f in findings), findings
+
+
+def test_a_blob_outliving_its_observation_is_reported() -> None:
+    """The second nesting rule, one level down: a blob is reached through the observation
+    that points at it. Delete this and only the trace-observation rule is ever exercised, so
+    the blob rule can be dropped without a failure."""
+    findings = retention_gaps(
+        [
+            Retention(record=TraceRecord.TRACE, days=30, because="long"),
+            Retention(record=TraceRecord.OBSERVATION, days=7, because="shorter"),
+            Retention(record=TraceRecord.BLOB, days=14, because="longer than its parent"),
+        ]
+    )
+    assert any("outliving the observation" in f for f in findings), findings
+
+
+def test_a_kind_of_record_with_no_window_at_all_is_reported() -> None:
+    """The closure rule. A kind of record nobody gave a window is a kind of record kept for
+    ever by whatever the store's own default is, which is the failure this whole section
+    argues against. Delete this and adding a fourth `TraceRecord` is a silent omission."""
+    findings = retention_gaps([Retention(record=TraceRecord.TRACE, days=30, because="long")])
+    assert any("no retention declared" in f for f in findings), findings
 
 
 # --------------------------------------------------- the payload role (M32.1.2.4)

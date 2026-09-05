@@ -1,13 +1,39 @@
 """Which settings are required where, and what happens when they are missing.
 
-Task ids: M31.3.1.1, M31.3.1.3
+Task ids: M31.3.1.1, M31.3.1.2, M31.3.1.3
 """
 
 from __future__ import annotations
 
-import pytest
+import re
+from pathlib import Path
 
+import pytest
+from pydantic import AliasChoices, AliasPath
+from pydantic.fields import FieldInfo
+
+from brain.app import Settings
 from brain.config import assert_valid, check, required_for
+
+REPO = Path(__file__).resolve().parents[2]
+ENV_EXAMPLE = REPO / ".env.example"
+
+#: Where a variable can actually be read from. Documentation is deliberately absent: a
+#: variable mentioned only in a runbook is a variable nothing reads, and a `.env.example`
+#: that accumulates those becomes a list of things to guess at rather than a list of what
+#: to set.
+READERS = (
+    "src",
+    "migrations",
+    "ops",
+    ".github",
+    "Makefile",
+    "Dockerfile",
+    "alembic.ini",
+    "docker-compose.yml",
+    "docker-compose.lite.yml",
+    "docker-compose.staging.yml",
+)
 
 
 # --------------------------------------------------------------- requirements
@@ -68,6 +94,72 @@ def test_a_cors_wildcard_in_production_is_a_problem() -> None:
     assert any(p.setting == "cors_origins" for p in problems)
 
 
+@pytest.mark.parametrize(
+    "origins",
+    [
+        "*,https://console.example.com",
+        "https://console.example.com,*",
+        "https://console.example.com, * ",
+    ],
+)
+def test_a_wildcard_beside_a_real_origin_is_still_a_wildcard(origins: str) -> None:
+    """The spelling this check missed, and the likely one.
+
+    `serve.py` hands the setting over comma-joined, and this compared the whole joined string
+    to `"*"`. So the wildcard on its own was caught and the wildcard *plus* a real origin was
+    not, which is the version that actually happens: somebody adds the console origin and
+    forgets to take the wildcard out, and the setting now looks configured.
+
+    For CORS alone that is a browser convenience. It stops being one on the widget mint path,
+    where an allowed origin is permission to mint anonymous credentials against a client's
+    brain.
+
+    Delete this and the check is satisfiable by appending anything to the wildcard."""
+    problems = check(
+        "production",
+        {"database_url": "postgresql://real", "valkey_url": "redis://x", "cors_origins": origins},
+    )
+
+    assert any(p.setting == "cors_origins" for p in problems)
+
+
+def test_a_cors_wildcard_is_a_problem_in_staging_too() -> None:
+    """Staging holds a copy of the same shape of data and is reachable from the same
+    internet. The check fired only in production, which is the one environment where somebody
+    is most careful anyway."""
+    problems = check(
+        "staging",
+        {"database_url": "postgresql://real", "valkey_url": "redis://x", "cors_origins": "*"},
+    )
+
+    assert any(p.setting == "cors_origins" for p in problems)
+
+
+def test_development_keeps_the_wildcard_escape_hatch() -> None:
+    """So the check cannot be widened into refusing every wildcard everywhere, which would
+    satisfy both tests above and make local work annoying enough to be switched off. A
+    developer's ports move, and a machine with no client data on it is not what this
+    protects."""
+    problems = check("development", {"cors_origins": "*"})
+
+    assert not any(p.setting == "cors_origins" for p in problems)
+
+
+def test_a_named_origin_list_is_not_flagged() -> None:
+    """The positive case. A check that flagged every non-empty list would satisfy the three
+    above and stop anybody configuring CORS at all."""
+    problems = check(
+        "production",
+        {
+            "database_url": "postgresql://real",
+            "valkey_url": "redis://x",
+            "cors_origins": "https://console.example.com,https://www.client.example",
+        },
+    )
+
+    assert not any(p.setting == "cors_origins" for p in problems)
+
+
 # ------------------------------------------------------------------ reporting
 def test_every_problem_is_reported_at_once() -> None:
     """Reporting one at a time turns a misconfigured deployment into a sequence of
@@ -91,6 +183,82 @@ def test_assert_valid_raises_with_everything_in_the_message() -> None:
 
 def test_assert_valid_is_silent_when_there_is_nothing_wrong() -> None:
     assert_valid("production", {"database_url": "postgresql://real", "valkey_url": "redis://x"})
+
+
+# ------------------------------------- the example file documents them all (M31.3.1.2)
+def _documented() -> set[str]:
+    """Every variable the example actually assigns. A name inside a comment is an
+    explanation, not a declaration, so only assignments count."""
+    return {
+        line.split("=")[0]
+        for line in ENV_EXAMPLE.read_text(encoding="utf-8").splitlines()
+        if re.match(r"^[A-Z][A-Z0-9_]*=", line)
+    }
+
+
+def _accepted_names(name: str, field: FieldInfo) -> set[str]:
+    """Every environment variable pydantic-settings would populate this field from.
+
+    Derived from the model rather than typed out, which is the whole point: a field added
+    with no alias gets `BRAIN_` plus its name, a field with `AliasChoices` gets exactly the
+    names it lists, and neither has to be remembered by whoever adds the next one.
+    """
+    alias = field.validation_alias
+    if isinstance(alias, AliasChoices):
+        return {str(choice) for choice in alias.choices if not isinstance(choice, AliasPath)}
+    if isinstance(alias, str):
+        return {alias}
+    prefix = str(Settings.model_config.get("env_prefix") or "")
+    return {f"{prefix}{name}".upper()}
+
+
+@pytest.mark.parametrize("setting", sorted(Settings.model_fields))
+def test_every_setting_the_application_reads_is_documented_in_the_example(setting: str) -> None:
+    """Parametrised from `Settings` itself, so a new setting arrives here already failing.
+
+    This is the whole of M31.3.1.2 and it only works in this direction. A test asserting the
+    example is well formed passes on an example that is missing half the settings, because a
+    shorter file is still a valid file. What makes the example worth having is that it is
+    complete, and completeness is only checkable against the object doing the reading.
+
+    Deleting this means the next setting is added with a default, works everywhere the
+    default is right, and is discovered by whoever deploys into the environment where it is
+    not - with nothing in the example to tell them the variable exists.
+    """
+    accepted = _accepted_names(setting, Settings.model_fields[setting])
+    assert accepted & _documented(), (
+        f"{setting} is read from {sorted(accepted)} and .env.example documents none of them"
+    )
+
+
+@pytest.mark.parametrize("variable", sorted(_documented()))
+def test_every_variable_the_example_lists_is_read_by_something(variable: str) -> None:
+    """The other direction, and it decays faster than the first. A setting that is removed
+    from the code leaves its line in the example, and the line reads exactly like the ones
+    that still matter: somebody sets it, nothing happens, and they go looking for the bug in
+    their own configuration.
+
+    `Settings` is checked first because pydantic derives most of these names rather than
+    spelling them, so `BRAIN_CORS_ORIGINS` appears nowhere in the source and is read all the
+    same. Everything else has to appear somewhere that runs.
+    """
+    for name, field in Settings.model_fields.items():
+        if variable in _accepted_names(name, field):
+            return
+
+    for root in READERS:
+        where = REPO / root
+        paths = (
+            [p for p in where.rglob("*") if p.is_file() and p.suffix not in {".md", ".pyc"}]
+            if where.is_dir()
+            else [where]
+        )
+        for path in paths:
+            if "__pycache__" in path.parts:
+                continue
+            if variable in path.read_text(encoding="utf-8", errors="ignore"):
+                return
+    pytest.fail(f"{variable} is documented in .env.example and nothing reads it")
 
 
 def test_the_launcher_refuses_to_bind_a_port_on_a_bad_config(

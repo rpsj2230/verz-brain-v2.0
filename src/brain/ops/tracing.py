@@ -61,16 +61,25 @@ starts seeing trace-payload reads in the client-facing audit view. `brain.ops.de
 met this same boundary and refused to widen for the same reason; deciding it differently
 here would leave two answers to one question in the same package.
 
-Task ids: M32.1.2.1, M32.1.2.2, M32.1.2.3, M32.1.2.4, M32.1.2.5
+**Nothing here is kept for ever, and that follows from the first paragraph.** A trace
+ledger with no expiry becomes the longest-lived copy of the business: it outlives the
+records it describes, the permissions that governed them, and the people who could read
+them. So every kind of trace record states a window and a reason, and the three windows
+nest - an observation may not outlive the trace that is the only way to reach it, and a
+blob may not outlive the observation that points at it. An orphaned observation is not a
+risk anybody weighed, it is storage nobody can navigate to and everybody keeps paying for.
+
+Task ids: M32.1.1.3, M32.1.2.1, M32.1.2.2, M32.1.2.3, M32.1.2.4, M32.1.2.5
 """
 
 from __future__ import annotations
 
+import enum
 import re
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Final
+from typing import Final, assert_never
 
 from brain.config import REQUIRED
 
@@ -256,6 +265,136 @@ def mask(span: Span) -> Span:
         payload_in=mask_value(span.payload_in),
         payload_out=mask_value(span.payload_out),
     )
+
+
+# ----------------------------------------------------------------- retention
+class TraceRecord(enum.StrEnum):
+    """The three things a trace ledger stores, which have three different costs.
+
+    Separated because they are retained separately in Langfuse and because they live in
+    different stores: the trace row is in Postgres, the observations are in ClickHouse, and
+    anything large is in the blob store. One retention number for all three would be set by
+    whichever of those bills arrived first.
+    """
+
+    #: The parent record: one question, one answer, who asked, how long it took.
+    TRACE = "trace"
+    #: The spans under it: each model call, each tool call, each retrieval.
+    OBSERVATION = "observation"
+    #: Anything too large to inline, in the S3-compatible store.
+    BLOB = "blob"
+
+
+@dataclass(frozen=True)
+class Retention:
+    """How long one kind of trace record is kept, and why that number.
+
+    `because` is required for the reason `brain.ops.storage.Bucket.retention_reason` is: a
+    retention nobody can explain is one that gets extended the first time an investigation
+    wants an older trace, and the extension is permanent because nobody knows what the
+    original number was protecting.
+    """
+
+    record: TraceRecord
+    days: int
+    because: str
+
+    def __post_init__(self) -> None:
+        if self.days < 1:
+            # There is no unbounded option and no zero. Zero would mean traces that vanish
+            # before anybody can read them, which reads in an incident as the ledger being
+            # broken; unbounded is the failure this whole module argues against.
+            msg = f"{self.record.value} retention is {self.days} days, which is not a window"
+            raise TracingError(msg)
+        if not self.because.strip():
+            msg = f"{self.record.value} retention states no reason"
+            raise TracingError(msg)
+
+
+RETENTION: Final[tuple[Retention, ...]] = (
+    Retention(
+        record=TraceRecord.TRACE,
+        days=30,
+        because=(
+            "long enough to investigate anything a client reports in the month it happened, "
+            "and short enough that the ledger is never the oldest copy of who asked what"
+        ),
+    ),
+    Retention(
+        record=TraceRecord.OBSERVATION,
+        days=30,
+        because=(
+            "the same window as the trace, because a trace whose spans have expired says "
+            "that something happened and cannot say what, which is the half nobody needs"
+        ),
+    ),
+    Retention(
+        record=TraceRecord.BLOB,
+        days=7,
+        because=(
+            "the shortest of the three: a blob is what was too large to inline, so it is "
+            "the most likely of the three to be a copy of a record, and it is only wanted "
+            "while somebody is actively looking at the run that produced it"
+        ),
+    ),
+)
+
+
+def retention_for(record: TraceRecord) -> Retention:
+    """The window for this kind of record.
+
+    `assert_never` for the reason `brain.ops.storage.bucket_for` uses it: a fourth kind of
+    trace record cannot reach production without somebody deciding how long it is kept. A
+    dictionary lookup with a default would give it whatever the default was, and the
+    default in every system that has one is "the longest".
+    """
+    for entry in RETENTION:
+        if entry.record is record:
+            return entry
+    match record:  # pragma: no cover - unreachable while RETENTION is complete
+        case TraceRecord.TRACE | TraceRecord.OBSERVATION | TraceRecord.BLOB:
+            msg = f"{record.value} has no retention declared"
+            raise TracingError(msg)
+        case _:
+            assert_never(record)
+
+
+def retention_gaps(windows: Sequence[Retention] | None = None) -> tuple[str, ...]:
+    """Every way a set of windows does not hold together.
+
+    Two nesting rules and one closure rule. The nesting is what stops the ledger paying to
+    store things nothing can reach: an observation is reached through its trace and a blob
+    through its observation, so outliving the parent is not extra safety, it is a bill for
+    data with no route to it.
+
+    The windows are a parameter defaulting to the declared set, for the reason
+    `brain.ops.queue.concurrency_gaps` takes one: a check that can only ever be run against
+    the constant beside it cannot be shown to fail, and a check nobody has seen fail is a
+    check nobody knows works.
+    """
+    declared_windows = RETENTION if windows is None else tuple(windows)
+    by_record = {entry.record: entry for entry in declared_windows}
+    findings: list[str] = []
+    for record in TraceRecord:
+        if record not in by_record:
+            findings.append(f"{record.value}: no retention declared")
+    if set(by_record) != set(TraceRecord):
+        return tuple(findings)
+
+    trace = by_record[TraceRecord.TRACE]
+    observation = by_record[TraceRecord.OBSERVATION]
+    blob = by_record[TraceRecord.BLOB]
+    if observation.days > trace.days:
+        findings.append(
+            f"observations are kept {observation.days} days and traces {trace.days}; "
+            "an observation outliving its trace is unreachable and still billed"
+        )
+    if blob.days > observation.days:
+        findings.append(
+            f"blobs are kept {blob.days} days and observations {observation.days}; "
+            "a blob outliving the observation that points at it is unreachable and still billed"
+        )
+    return tuple(findings)
 
 
 def may_read_payloads(realm_roles: Iterable[str]) -> bool:

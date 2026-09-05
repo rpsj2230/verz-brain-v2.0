@@ -35,18 +35,42 @@ Rejected: sizing concurrency from the host's core count. The constraint on this 
 memory, not CPU, and the box is shared - `brain.ops.wiring` holds the budget. Eight workers
 that fit the cores and not the memory limit are eight workers that get OOM-killed together.
 
+**Crash recovery is a heartbeat in a row, not a lock in a session, and that is the fourth
+time transaction pooling has decided a design here.** The elegant construction is a session
+advisory lock per running job: the backend dies with the worker, the lock goes, and a job
+holding no lock is orphaned. Behind PgBouncer in transaction mode that construction reports
+every running job as orphaned within milliseconds, because the lock is held by whichever
+backend served that one transaction and is released when it ends. So `verdict_for` reads a
+timestamp the worker wrote in its own transaction, which is state in a row and survives
+being handed a different backend.
+
+**Re-drive is not retry, and the two are counted separately.** A retry is the job asking
+for another go after failing. A re-drive is the machine dying underneath a job that never
+reached a verdict. Sharing one counter means a job on a host that OOM-kills twice a night
+exhausts its retry budget and is dead-lettered as though it were a bad job - on the one
+host where OOM kills are the expected failure, because it is shared with somebody else's
+production.
+
+**A job that is not safe to repeat is never re-driven, and not declaring is not declaring
+it safe.** `Redrive.UNSAFE` is the default. Re-driving a job that has already sent an email
+sends it twice, and nothing downstream can tell that from two people asking. Those go to
+`QUARANTINE`, where a person decides, because the honest state of an interrupted side
+effect is "nobody knows whether it happened".
+
 What is not claimed here: Procrastinate is not a dependency of this repository and no
 worker process exists, so M32.4.1.1 and M32.4.1.4 are policy in this file and nothing
 running. The connection rule and the concurrency budget are what a worker will have to
 satisfy, and are tested as such.
 
-Task ids: M32.4.2.1, M32.4.2.2, M32.4.2.3
+Task ids: M32.4.1.3, M32.4.2.1, M32.4.2.2, M32.4.2.3
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+import enum
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from typing import Final, Protocol
 from urllib.parse import urlsplit
 
@@ -101,6 +125,20 @@ class QueueError(Exception):
     """Raised when a job, a connection or a concurrency allocation cannot be deployed."""
 
 
+class Redrive(enum.StrEnum):
+    """Whether a job interrupted mid-flight may be run again without asking anybody.
+
+    Two values and no third. A "probably safe" rung would be selected by whoever is in a
+    hurry, and the failure it produces - one duplicated side effect, weeks later, in a
+    client's inbox - arrives too far from the decision for anybody to connect the two.
+    """
+
+    #: Running it twice changes nothing that the first run already changed.
+    SAFE = "safe"
+    #: It does something the world can see. A second run is a second thing done.
+    UNSAFE = "unsafe"
+
+
 @dataclass(frozen=True)
 class Job:
     """One unit of deferred work: what to run, for whom, and which identifiers it needs.
@@ -114,6 +152,10 @@ class Job:
     task: str
     traffic_class: TrafficClass
     args: Mapping[str, str | int] = field(default_factory=dict)
+    #: Whether this job may simply be run again after its worker died mid-flight. Defaults
+    #: to unsafe, so a task author who has not thought about it gets the answer that cannot
+    #: send a second email.
+    redrive: Redrive = Redrive.UNSAFE
 
     def __post_init__(self) -> None:
         if not self.task.strip():
@@ -219,6 +261,145 @@ def queue_url_refusals(queue_url: str, *, app_url: str = "") -> tuple[str, ...]:
                 "transaction pooler. A queue does not work around one; it does not use one."
             )
     return tuple(findings)
+
+
+# ----------------------------------------------------------------- crash recovery
+#: How often a running worker writes its heartbeat. Written in the worker's own
+#: transaction, because a transaction pooler hands the next statement to a different
+#: backend and anything held in a session does not survive that.
+HEARTBEAT_SECONDS: Final = 15
+
+#: How many missed heartbeats before a job is treated as orphaned. Four rather than one,
+#: and the multiple is the whole point: a worker paused by memory pressure on a shared
+#: host, or waiting on a slow connector, misses heartbeats while being perfectly alive.
+#: Re-driving a job that is still running produces two of it, which for a job with a side
+#: effect is worse than the job never finishing.
+STALE_AFTER_HEARTBEATS: Final = 4
+
+#: How many times a job may be re-driven before a person looks at it. A job that kills its
+#: worker will kill the next one too, and an uncapped re-drive turns one poison pill into a
+#: worker that never processes anything else.
+MAX_REDRIVES: Final = 3
+
+#: How far ahead of us a heartbeat may be before we call it clock skew rather than a
+#: heartbeat. Two hosts, two clocks, and NTP not yet settled after a reboot.
+CLOCK_SKEW_TOLERANCE_SECONDS: Final = 30
+
+
+def stale_after() -> timedelta:
+    return timedelta(seconds=HEARTBEAT_SECONDS * STALE_AFTER_HEARTBEATS)
+
+
+@dataclass(frozen=True)
+class InFlight:
+    """A job the queue believes is running, as the row says.
+
+    `redrives` is separate from any retry count the queue keeps, and that separation is the
+    reason this dataclass exists rather than a flag on `Job`. A retry is the job asking for
+    another go; a re-drive is the machine dying underneath one. Counting them together
+    dead-letters healthy jobs on a host whose expected failure is an OOM kill.
+    """
+
+    job_id: str
+    task: str
+    worker_id: str
+    heartbeat_at: datetime
+    redrives: int = 0
+    redrive: Redrive = Redrive.UNSAFE
+
+    def __post_init__(self) -> None:
+        if self.heartbeat_at.tzinfo is None:
+            # Same rule as every other timestamp in this package. Two workers on two hosts
+            # produce an ordering that cannot be compared, and the comparison is the only
+            # thing this record is for.
+            msg = f"heartbeat for {self.job_id!r} has no timezone"
+            raise QueueError(msg)
+        if self.redrives < 0:
+            msg = f"job {self.job_id!r} reports {self.redrives} re-drives"
+            raise QueueError(msg)
+
+
+class Verdict(enum.StrEnum):
+    """What to do with one in-flight job. Closed, because each value is a different action.
+
+    There is deliberately no `UNKNOWN`. Every row gets a decision, and a sweep that can
+    return "not sure" returns it for the rows nobody has thought about, which are exactly
+    the rows that then sit in `running` for ever.
+    """
+
+    #: Its heartbeat is fresh. Leave it alone.
+    RUNNING = "running"
+    #: Orphaned, and safe to simply run again.
+    REDRIVE = "redrive"
+    #: Orphaned, and nobody can say whether its side effect happened. A person decides.
+    QUARANTINE = "quarantine"
+    #: Re-driven too often. It is doing this to workers, not having it done to it.
+    DEAD_LETTER = "dead_letter"
+
+
+def verdict_for(entry: InFlight, now: datetime) -> Verdict:
+    """What becomes of this job. The order of the three checks is the design.
+
+    Freshness first, unconditionally. A job that is running must never be dead-lettered
+    because it happens to carry a high re-drive count from last week, and it must never be
+    quarantined for being unsafe: it has not been interrupted, so there is nothing to
+    decide.
+
+    Then the cap, before the safety question. A job that has been through the cap is a
+    poison pill whichever answer it gives about idempotency, and quarantining it instead
+    would put the same row in front of a person over and over.
+
+    A heartbeat in the future counts as fresh rather than as stale. Clock skew between two
+    hosts is real and its safe reading is "still running": treating a future timestamp as
+    old would re-drive live jobs during the exact window in which nobody trusts the clocks.
+    `clock_skew` reports it separately, so the condition is visible rather than silently
+    absorbed.
+
+    That case is carried by the subtraction being signed rather than by a branch. There was
+    an explicit `now < entry.heartbeat_at` clause here and mutation testing showed it was
+    dead: a negative elapsed time is already under any positive threshold, so removing the
+    clause changed nothing and no test could tell. A clause that reads as a guard and guards
+    nothing is worse than its absence, because the next person to touch this trusts it. What
+    must not appear is an `abs()` around the subtraction, which is the natural-looking edit
+    that turns a future heartbeat back into an ancient one.
+    """
+    if (now - entry.heartbeat_at) <= stale_after():
+        return Verdict.RUNNING
+    if entry.redrives >= MAX_REDRIVES:
+        return Verdict.DEAD_LETTER
+    if entry.redrive is Redrive.SAFE:
+        return Verdict.REDRIVE
+    return Verdict.QUARANTINE
+
+
+def redrive_plan(entries: Sequence[InFlight], now: datetime) -> dict[Verdict, tuple[str, ...]]:
+    """Every in-flight job sorted into what happens to it, keyed by verdict.
+
+    Every verdict is present as a key, including the empty ones. A caller writing
+    `plan.get(Verdict.QUARANTINE, ())` reads as though quarantine were optional, and a
+    recovery sweep whose most serious outcome can be missing by accident is a sweep that
+    reports a clean run while jobs wait for somebody who was never told.
+    """
+    grouped: dict[Verdict, list[str]] = {verdict: [] for verdict in Verdict}
+    for entry in entries:
+        grouped[verdict_for(entry, now)].append(entry.job_id)
+    return {verdict: tuple(job_ids) for verdict, job_ids in grouped.items()}
+
+
+def clock_skew(entries: Sequence[InFlight], now: datetime) -> tuple[str, ...]:
+    """Jobs whose heartbeat is far enough ahead of us to be a clock, not a heartbeat.
+
+    Separate from the verdict on purpose. Skew is a host problem and re-driving is a queue
+    problem, and folding one into the other would either re-drive live work or hide a
+    misconfigured clock behind a sweep that says everything is running.
+    """
+    tolerance = timedelta(seconds=CLOCK_SKEW_TOLERANCE_SECONDS)
+    return tuple(
+        f"{e.job_id!r} on worker {e.worker_id!r} heartbeat is "
+        f"{(e.heartbeat_at - now).total_seconds():.0f}s in the future"
+        for e in entries
+        if e.heartbeat_at - now > tolerance
+    )
 
 
 # ----------------------------------------------------------------- the seam

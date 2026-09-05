@@ -189,6 +189,68 @@ def squash(text: str) -> str:
     return " ".join(text.split())
 
 
+@functools.cache
+def _supersessions() -> tuple[tuple[str, str], ...]:
+    """Constraint text that a later migration has replaced, gathered from the migrations.
+
+    Read from the migrations rather than listed here, so that amending a constraint is one
+    file to edit rather than two. A migration that changes one exports `SUPERSEDES` mapping
+    the old rendered text to the new.
+    """
+    found: list[tuple[str, str]] = []
+    for path in sorted(VERSIONS.glob("*.py")):
+        replaced = getattr(migration_module(path), "SUPERSEDES", None)
+        if replaced:
+            found.extend((squash(old), squash(new)) for old, new in replaced.items())
+    return tuple(found)
+
+
+def test_a_migration_that_declares_a_supersession_actually_performs_it() -> None:
+    """`SUPERSEDES` is a claim, and `as_amended` believes it. Without this, a migration can
+    declare that it widened a constraint, not widen it, and the model-versus-migration
+    comparison passes while the database keeps the old one.
+
+    Found by mutation: making 0007's `upgrade` recreate the *narrow* list left every other
+    test in this file green. That is the guard on the guard, and it is the reason a
+    declaration read by a test has to be checked against the SQL the migration emits.
+
+    Asserted on the rendered SQL rather than the file's text, for the reason `rendered`
+    exists: a string in a constant that `upgrade` never executes builds nothing."""
+    for path in sorted(VERSIONS.glob("*.py")):
+        replaced = getattr(migration_module(path), "SUPERSEDES", None)
+        if not replaced:
+            continue
+        emitted = squash(rendered("upgrade", path))
+        for old, new in replaced.items():
+            assert squash(new) in emitted, (
+                f"{path.name} declares it supersedes {old!r} with {new!r}, and its upgrade "
+                f"never emits the replacement"
+            )
+            assert squash(old) not in emitted, (
+                f"{path.name} declares {old!r} superseded and its upgrade still writes it"
+            )
+
+
+def as_amended(sql: str) -> str:
+    """The creating migration's SQL, brought up to what later migrations left behind.
+
+    The comparison below renders the migration that *created* a table and holds it against
+    the current model. That is exactly right while nothing later touches the table, and it
+    becomes wrong the moment a migration legitimately amends a constraint: the model then
+    describes the database, the creating migration describes history, and the test fails for
+    being accurate.
+
+    Applying the later migrations' own declared substitutions keeps the property being
+    checked, which is that the migrations and the models do not drift, while letting a
+    schema change be a schema change. It does not weaken anything: an amendment nobody
+    declared is still caught, because nothing substitutes it.
+    """
+    amended = squash(sql)
+    for old, new in _supersessions():
+        amended = amended.replace(old, new)
+    return amended
+
+
 def table(qualified: str) -> Table:
     return metadata.tables[qualified]
 
@@ -747,7 +809,7 @@ def test_the_migration_builds_each_table_exactly_as_the_model_declares_it(
     in column type, width, nullability, default or constraint is caught rather than a
     difference in how either file is written."""
     expected = squash(str(CreateTable(table(qualified)).compile(dialect=DIALECT)))
-    assert expected in squash(rendered("upgrade"))
+    assert expected in as_amended(rendered("upgrade"))
 
 
 @pytest.mark.parametrize("qualified", CORE_TABLES)
@@ -1234,7 +1296,7 @@ def test_the_resolver_migration_builds_each_table_exactly_as_the_model_declares_
     The comparison is on rendered DDL, so a difference in type, width, nullability, default
     or constraint is caught rather than a difference in how either file is written."""
     expected = squash(str(CreateTable(table(qualified)).compile(dialect=DIALECT)))
-    assert expected in resolver_sql("upgrade")
+    assert expected in as_amended(resolver_sql("upgrade"))
 
 
 @pytest.mark.parametrize("qualified", RESOLVER_TABLES)

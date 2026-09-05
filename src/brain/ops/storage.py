@@ -58,7 +58,7 @@ Task ids: M32.3.1.2, M32.3.1.3, M32.3.1.4, M32.3.2.1, M32.3.2.2
 from __future__ import annotations
 
 import enum
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from typing import Final, Protocol, assert_never
 
@@ -200,15 +200,18 @@ def bucket_for(kind: ObjectKind) -> Bucket:
             assert_never(kind)
 
 
-def lifecycle_gaps() -> tuple[str, ...]:
+def lifecycle_gaps(buckets: Sequence[Bucket] | None = None) -> tuple[str, ...]:
     """Every bucket whose lifecycle does not hold, in words an operator can act on.
 
     Returns rather than raises, and returns all of them, because this is read by a
     reconciliation job comparing the declaration with a live store: the interesting output
-    is the whole list of differences, not the first one.
+    is the whole list of differences, not the first one. Which is also why the buckets are
+    a parameter defaulting to the declared set: the job's real input is what the live store
+    says, not what this file says, and a check that can only ever be run against the
+    constant beside it cannot be shown to fail.
     """
     findings: list[str] = []
-    for b in BUCKETS:
+    for b in BUCKETS if buckets is None else buckets:
         if b.public_read:
             findings.append(f"{b.name}: readable without credentials")
         if b.name in _MUST_BE_VERSIONED and not b.versioned:

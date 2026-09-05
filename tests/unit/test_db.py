@@ -1,13 +1,13 @@
 """Database metadata and connection-string handling.
 
-Task ids: M0.3.2, M0.3.7
+Task ids: M0.3.2, M0.3.7, M31.2.1.1
 """
 
 from __future__ import annotations
 
 import pytest
 
-from brain.db import EXTENSIONS, NAMING_CONVENTION, SCHEMAS, metadata, normalise_database_url
+from brain.db import EXTENSIONS, NAMING_CONVENTION, SCHEMAS, Base, metadata, normalise_database_url
 
 
 @pytest.mark.parametrize(
@@ -58,3 +58,65 @@ def test_metadata_carries_the_naming_convention() -> None:
     so migrations become one-way and a failed deploy has no way back."""
     assert metadata.naming_convention == NAMING_CONVENTION
     assert set(NAMING_CONVENTION) == {"ix", "uq", "ck", "fk", "pk"}
+
+
+# ------------------------------------------ the base every model inherits (M31.2.1.1)
+def test_the_declarative_base_is_the_metadata_that_carries_the_convention() -> None:
+    """The convention is only worth having if the base the models actually inherit from is
+    the one holding it. `DeclarativeBase` builds its own `MetaData` when a subclass assigns
+    none, and that default carries a naming convention for indexes alone.
+
+    So deleting the one assignment in `brain.db.Base` is not a visible regression: the models
+    still map, a test reading `metadata` directly still passes, and every table quietly moves
+    onto a second `MetaData` that names almost nothing. This asserts the two are one object,
+    which is the thing that would stop being true.
+    """
+    assert Base.metadata is metadata
+    assert Base.metadata.naming_convention == NAMING_CONVENTION
+
+
+def test_every_constraint_on_every_table_has_a_generated_name() -> None:
+    """The behaviour the convention exists for, asserted on the real tables rather than on
+    the dictionary of format strings that is supposed to produce them.
+
+    An unnamed check or foreign key is one PostgreSQL names for us, and PostgreSQL's choice is
+    not knowable from the models, so Alembic cannot write the `DROP CONSTRAINT` that reverses
+    it. The migration is then one-way, which is discovered at the moment somebody needs the
+    way back.
+
+    Deleting this leaves the convention asserted only as a dictionary, and a format string
+    that never reaches a constraint proves nothing. It also catches the other way this breaks:
+    a table declared on some other base, which inherits none of this and arrives here with
+    `None` where its names should be.
+    """
+    import brain.tables as tables
+
+    # Importing the package is what puts every model on `Base.metadata`. Asserted rather than
+    # assumed, because an empty table list would make everything below pass while checking
+    # nothing, which is how the traceability sweep spent its whole life green.
+    assert tables.AuditEntryRow.__table__ in Base.metadata.sorted_tables
+    assert len(Base.metadata.sorted_tables) > 10
+
+    prefixes = {
+        "PrimaryKeyConstraint": "pk_",
+        "ForeignKeyConstraint": "fk_",
+        "UniqueConstraint": "uq_",
+        "CheckConstraint": "ck_",
+    }
+    wrong: list[str] = []
+    for table in Base.metadata.sorted_tables:
+        for constraint in table.constraints:
+            expected = prefixes.get(type(constraint).__name__)
+            if expected is None:
+                continue
+            name = str(constraint.name or "")
+            if not name.startswith(expected):
+                wrong.append(f"{table.fullname}: {type(constraint).__name__} named {name!r}")
+        for index in table.indexes:
+            # `uq_` as well as `ix_`, and the exception is real rather than a loosening. A
+            # partial unique index carries a WHERE clause, a naming convention cannot express
+            # one, so those are named by hand and named as what they are: a uniqueness rule.
+            name = str(index.name or "")
+            if not name.startswith(("ix_", "uq_")):
+                wrong.append(f"{table.fullname}: index named {name!r}")
+    assert not wrong, wrong
