@@ -475,11 +475,27 @@ def _tracker_leaves_per_wave() -> dict[int, int]:
     return dict(counted)
 
 
-def _status_leaves_per_wave() -> dict[int, int]:
-    payload = json.loads(
-        (Path(__file__).resolve().parents[2] / "docs" / "status.json").read_text(encoding="utf-8")
-    )
-    return {int(w["wave"]): int(w["total"]) for w in payload["waves"]}
+def _wbs_leaves_per_wave() -> dict[int, int]:
+    """The partition the WBS itself declares: a leaf's own wave, else its module's.
+
+    Derived from the source rather than read from `docs/status.json`, which is generated at
+    build time and not committed - the first version of this test read that file, passed on
+    my machine and failed in CI with `FileNotFoundError`, which is the whole reason a test
+    should compare against the source and not against another derived artefact.
+
+    It is also the stronger comparison. `status.json` is one program's output; the WBS is
+    what both programs claim to be reading.
+    """
+    import collections
+
+    wbs = status.load_wbs(Path(__file__).resolve().parents[2] / "docs" / "wbs.json")
+    counted: collections.Counter[int] = collections.Counter()
+    for module in wbs["modules"]:
+        module_wave = int(module.get("wave", 0))
+        leaf_waves = module.get("leaf_waves", {})
+        for leaf in module["leaf_ids"]:
+            counted[int(leaf_waves.get(leaf, module_wave))] += 1
+    return dict(counted)
 
 
 def test_the_tracker_and_the_status_page_put_each_leaf_in_the_same_wave() -> None:
@@ -495,7 +511,21 @@ def test_the_tracker_and_the_status_page_put_each_leaf_in_the_same_wave() -> Non
     Compared per wave rather than on the totals, because two different partitions of 1150
     leaves sum to 1150 either way. Delete this and the two pages drift again, silently, and
     the person who notices is the client."""
-    assert _tracker_leaves_per_wave() == _status_leaves_per_wave()
+    assert _tracker_leaves_per_wave() == _wbs_leaves_per_wave()
+
+
+def test_the_generated_status_agrees_with_the_wbs_about_the_waves() -> None:
+    """The other half of the same property, and the half that decides what `/build` shows.
+
+    `build_status` is run rather than its output read, because `docs/status.json` is written
+    at build time and is not in the repository. Running it needs only the WBS and git, both
+    of which are here."""
+    repo = Path(__file__).resolve().parents[2]
+    wbs = status.load_wbs(repo / "docs" / "wbs.json")
+
+    built = status.build_status(repo, wbs)
+
+    assert {w.wave: w.total for w in built.waves} == _wbs_leaves_per_wave()
 
 
 def test_every_leaf_appears_exactly_once_on_the_tracker() -> None:
