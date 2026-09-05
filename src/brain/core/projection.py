@@ -28,6 +28,7 @@ Task ids: M11.4.4
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 #: Never projected, at any size, under any configuration. From the architecture's data
@@ -105,7 +106,7 @@ def is_forbidden(field: str) -> bool:
     return any(p.search(name) for p in NEVER_PROJECT_PATTERNS)
 
 
-def check_projection(entity: str, fields: dict[str, object]) -> list[ProjectionViolation]:
+def check_projection(entity: str, fields: Mapping[str, object]) -> list[ProjectionViolation]:
     """Every reason this projection is not allowed, not just the first.
 
     Returning one at a time turns writing a connector into a guessing game, where each
@@ -147,7 +148,7 @@ def check_projection(entity: str, fields: dict[str, object]) -> list[ProjectionV
     return violations
 
 
-def assert_projectable(entity: str, fields: dict[str, object]) -> None:
+def assert_projectable(entity: str, fields: Mapping[str, object]) -> None:
     """Raise with every violation at once. Called at the projection boundary."""
     violations = check_projection(entity, fields)
     if not violations:
