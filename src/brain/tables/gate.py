@@ -52,11 +52,18 @@ separate because they answer different questions and are read on different paths
 version is read on every single request for one principal, and a global counter read that
 often would be the hottest row in the database.
 
-Task ids: M1.4.1, M1.4.3, M1.4.5, M1.4.6, M1.4.7, M1.5.1, M2.1.1, M2.2.1, M4.2.1
+**The registry is a vocabulary, never a holding.** `gate.capability_registry` says which
+capability strings are meant to exist; the grant tables say who holds them. Keeping the two
+apart is the whole reason the registry can be reviewed at all - a row that declared both
+would be a grant nobody granted, made by whoever was tidying the vocabulary. So the registry
+carries no principal, no scope and no expiry, and nothing below gives it one.
+
+Task ids: M0.2.3, M1.4.1, M1.4.3, M1.4.5, M1.4.6, M1.4.7, M1.5.1, M2.1.1, M2.2.1, M4.2.1
 """
 
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime
 from typing import Any
@@ -80,12 +87,16 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from brain.core.department import SLUG_PATTERN
 from brain.core.entitlement import CAPABILITY_RE, VERBS
+from brain.core.envelope import TOOL_NAME_PATTERN as PYTHON_TOOL_NAME_PATTERN
 from brain.core.field_policy import NAME_PATTERN, Classification
 from brain.db import Base, SoftDeleteMixin, TimestampMixin
 from brain.tables.identity import PRINCIPAL_ID_CHARS, one_of
 
 #: `Capability.value` is `Field(max_length=200)`.
 CAPABILITY_CHARS = 200
+
+#: `ToolDefinition.name` is `Field(max_length=80)`.
+TOOL_NAME_CHARS = 80
 
 #: `FieldRule.entity` and `FieldRule.field` are `Field(max_length=60)` and `max_length=120`.
 ENTITY_CHARS = 60
@@ -95,6 +106,42 @@ FIELD_CHARS = 120
 #: on every construct this pattern uses; there is no lookaround, no non-greedy quantifier
 #: and no named group in it, which is the reason it can be shared at all.
 CAPABILITY_PATTERN = CAPABILITY_RE.pattern
+
+#: Python's named-group syntax, which PostgreSQL's regex engine does not have.
+_NAMED_GROUP = re.compile(r"\(\?P<[a-z_]+>")
+
+
+def _posix(pattern: str) -> str:
+    """The same regex with Python's named groups turned into ordinary ones.
+
+    `CAPABILITY_PATTERN` above can be shared verbatim because it uses nothing Python-only.
+    `brain.core.envelope.TOOL_NAME_PATTERN` cannot: it names its three groups so that a
+    caller splitting a tool name reads them off one match, and `(?P<source>` is a syntax
+    error to PostgreSQL. Stripping the names mechanically keeps the constraint derived from
+    the pattern rather than retyped beside it - a hand-written second copy of a grammar is a
+    grammar with two versions, and the one that gets fixed is whichever the person was
+    looking at.
+
+    Only named groups are handled, and deliberately nothing else. A lookaround or a
+    non-greedy quantifier appearing in one of these patterns would survive this function and
+    be refused by PostgreSQL when the migration runs, which is a loud failure in CI rather
+    than a constraint that quietly admits the wrong thing. `tests/unit/test_tables.py`
+    checks the rendered pattern carries no Python-only construct at all, so the failure
+    arrives before the migration does.
+    """
+    return _NAMED_GROUP.sub("(", pattern)
+
+
+#: `brain.core.envelope.TOOL_NAME_PATTERN`, as something PostgreSQL can read.
+#:
+#: Imported rather than restated, and the module it comes from is named here because that is
+#: the only thing keeping the two in step. There were three copies of this grammar and they
+#: disagreed: the model field and `brain.ops.sweeps` both said `name.name`, which admits
+#: `client.read`, while `brain.tools.registry.assert_tool_name` - the function that actually
+#: refuses a tool - required `source.verb_noun`. A check constraint mirroring either of the
+#: looser two would let this table record a name no tool could ever be registered under, so
+#: it mirrors the strictest, which is now the only one.
+TOOL_NAME_PATTERN = _posix(PYTHON_TOOL_NAME_PATTERN)
 
 #: `NAME_PATTERN` from `brain.core.field_policy`, which is deliberately the field half of
 #: the capability grammar: the names a policy can be written about are exactly the names a
@@ -136,6 +183,99 @@ def _reason_present(column: str = "reason") -> str:
     refuses "cover" and admits "aaaaaaaa", so it buys nothing and teaches people to pad.
     """
     return f"length(btrim({column})) > 0"
+
+
+class CapabilityRegistryRow(TimestampMixin, SoftDeleteMixin, Base):
+    """`gate.capability_registry`. Every capability that is meant to exist (M0.2.3).
+
+    The grammar and the validator have been in `brain.core.entitlement` since M0.2; what was
+    missing is the third thing the leaf names. A grammar says `read:clientt.name` is
+    well-formed. Nothing said whether anybody meant it to exist - so a typo in a grant and a
+    permission somebody deliberately created were the same row, and an access review reading
+    the grant table could not tell them apart. The registry is what makes the difference
+    visible: a capability nothing declares is a capability nobody reviewed.
+
+    **This table records that a capability exists, never that anybody holds it.** There is
+    no principal, no scope, no `not_after` and no `granted_by`, and none of them is an
+    oversight. A scope column here would be the widest reach the capability may be granted
+    in, which reads as a safety rail and behaves as a grant: whoever tidied the vocabulary
+    would have decided something about everybody's reach. Reach is decided in
+    `capability_grant` and `capability_pack_assignment`, one row per person, with a reason
+    attached.
+
+    **There is deliberately no foreign key from `capability_grant.capability` to here**, and
+    the reasons are worth stating because the missing key is the first thing a reader looks
+    for.
+
+    The mechanical one first: uniqueness on `capability` is partial - live rows only, for
+    the reason `principal_identity` gives - and PostgreSQL cannot back a foreign key with a
+    partial unique index. `gate.department.scope_slug` records the same trade. A total
+    unique constraint would buy the key at the price of making a retired capability's name
+    unusable forever.
+
+    The second reason survives even if the first were fixed. A grant may name
+    `read:client.*`, and `Capability.covers` expands that over field names the registry
+    lists one at a time. A foreign key would then either refuse every wildcard grant or
+    force the registry to carry a row for each wildcard anybody might write, which is a
+    vocabulary of patterns rather than of capabilities. So "every granted capability is a
+    registered one" is a query somebody runs, not a constraint the database holds, and this
+    docstring says so rather than leaving a reader to assume the key is there.
+
+    `required_by_tool` is nullable because not every capability is asked for by a tool.
+    `brain.core.redaction.OPAQUE_CAPABILITY` is demanded by the redactor, and a
+    `gate.field_policy` rule's `required_capability` gates a field rather than a call. What
+    the column buys where it is set is the review question that has no other answer: which
+    tool goes dark if this capability is retired.
+    """
+
+    __tablename__ = "capability_registry"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
+    )
+    capability: Mapped[str] = mapped_column(String(CAPABILITY_CHARS), nullable=False)
+
+    #: What holding this reaches, in words. Required for the reason a grant's `reason` is:
+    #: an undescribed permission is one nobody can review, and the review is the product.
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+
+    #: The tool that asks for it, where one does. See the class docstring.
+    required_by_tool: Mapped[str | None] = mapped_column(String(TOOL_NAME_CHARS), nullable=True)
+
+    __table_args__ = (
+        # The same predicate the grant table carries, from the same constant. This is the
+        # copy that matters: a grant is written by a person against a vocabulary, and if the
+        # vocabulary admits a shape the grant table refuses, the registry becomes a list of
+        # capabilities that cannot be granted.
+        CheckConstraint(
+            f"capability ~ '{CAPABILITY_PATTERN}'",
+            name="capability_grammar",
+        ),
+        CheckConstraint(
+            one_of("split_part(capability, ':', 1)", VERBS),
+            name="capability_verb",
+        ),
+        CheckConstraint(_reason_present("description"), name="described"),
+        # Mirrors `brain.core.envelope.TOOL_NAME_PATTERN`, which is the grammar
+        # `brain.tools.registry.assert_tool_name` refuses a tool on. See `TOOL_NAME_PATTERN`
+        # above. Null is admitted because most capabilities are asked for by no tool.
+        CheckConstraint(
+            f"required_by_tool IS NULL OR required_by_tool ~ '{TOOL_NAME_PATTERN}'",
+            name="tool_name_grammar",
+        ),
+        # One live row per capability. Two would make "what does this mean, and who owns it"
+        # depend on which came back first, which is the failure the registry exists to end
+        # rather than to reproduce. Partial, so a retired capability's name can be used
+        # again - a department wound up and restarted is an ordinary event and so is a
+        # capability renamed back.
+        Index(
+            "uq_capability_registry_capability_live",
+            "capability",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+        {"schema": "gate"},
+    )
 
 
 class CapabilityGrantRow(TimestampMixin, SoftDeleteMixin, Base):

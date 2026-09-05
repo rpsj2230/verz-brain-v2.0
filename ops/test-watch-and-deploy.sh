@@ -50,6 +50,15 @@ case "$1" in
     if [ -f "$STATE/rolled_to" ]; then echo 0 > "$STATE/ready_rc"; fi
     echo "Recreated"; exit 0 ;;
   logs) exit 0 ;;
+  create)
+    # `docker create <image>` prints a container id and starts nothing.
+    echo "stub-container"; exit 0 ;;
+  cp)
+    # `docker cp <cid>:/app/RELEASE.json -` streams a tar on the real thing. The reader
+    # only greps it, so a bare JSON body exercises the same path.
+    if [ -f "$STATE/manifest" ]; then cat "$STATE/manifest"; exit 0; fi
+    exit 1 ;;
+  rm) exit 0 ;;
 esac
 exit 0
 STUB
@@ -106,6 +115,41 @@ echo "  --- failure ceiling"
 rm -rf "$WORK/failed"; mkdir -p "$WORK/failed"
 echo 2 > "$WORK/failed/sha256_new"
 run_case "an image that already failed twice" 0 "sha256:new" "sha256:old" 1 "(no record)"
+
+# --- the task ids on the record (M38.1.3.5)
+#
+# The record has to say what went out, not only that something did. "When did this start
+# happening" is the question a deployment record is read to answer, and a line carrying
+# only a digest cannot answer it without the repository the server does not have.
+echo "  --- the release manifest"
+
+check_ids() {
+  name="$1"; manifest="$2"; expect="$3"
+  STATE="$WORK/state"; rm -rf "$STATE"; mkdir -p "$STATE"
+  echo 0 > "$STATE/pull_rc"; echo "sha256:new" > "$STATE/latest"
+  echo "sha256:old" > "$STATE/running"; echo 0 > "$STATE/ready_rc"
+  echo "sha-old" > "$STATE/commit"
+  [ -n "$manifest" ] && printf '%s' "$manifest" > "$STATE/manifest"
+
+  rec="$WORK/records.jsonl"; rm -f "$rec"; rm -rf "$WORK/failed"
+  set +e
+  STATE="$STATE" PATH="$WORK/bin:$PATH"     WATCH_RECORD="$rec" WATCH_FAILDIR="$WORK/failed" WATCH_DIR="$WORK/compose"     WATCH_READY_TRIES=1 WATCH_READY_GAP=0     sh "$HERE/watch-and-deploy.sh" >"$WORK/out" 2>&1
+  set -e
+
+  got="$(grep -o '"task_ids":"[^"]*"' "$rec" 2>/dev/null | tail -1 | cut -d'"' -f4)"
+  if [ "$got" = "$expect" ]; then
+    echo "  ok   $name -> ${expect:-(empty)}"; PASS=$((PASS + 1))
+  else
+    echo "  FAIL $name -> got '$got', wanted '${expect:-(empty)}'"; FAIL=$((FAIL + 1))
+  fi
+}
+
+check_ids "a manifest in the image puts its ids on the record"   '{"commit":"abc","task_ids":["M38.1.3.5","M12.1.1"],"built_at":"x"}'   "M38.1.3.5,M12.1.1"
+
+# An image built before the manifest existed, or built locally. The deploy must still
+# happen and still be recorded: refusing to deploy because a record would be incomplete
+# would make the bookkeeping more important than the system.
+check_ids "an image with no manifest still deploys and records" "" ""
 
 echo
 echo "$PASS passed, $FAIL failed"

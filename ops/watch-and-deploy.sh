@@ -70,14 +70,32 @@ wait_ready() {
   return 1
 }
 
-# M38.1.3.5. One line per deploy, appended, never rewritten. It is not the audit ledger:
-# the ledger lives in Postgres and nothing writes to it yet, and a deployment record that
-# depends on the application being up is a record that is missing for exactly the deploys
-# worth reading. This file survives the app being down, which is the point.
+# M38.1.3.5. One line per deploy, appended, never rewritten.
+#
+# **This file is the primary record and the ledger is the copy, not the other way round.**
+# The ledger lives in Postgres behind the application, so a record written only there is
+# missing for exactly the deploys worth reading: the ones where the app did not come up.
+# This file survives that. `brain.ops.deployments` reconciles it into the ledger once the
+# app is healthy, and anything here with no ledger entry stays visible rather than lost.
+#
+# The task ids come from the manifest CI baked into the image, read with `docker cp`
+# rather than by running the container. Running it would need a shell the image
+# deliberately does not have, and would mean starting a build we have not yet decided to
+# trust in order to find out what is in it.
+task_ids() {
+  cid="$(docker create "$1" 2>/dev/null)" || { printf ''; return 0; }
+  ids="$(docker cp "$cid:/app/RELEASE.json" - 2>/dev/null \
+         | tr -d '\000' \
+         | sed -n 's/.*"task_ids"[^]]*\[\([^]]*\)\].*/\1/p' \
+         | tr -d ' "' | tr -d '\n')"
+  docker rm -f "$cid" >/dev/null 2>&1 || true
+  printf '%s' "$ids"
+}
+
 record() {
   mkdir -p "$(dirname "$RECORD")"
-  printf '{"at":"%s","outcome":"%s","commit":"%s","image":"%s","previous":"%s"}\n' \
-    "$(date -Is)" "$1" "$2" "$3" "$4" >> "$RECORD"
+  printf '{"at":"%s","outcome":"%s","commit":"%s","image":"%s","previous":"%s","task_ids":"%s"}\n' \
+    "$(date -Is)" "$1" "$2" "$3" "$4" "${5:-}" >> "$RECORD"
 }
 
 # Failure bookkeeping, keyed on the image digest so a new build starts with a clean slate.
@@ -151,7 +169,7 @@ docker compose up -d --remove-orphans 2>&1 | grep -E 'Started|Recreated|Error' |
 if wait_ready; then
   log "ready"
   rm -f "$(fail_file "$after")"
-  record deployed "$(running_commit)" "$after" "$PREVIOUS"
+  record deployed "$(running_commit)" "$after" "$PREVIOUS" "$(task_ids "$IMAGE:latest")"
   exit 0
 fi
 

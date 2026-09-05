@@ -14,6 +14,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from brain.core.entitlement import Capability, EntitlementSet, Grant
+from brain.core.errors import to_public
 from brain.core.scope import Scope
 from brain.gate.resolve import (
     CACHE_TTL_SECONDS,
@@ -149,6 +150,57 @@ def test_a_failed_load_caches_nothing() -> None:
     with pytest.raises(ResolutionFailedError):
         resolve("p", versions=FakeVersions(), store=BrokenStore(), cache=cache)
     assert cache.data == {}
+
+
+class BrokenVersions:
+    """A version source that fails the way a real one does: with the driver's own error.
+
+    The message carries a connection string on purpose. That is what psycopg puts in an
+    OperationalError, and it is the thing that must not cross the gate.
+    """
+
+    def grants_version(self, principal_id: str) -> int:
+        del principal_id
+        msg = "connection to server at 'db' (172.18.0.3), port 5432 failed: password=hunter2"
+        raise RuntimeError(msg)
+
+
+def test_a_failed_version_read_raises_rather_than_leaking_the_driver_error() -> None:
+    """The store's load was guarded and this call was not, because it reads like
+    bookkeeping rather than I/O. It is a database read. Without the guard, whatever the
+    driver raises crosses the gate unchanged, and psycopg's own message names the host, the
+    address and the password it tried.
+
+    The driver's message is deliberately kept in `detail`, which goes to the log, and
+    deliberately kept out of `public_message`, which is what a person is shown. Both halves
+    are asserted: an error that told nobody anything would pass a test written only about
+    the leak, and would make the outage undiagnosable.
+
+    Deleting this leaves the guard with nothing holding it, and the next refactor that
+    tidies a try block away restores the leak silently."""
+    with pytest.raises(ResolutionFailedError) as caught:
+        resolve("p", versions=BrokenVersions(), store=FakeStore({}), cache=FakeCache())
+    exc = caught.value
+    assert "hunter2" not in to_public(exc)
+    assert "172.18.0.3" not in to_public(exc)
+    # And the operator still gets what they need, in the half that only reaches a log.
+    assert "grants version" in exc.detail
+    assert "hunter2" in exc.detail
+
+
+def test_a_failed_version_read_is_a_refusal_and_not_a_slower_answer() -> None:
+    """Falling through to the store without a version would be correct and useless: the
+    version source and the store are the same database, so the load is about to fail too.
+    All the fall-through buys is a second error and a stampede onto a database that is
+    already unwell.
+
+    Asserted through the store never being asked, because "it refused" and "it refused
+    after trying everything" look identical from the outside and only one of them is safe
+    under load."""
+    store = FakeStore({})
+    with pytest.raises(ResolutionFailedError):
+        resolve("p", versions=BrokenVersions(), store=store, cache=FakeCache())
+    assert store.loads == 0
 
 
 def test_a_store_returning_the_wrong_principal_is_refused() -> None:

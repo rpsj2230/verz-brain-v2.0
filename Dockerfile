@@ -52,6 +52,12 @@ COPY --from=builder --chown=brain:brain /app/src /app/src
 # The migrations and their config. Without these the migrate container starts, finds no
 # alembic.ini, and exits with "No 'script_location' key found" - which looks like a
 # configuration mistake rather than a missing file.
+# What this build contains, written by CI immediately before the build. The glob is what
+# makes a local `docker build` work without one: COPY fails on a missing literal path and
+# succeeds with zero matches on a pattern. A missing manifest is not an error - the app
+# treats it as "running from a checkout" - and making it one would break the build for the
+# only person able to fix it.
+COPY --chown=brain:brain RELEASE.jso[n] /app/
 COPY --chown=brain:brain alembic.ini /app/alembic.ini
 COPY --chown=brain:brain migrations /app/migrations
 # The tracker, architecture and the status computed from git at build time. Baking the

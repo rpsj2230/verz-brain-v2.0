@@ -118,7 +118,20 @@ def resolve(
     first time anyone edits grants without recomputing it, at which point the cache is
     keyed on one reach while the answer uses another.
     """
-    version = versions.grants_version(principal_id)
+    try:
+        version = versions.grants_version(principal_id)
+    except Exception as exc:
+        # The same guard as `store.load` below, and it was missing here for the same
+        # reason it is easy to miss: this call looks like bookkeeping rather than I/O. It
+        # is a database read, and whatever the driver raises would otherwise cross the
+        # gate unchanged, connection string and all.
+        #
+        # Refuses rather than carrying on without a version. Carrying on would mean
+        # skipping the cache and loading fresh, which is correct but useless: the version
+        # source and the store are the same database, so a failure here means the load is
+        # about to fail too, and the only thing the fall-through achieves is a second
+        # error and a thundering herd onto a database that is already unwell.
+        raise ResolutionFailedError(f"reading grants version for {principal_id}: {exc}") from exc
     key = cache_key(principal_id, version)
 
     cached = cache.get(key)

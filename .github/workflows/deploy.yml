@@ -65,6 +65,19 @@ jobs:
           uv run python -m brain.status
           cat docs/status.json | head -20
 
+      - name: Write the release manifest into the build context
+        # Computed here because this is the only machine in the chain that has a git
+        # repository. The server that runs the deploy does not, and neither does the
+        # container. Calling back to GitHub from the deploy script instead would make a
+        # deploy depend on an API being reachable at the moment it happens, which is the
+        # moment it is least likely to be.
+        #
+        # `fetch-depth: 0` above is what makes this work; a shallow clone has no tags and
+        # the manifest would silently carry no task ids.
+        run: |
+          uv run python -m brain.ops.release_manifest > RELEASE.json
+          cat RELEASE.json
+
       - uses: docker/setup-buildx-action@v3
 
       - uses: docker/login-action@v3

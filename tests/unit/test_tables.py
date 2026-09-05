@@ -17,8 +17,15 @@ The same line is drawn again for 0003. Its resolver, its counters and its trigge
 subject of `tests/unit/test_resolver.py`, which says which of its properties need a server;
 what is here is the shape of the nine tables it adds.
 
-Task ids: M1.2.1, M1.2.2, M1.2.3, M1.4.1, M1.4.3, M1.4.6, M1.4.7, M1.5.1, M2.1.1, M2.2.1,
-M4.2.1, M5.2.2, M5.3.1, M5.3.4, M24.1.1
+0004 adds two more. `gate.capability_registry` is checked here beside the other gate tables;
+`ops.setting` has its own file, `tests/unit/test_config_table.py`, because the property that
+matters about it is not a shape but a refusal - that nothing an operator tunes can widen
+anybody's reach - and that argument reads better in one place than scattered through this
+one. What is here for 0004 is the same thing as for the other two: does the migration build
+what the models declare, and does it drop what it builds.
+
+Task ids: M0.2.3, M1.2.1, M1.2.2, M1.2.3, M1.4.1, M1.4.3, M1.4.6, M1.4.7, M1.5.1, M2.1.1,
+M2.2.1, M4.2.1, M5.2.2, M5.3.1, M5.3.4, M24.1.1
 """
 
 from __future__ import annotations
@@ -27,6 +34,8 @@ import functools
 import importlib.util
 import io
 import re
+import subprocess
+import sys
 import types
 from pathlib import Path
 
@@ -39,13 +48,16 @@ from sqlalchemy.schema import CreateIndex, CreateTable
 
 import brain.tables as tables
 
-# Imported for its side effect as well as its constants: `brain.tables.__init__` does not
-# import this module, so without the line below `Base.metadata` would be missing three
-# tables and every exhaustive assertion here would quietly check a smaller set. That gap is
-# recorded on `ROUTING_TABLES_IN_DEPENDENCY_ORDER`; the import belongs in `__init__`.
+# Still imported by name for `ROUTING_TABLES_IN_DEPENDENCY_ORDER`, and no longer for its
+# side effect: `brain.tables.__init__` imports every table module in the package now, so
+# `Base.metadata` is complete after the line above. It was not, for as long as `routing.py`
+# existed without this file owning `__init__`, and every exhaustive assertion below was
+# quietly checking a smaller set. `test_importing_the_package_alone_registers_every_table`
+# is what stops that happening again.
 import brain.tables.routing as routing_tables
 from brain.audit.ledger import SUBJECT_KINDS, AuditAction
-from brain.core.entitlement import VERBS
+from brain.core.entitlement import CAPABILITY_RE, VERBS
+from brain.core.envelope import TOOL_NAME_PATTERN
 from brain.core.field_policy import Classification
 from brain.core.principal import Employment, PrincipalKind
 from brain.db import metadata
@@ -61,15 +73,23 @@ REPO = Path(__file__).resolve().parents[2]
 VERSIONS = REPO / "migrations" / "versions"
 MIGRATION = VERSIONS / "0002_core_tables.py"
 MIGRATION_RESOLVER = VERSIONS / "0003_resolver_and_tables.py"
+MIGRATION_REGISTRY = VERSIONS / "0004_capability_registry_and_config.py"
 
-#: The seven tables 0002 built. `brain.tables.TABLES_IN_DEPENDENCY_ORDER` still names exactly
-#: these, because `brain/tables/__init__.py` was outside the remit of the change that added
-#: the nine below.
-CORE_TABLES = tables.TABLES_IN_DEPENDENCY_ORDER
+#: The seven tables 0002 built, in the order it builds them. Written out here rather than
+#: read from `brain.tables.TABLES_IN_DEPENDENCY_ORDER`, which now covers all eighteen: a
+#: constant compared against itself checks nothing, and the point of these three tuples is
+#: that each migration's own list has something independent to disagree with.
+CORE_TABLES: tuple[str, ...] = (
+    "auth.principal",
+    "auth.principal_identity",
+    "gate.capability_grant",
+    "gate.capability_pack",
+    "gate.capability_pack_assignment",
+    "gate.field_policy",
+    "obs.audit_entry",
+)
 
-#: The nine 0003 adds, in the order a migration must create them. Written here rather than
-#: read from the migration, so that the migration's own tuple is compared against something
-#: rather than against itself.
+#: The nine 0003 adds, in the order a migration must create them.
 RESOLVER_TABLES: tuple[str, ...] = (
     "gate.scope",
     "gate.department",
@@ -80,7 +100,11 @@ RESOLVER_TABLES: tuple[str, ...] = (
     *routing_tables.ROUTING_TABLES_IN_DEPENDENCY_ORDER,
 )
 
-ALL_TABLES = CORE_TABLES + RESOLVER_TABLES
+#: And the two 0004 adds: the capability registry M0.2.3 asks for, and the settings table
+#: M31.3.1.4 does.
+REGISTRY_TABLES: tuple[str, ...] = ("gate.capability_registry", "ops.setting")
+
+ALL_TABLES = CORE_TABLES + RESOLVER_TABLES + REGISTRY_TABLES
 
 
 def _soft_deleted(qualified: tuple[str, ...]) -> tuple[str, ...]:
@@ -100,6 +124,11 @@ SOFT_DELETED = _soft_deleted(CORE_TABLES)
 #: that must not be able to go backwards, a session whose end is not a retirement, and an
 #: attempt row that would make the reconstructed chain a claim if it could be hidden.
 SOFT_DELETED_RESOLVER = _soft_deleted(RESOLVER_TABLES)
+
+#: Both of 0004's carry it, and on `ops.setting` it is load-bearing rather than habitual:
+#: retiring a setting row is how an override is removed, and the reader then falls back to
+#: the compiled default.
+SOFT_DELETED_REGISTRY = _soft_deleted(REGISTRY_TABLES)
 
 #: A PostgreSQL dialect to render DDL against. Taken from an engine rather than from
 #: `postgresql.dialect()` because that constructor is untyped and mypy runs strict here.
@@ -186,6 +215,54 @@ def test_every_table_the_domain_needs_is_registered_on_the_metadata() -> None:
     for qualified in ALL_TABLES:
         assert qualified in metadata.tables, f"{qualified} is not on the metadata"
     assert set(metadata.tables) == set(ALL_TABLES)
+
+
+def test_the_package_tuple_names_every_table_and_only_those() -> None:
+    """`brain.tables.TABLES_IN_DEPENDENCY_ORDER` is the one list anything outside this file
+    reads. It named only 0002's seven for as long as `routing.py` existed, which made it a
+    list of some of the tables - and a partial list is worse than none, because the three it
+    omitted looked accounted for."""
+    assert tables.TABLES_IN_DEPENDENCY_ORDER == ALL_TABLES
+    assert set(tables.TABLES_IN_DEPENDENCY_ORDER) == set(metadata.tables)
+
+
+def test_importing_the_package_alone_registers_every_table() -> None:
+    """The property the tuple above cannot check from inside this process.
+
+    Every test module in this suite imports table modules directly, so `metadata` is
+    complete here whether or not `brain.tables.__init__` imports anything at all. What
+    matters is what a *fresh* interpreter gets from `import brain.tables`, because that is
+    what `migrations/env.py` does and what autogenerate then compares the database against.
+    A module the package forgets to import is a table autogenerate would propose dropping,
+    and that is exactly the state `routing.py` shipped in.
+
+    A subprocess rather than an import-machinery trick: `metadata` is module-global and
+    already populated, so there is no honest way to ask this question in-process.
+    """
+    code = (
+        "import brain.tables as t;"
+        "from brain.db import metadata;"
+        "print(sorted(set(metadata.tables) ^ set(t.TABLES_IN_DEPENDENCY_ORDER)))"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=True
+    )
+    assert result.stdout.strip() == "[]", result.stdout
+
+
+def test_every_table_module_in_the_package_is_imported_by_it() -> None:
+    """The same rule stated against the directory rather than against the metadata, so the
+    failure names the file. A module that declares no table would pass the check above by
+    coincidence; this one says plainly that `brain/tables/x.py` exists and nothing imports
+    it."""
+    package = Path(str(tables.__file__)).parent
+    modules = sorted(p.stem for p in package.glob("*.py") if p.stem != "__init__")
+    source = (package / "__init__.py").read_text(encoding="utf-8")
+    for name in modules:
+        assert f"from brain.tables.{name} import" in source, (
+            f"brain/tables/{name}.py is never imported by the package, so `import "
+            "brain.tables` leaves whatever it declares off the metadata"
+        )
 
 
 def test_no_table_lands_in_the_public_schema() -> None:
@@ -404,6 +481,106 @@ def test_one_live_assignment_of_a_pack_per_principal() -> None:
     assert [c.name for c in index.columns] == ["principal_id", "pack_id"]
 
 
+# ------------------------------------------------- M0.2.3 the capability registry
+def test_the_registry_declares_a_capability_and_never_who_holds_it() -> None:
+    """The whole distinction the registry rests on. A scope, a principal or an expiry here
+    would be a grant made by whoever was tidying the vocabulary - it would read as a safety
+    rail and behave as a permission, and nothing would have recorded a reason for it. Reach
+    is decided one row per person in the grant tables, and this table is the list of words
+    those rows may use."""
+    columns = set(table("gate.capability_registry").columns.keys())
+    assert "capability" in columns
+    for forbidden in ("scope", "principal_id", "not_after", "granted_by", "pack_id"):
+        assert forbidden not in columns, f"the registry carries {forbidden}, which is a grant"
+
+
+def test_the_registry_mirrors_the_capability_grammar_from_the_python_constant() -> None:
+    """The database is the copy nobody re-reads, so it is the one that has to be generated.
+    A registry admitting a shape `gate.capability_grant` refuses would be a vocabulary of
+    capabilities that cannot be granted, and the failure would appear as a permission that
+    an administrator can see in the registry and cannot hand out."""
+    registry = checks("gate.capability_registry")
+    assert registry["ck_capability_registry_capability_grammar"] == (
+        f"capability ~ '{CAPABILITY_RE.pattern}'"
+    )
+    assert (
+        registry["ck_capability_registry_capability_grammar"]
+        == checks("gate.capability_grant")["ck_capability_grant_capability_grammar"]
+    )
+    # The grammar alone admits `delete:client`, which parses and means nothing.
+    verbs = registry["ck_capability_registry_capability_verb"]
+    assert [v for v in quoted_values(verbs) if v] == sorted(VERBS)
+
+
+def test_the_registry_names_a_capability_once_and_lets_a_retired_name_return() -> None:
+    """Two live rows for one capability would make "what does this mean" depend on which
+    came back first, which is the confusion the registry exists to end. Partial rather than
+    total, for the reason `principal_identity` gives: a total constraint would make a
+    retired capability's name unusable for good."""
+    index = indexes("gate.capability_registry")["uq_capability_registry_capability_live"]
+    assert index.unique
+    assert [c.name for c in index.columns] == ["capability"]
+    assert "deleted_at IS NULL" in str(index.dialect_options["postgresql"]["where"])
+
+
+def test_a_registered_capability_has_to_say_what_it_reaches() -> None:
+    """A capability nobody described is a capability nobody can review, and an unreviewable
+    permission is the thing the registry was added to make impossible."""
+    assert table("gate.capability_registry").columns["description"].nullable is False
+    assert (
+        checks("gate.capability_registry")["ck_capability_registry_described"]
+        == "length(btrim(description)) > 0"
+    )
+
+
+def test_the_registrys_tool_column_mirrors_the_strictest_tool_name_grammar() -> None:
+    """There were three copies of this grammar and they disagreed: two said `name.name`,
+    which admits `client.read`, and `brain.tools.registry` refused it. A check constraint
+    written against either loose copy would let this table record a tool name no tool could
+    ever be registered under, so it mirrors `brain.core.envelope.TOOL_NAME_PATTERN` - and
+    takes it from that constant rather than retyping it beside a comment naming it."""
+    sql = checks("gate.capability_registry")["ck_capability_registry_tool_name_grammar"]
+    assert "required_by_tool IS NULL OR required_by_tool ~ " in sql
+    # `client.read` is what the loose spelling admitted. It is not restated here - the
+    # `one_tool_grammar` sweep fails the build on a second copy of this pattern anywhere in
+    # the tree, and a test file is exactly where a fourth copy would look harmless.
+    strict = re.compile(TOOL_NAME_PATTERN)
+    assert not strict.match("client.read")
+    assert strict.match("laravel.get_client")
+
+
+def test_the_pattern_handed_to_postgresql_carries_no_python_only_construct() -> None:
+    """`TOOL_NAME_PATTERN` names its three groups so a caller can split a tool name off one
+    match, and `(?P<source>` is a syntax error to PostgreSQL. The stripping is mechanical so
+    the constraint stays derived from the constant; this is what says the mechanism was
+    enough, because a lookaround or a lazy quantifier would survive it and be refused only
+    when the migration runs."""
+    sql = checks("gate.capability_registry")["ck_capability_registry_tool_name_grammar"]
+    for python_only in ("(?P<", "(?=", "(?!", "(?<", "*?", "+?"):
+        assert python_only not in sql, f"the constraint carries {python_only}"
+    # And it is still the same grammar, not a loosened one.
+    stripped = sql.split("~ '", 1)[1].rstrip("'")
+    for name in ("laravel.get_client", "xero.list_invoices"):
+        assert re.match(stripped, name)
+    for name in ("client.read", "Laravel.get_client", "laravel.getclient"):
+        assert not re.match(stripped, name)
+
+
+def test_no_foreign_key_runs_from_a_grant_to_the_registry() -> None:
+    """The missing key is the first thing a reader looks for, so it is asserted rather than
+    left to a docstring. Two reasons it is absent: uniqueness on `capability` is partial and
+    PostgreSQL cannot back a foreign key with a partial unique index, and a grant may name
+    `read:client.*` while the registry lists the fields one at a time, so the key would
+    refuse every wildcard grant. "Every granted capability is a registered one" is a query
+    somebody runs, not a constraint the database holds."""
+    for qualified in ("gate.capability_grant", "gate.capability_pack_assignment"):
+        for constraint in table(qualified).constraints:
+            if not isinstance(constraint, ForeignKeyConstraint):
+                continue
+            for element in constraint.elements:
+                assert element.column.table.fullname != "gate.capability_registry"
+
+
 # ------------------------------------------------------------- M4.2.1 field policy
 def test_a_field_rule_may_only_ever_require_a_read() -> None:
     """`FieldRule._must_be_a_read`: a field policy gates returning a value, and returning is
@@ -509,19 +686,31 @@ def test_the_subject_grammar_admits_only_the_closed_set_of_kinds() -> None:
 # ------------------------------------------------------- the migration matches them
 def test_the_migration_creates_exactly_the_tables_the_models_declare() -> None:
     """A model with no table is a query that fails at runtime; a table with no model is a
-    table nothing maintains. Autogenerate cannot catch either, because `migrations/env.py`
-    imports `brain.db` and not `brain.tables`, so its metadata is empty."""
-    module = migration_module()
-    assert module.TABLES == tables.TABLES_IN_DEPENDENCY_ORDER
+    table nothing maintains.
+
+    Autogenerate is not a safety net for either. `migrations/env.py` does import
+    `brain.tables`, so its metadata is now the real one - but the migrations here are
+    written by hand and autogenerate has never run against this tree, so the only thing
+    comparing the two is this test.
+    """
+    core = migration_module()
     resolver = migration_module(MIGRATION_RESOLVER)
+    registry = migration_module(MIGRATION_REGISTRY)
+    assert core.TABLES == CORE_TABLES
     assert resolver.TABLES == RESOLVER_TABLES
+    assert registry.TABLES == REGISTRY_TABLES
+    # The package tuple is the three migrations end to end. Stated as an equality rather
+    # than as a set comparison, because the order is what a downgrade depends on.
+    end_to_end = tuple(core.TABLES) + tuple(resolver.TABLES) + tuple(registry.TABLES)
+    assert end_to_end == tables.TABLES_IN_DEPENDENCY_ORDER
     # Every table has a migration and every migration has a model. The union is the check
     # that matters: either half on its own would let a table be created twice or not at all.
-    assert set(module.TABLES) | set(resolver.TABLES) == set(metadata.tables)
-    assert not set(module.TABLES) & set(resolver.TABLES)
+    every = (set(core.TABLES), set(resolver.TABLES), set(registry.TABLES))
+    assert set().union(*every) == set(metadata.tables)
+    assert sum(len(s) for s in every) == len(set().union(*every)), "a table is created twice"
 
 
-@pytest.mark.parametrize("qualified", tables.TABLES_IN_DEPENDENCY_ORDER)
+@pytest.mark.parametrize("qualified", CORE_TABLES)
 def test_the_migration_builds_each_table_exactly_as_the_model_declares_it(
     qualified: str,
 ) -> None:
@@ -535,7 +724,7 @@ def test_the_migration_builds_each_table_exactly_as_the_model_declares_it(
     assert expected in squash(rendered("upgrade"))
 
 
-@pytest.mark.parametrize("qualified", tables.TABLES_IN_DEPENDENCY_ORDER)
+@pytest.mark.parametrize("qualified", CORE_TABLES)
 def test_the_migration_builds_every_index_the_model_declares(qualified: str) -> None:
     """An index that exists only in the model is an index that is never built, and the
     unique ones are constraints: without them the duplicate grant and the forked ledger
@@ -552,7 +741,7 @@ def test_the_downgrade_drops_everything_the_upgrade_creates() -> None:
     function is the one object that does not belong to a table and has to be named."""
     down = squash(rendered("downgrade"))
     up = squash(rendered("upgrade"))
-    for qualified in tables.TABLES_IN_DEPENDENCY_ORDER:
+    for qualified in CORE_TABLES:
         assert f"CREATE TABLE {qualified}" in up
         assert f"DROP TABLE {qualified}" in down
     assert "CREATE FUNCTION obs.audit_entry_is_append_only()" in up
@@ -564,7 +753,7 @@ def test_the_downgrade_drops_in_the_reverse_of_the_creation_order() -> None:
     foreign key, so a downgrade in the wrong order is a downgrade that cannot run - which
     is discovered during a rollback, at the worst possible moment."""
     down = rendered("downgrade")
-    positions = [down.index(f"DROP TABLE {q}") for q in tables.TABLES_IN_DEPENDENCY_ORDER]
+    positions = [down.index(f"DROP TABLE {q}") for q in CORE_TABLES]
     assert positions == sorted(positions, reverse=True)
 
 
@@ -591,12 +780,14 @@ def test_the_migration_changes_no_data() -> None:
 
 
 # --------------------------------------------------------------- row-level security
-@pytest.mark.parametrize("qualified", tables.TABLES_IN_DEPENDENCY_ORDER)
+@pytest.mark.parametrize("qualified", CORE_TABLES)
 def test_row_level_security_is_enabled_on_every_table(qualified: str) -> None:
     """A table without it is one forgotten WHERE clause away from returning every row to
     every caller, and it looks correct in every test that happens to use a wide principal.
-    `sweep_rls` checks only `proj`, `know`, `agent`, `mem` and `er`, so nothing in CI covers
-    the tables this migration creates; this is what does."""
+
+    `sweep_rls` covers all nine schemas now and would catch these too, but only against a
+    live database. This checks the DDL, so a table shipped without a policy fails on a
+    laptop rather than in the CI job that has Postgres."""
     assert f"ALTER TABLE {qualified} ENABLE ROW LEVEL SECURITY" in squash(rendered("upgrade"))
 
 
@@ -637,7 +828,7 @@ def test_nothing_is_granted_the_privilege_to_hard_delete() -> None:
             assert "DELETE" not in line.upper(), line.strip()
 
 
-@pytest.mark.parametrize("qualified", tables.TABLES_IN_DEPENDENCY_ORDER)
+@pytest.mark.parametrize("qualified", CORE_TABLES)
 def test_every_table_grants_the_application_role_what_it_needs(qualified: str) -> None:
     """0001 granted no default privileges on purpose, so a table that forgets to grant is a
     table the application cannot read at all - and the failure arrives at the first request
@@ -1063,9 +1254,12 @@ def test_the_resolver_migration_changes_no_data() -> None:
 @pytest.mark.parametrize("qualified", RESOLVER_TABLES)
 def test_row_level_security_is_enabled_on_every_table_0003_adds(qualified: str) -> None:
     """A table without it is one forgotten WHERE clause away from returning every row to
-    every caller. `sweep_rls` covers `auth`, `gate`, `obs`, `proj`, `know`, `agent`, `mem` and
-    `er` and not `ops`, so nothing in CI would notice the three routing tables missing it.
-    This is what does."""
+    every caller.
+
+    `sweep_rls` used to check eight of the nine schemas and not `ops`, so nothing in CI would
+    have noticed the three routing tables missing this; the sweep's list now includes `ops`
+    and this test is no longer the only thing standing behind them. It stays because a sweep
+    needs a database and this does not."""
     assert f"ALTER TABLE {qualified} ENABLE ROW LEVEL SECURITY" in resolver_sql("upgrade")
 
 
@@ -1110,5 +1304,143 @@ def test_nothing_0003_runs_needs_a_superuser() -> None:
     undo that from the inside: the triggers would do more than the application can, which is
     a privilege escalation living inside the permission system."""
     emitted = resolver_sql("upgrade").upper() + resolver_sql("downgrade").upper()
+    for forbidden in ("SUPERUSER", "BYPASSRLS", "SET ROLE", "SECURITY DEFINER"):
+        assert forbidden not in emitted, f"the migration runs {forbidden}"
+
+
+# ================================== 0004: the capability registry and the settings table
+# The refusals `ops.setting` is built around - that no row in it can widen anybody's reach -
+# are the subject of `tests/unit/test_config_table.py`. What is below is the same set of
+# questions 0002 and 0003 answer: does the migration build what the models declare, does it
+# reverse, does every table carry a policy and a grant.
+
+
+def registry_sql(direction: str) -> str:
+    return squash(rendered(direction, MIGRATION_REGISTRY))
+
+
+def test_the_registry_migration_satisfies_the_migration_policy() -> None:
+    """The policy is what stops a rename written as a drop plus an add, a not-null column
+    with no default, and schema mixed with data."""
+    assert check_file(MIGRATION_REGISTRY) == []
+
+
+def test_the_registry_migration_needed_no_merge_to_get_past_the_dml_check() -> None:
+    """0003 had to write its trigger bodies as `MERGE`, because `migration_policy.DML`
+    searches a migration's *text* and cannot tell a data migration from a statement inside a
+    function body that runs months later. This migration has no function and no trigger, so
+    the exemption is not being used - and that is worth asserting rather than assuming,
+    because a later edit that adds one would silently need the same workaround.
+
+    Read off the emitted SQL rather than the file's text, for the reason `rendered` gives:
+    the migration's own docstring discusses `MERGE` at length, and a source-text search
+    cannot tell a statement from a paragraph about one."""
+    emitted = registry_sql("upgrade").upper() + registry_sql("downgrade").upper()
+    for absent in ("CREATE FUNCTION", "CREATE TRIGGER", "MERGE INTO", "$$"):
+        assert absent not in emitted, f"0004 emits {absent}"
+
+
+@pytest.mark.parametrize("qualified", REGISTRY_TABLES)
+def test_the_registry_migration_builds_each_table_exactly_as_the_model_declares_it(
+    qualified: str,
+) -> None:
+    """Same reasoning as for 0002 and 0003: the migration copies the models' predicates
+    rather than importing them, so the copy needs something comparing it or it rots without
+    saying so. The comparison is on rendered DDL, so a difference in type, width,
+    nullability, default or constraint is caught rather than a difference in wording."""
+    expected = squash(str(CreateTable(table(qualified)).compile(dialect=DIALECT)))
+    assert expected in registry_sql("upgrade")
+
+
+@pytest.mark.parametrize("qualified", REGISTRY_TABLES)
+def test_the_registry_migration_builds_every_index_the_model_declares(qualified: str) -> None:
+    """An index that exists only in the model is never built, and the unique ones here are
+    constraints: without them one capability can be registered twice and one setting key can
+    have two live values, which makes the effective configuration depend on which row came
+    back first."""
+    emitted = registry_sql("upgrade")
+    for index in table(qualified).indexes:
+        expected = squash(str(CreateIndex(index).compile(dialect=DIALECT)))
+        assert expected in emitted, f"{index.name} is never created"
+
+
+def test_the_registry_migrations_downgrade_drops_everything_it_creates() -> None:
+    """A migration that cannot be reversed is a deploy with no way home. This one creates
+    two tables and nothing else, so dropping them is the whole reversal - which is why the
+    absence of a function or a trigger is asserted above rather than left implicit."""
+    up = registry_sql("upgrade")
+    down = registry_sql("downgrade")
+    for qualified in REGISTRY_TABLES:
+        assert f"CREATE TABLE {qualified}" in up
+        assert f"DROP TABLE {qualified}" in down
+    assert "DROP FUNCTION" not in down
+
+
+def test_the_registry_migration_drops_in_the_reverse_of_the_creation_order() -> None:
+    """Neither table points at the other today, so the order is free - and the downgrade
+    still walks the creation list backwards, because the first foreign key somebody adds
+    would otherwise make a rollback fail during the rollback."""
+    down = registry_sql("downgrade")
+    positions = [down.index(f"DROP TABLE {q}") for q in REGISTRY_TABLES]
+    assert positions == sorted(positions, reverse=True)
+
+
+def test_the_registry_migration_changes_no_data() -> None:
+    """The registry ships empty because a seeded vocabulary is a vocabulary nobody chose,
+    and `ops.setting` ships empty because an absent row means the compiled default. Both are
+    what keeps this a schema change: the schema half of a mixed migration reverses and the
+    data half usually cannot."""
+    emitted = registry_sql("upgrade").upper()
+    for statement in ("INSERT INTO", "DELETE FROM", " SET "):
+        assert statement not in emitted, f"the migration emits {statement.strip()}"
+
+
+@pytest.mark.parametrize("qualified", REGISTRY_TABLES)
+def test_row_level_security_is_enabled_on_every_table_0004_adds(qualified: str) -> None:
+    """`ops.setting` is the first table added since `sweep_rls` learned about the `ops`
+    schema, so its policy is checked twice: here against the DDL, and in CI against a live
+    server. Before that change a table in `ops` could ship without one and nothing would
+    have said so."""
+    assert f"ALTER TABLE {qualified} ENABLE ROW LEVEL SECURITY" in registry_sql("upgrade")
+
+
+@pytest.mark.parametrize("qualified", SOFT_DELETED_REGISTRY)
+def test_the_policy_on_a_soft_deleted_table_0004_adds_still_permits_retiring_a_row(
+    qualified: str,
+) -> None:
+    """Without an explicit `WITH CHECK`, PostgreSQL reuses the USING expression to check the
+    new row, so setting `deleted_at` would be refused by the very policy meant to hide the
+    row afterwards. On `ops.setting` that would be worse than a nuisance: retiring the row
+    is how an override is removed, so the system could never be returned to its default."""
+    _schema, _, name = qualified.partition(".")
+    policy = (
+        f"CREATE POLICY {name}_live ON {qualified} FOR ALL TO brain_app "
+        "USING (deleted_at IS NULL) WITH CHECK (true)"
+    )
+    assert policy in registry_sql("upgrade")
+
+
+@pytest.mark.parametrize("qualified", REGISTRY_TABLES)
+def test_every_table_0004_adds_grants_the_application_role_what_it_needs(qualified: str) -> None:
+    """0001 granted no default privileges on purpose, so a table that forgets to grant is a
+    table the application cannot read at all, and the failure arrives at the first request
+    rather than at deploy."""
+    assert f"ON {qualified} TO brain_app" in registry_sql("upgrade")
+
+
+def test_nothing_0004_grants_can_hard_delete() -> None:
+    """Retirement is `deleted_at`, which leaves the row. On the registry a hard delete would
+    remove the only record that a capability ever existed, which is what an access review
+    asking "what was this grant for" needs to read."""
+    for line in rendered("upgrade", MIGRATION_REGISTRY).splitlines():
+        if line.strip().startswith("GRANT"):
+            assert "DELETE" not in line.upper(), line.strip()
+
+
+def test_nothing_0004_runs_needs_a_superuser() -> None:
+    """0001 creates the application role `NOBYPASSRLS` and that is the whole reason it
+    exists. A migration that quietly required more would make every policy written here
+    decoration."""
+    emitted = registry_sql("upgrade").upper() + registry_sql("downgrade").upper()
     for forbidden in ("SUPERUSER", "BYPASSRLS", "SET ROLE", "SECURITY DEFINER"):
         assert forbidden not in emitted, f"the migration runs {forbidden}"

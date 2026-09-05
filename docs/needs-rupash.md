@@ -2,7 +2,7 @@
 
 Decisions and access I cannot resolve alone. Served at `/build/needs-rupash`.
 
-**Five items are open: 17, 19, 20, 21 and 22.** None of them blocks anything today. 17 needs
+**Six items are open: 17, 19, 20, 21, 22 and 23.** None of them blocks anything today. 17 needs
 answering before the secrets vault is deployed; 19 is two numbers to confirm; 20 and 21 are
 design contradictions I have resolved one way and would rather you saw than inherited.
 Everything else on this page is decided.
@@ -472,6 +472,45 @@ That is roughly a day of work and it needs no decision from you beyond "yes, do 
 **What exists already:** the staging stack is built and its isolation is tested. It is not
 deployed yet, and it uses about 1.4 GB on a server with 6.4 GB free, which is comfortable
 alongside your other project on the same box.
+
+---
+
+## 23. Should the client's audit trail show your deployment history?
+
+**Nothing is blocked. I have built it the safe way and this is a question about whether to
+open it up.**
+
+Every deploy is now recorded: the time, the version, whether it worked, and which tasks
+went out in it. The record cannot be edited afterwards without that being detectable.
+
+**The question is where it lives.** There are two records in this system:
+
+| | The permission trail | The deployment trail |
+|---|---|---|
+| What it holds | Who could see what, who was refused, who granted whom access | What version went out and when |
+| Who can read it | Your staff, filtered by their own permissions; a client can ask for their own | Nobody yet: it is for you and whoever runs the servers |
+| Where it goes | Into the compliance export you would hand an auditor | Nowhere outward |
+
+Today they are separate. A deploy does not appear in anybody's audit view and does not
+appear in a compliance export.
+
+**Why I kept them apart.** The permission trail is built around people: every entry is
+about a person, an agent or a record, and the whole design assumes you can ask "everything
+that ever happened to this person". A deployment is about none of those. Putting it in
+would mean anybody who can read the full audit trail also reads your release history, and
+that a compliance export handed to a client contains your engineering activity. Neither
+is obviously wrong; both should be your choice rather than a side effect.
+
+**What you would gain by merging them.** One timeline. An auditor asking "did the code
+change between these two permission decisions" could answer it from one place instead of
+lining up two records by time.
+
+**My recommendation: leave them separate, and revisit if a client ever asks.** The cost of
+being wrong in this direction is a slightly awkward query for an auditor. The cost the
+other way is client-visible information you did not intend to publish, and unpublishing it
+is harder than publishing it.
+
+Nothing to do unless you disagree.
 
 ---
 
