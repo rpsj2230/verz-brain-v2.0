@@ -18,7 +18,7 @@ import pytest
 from brain.core.entitlement import Capability, EntitlementSet, Grant
 from brain.core.envelope import Entity, IdentityMode, SideEffect, ToolDefinition, TypedResult
 from brain.core.field_policy import Classification, FieldPolicy, FieldRule
-from brain.core.scope import Scope
+from brain.core.scope import Clause, Op, Scope
 from brain.gate.injection import ELEVATED, AutonomyTier, RiskAssessment, assess
 from brain.gate.leash import (
     DEFAULT_APPROVAL_WINDOW,
@@ -220,6 +220,52 @@ def test_a_missing_leash_entry_means_shadow() -> None:
     assert MISSING_ENTRY_RUNG is AutonomyTier.SHADOW
     assert Leash().rung_for(AGENT, TARGET, {}) is AutonomyTier.SHADOW
     assert Leash().rung_for("anyone", "anything", {"department": "finance"}) is AutonomyTier.SHADOW
+
+
+def test_one_skill_can_be_leashed_differently_from_another() -> None:
+    """Every skill's scripts run through the one tool `skill.run_script`, so the target is
+    the same for all of them and it looks at first as though a leash can only say "may run
+    scripts". It is not: the scope is the discriminator, evaluated against the row, and the
+    row for a script run carries the skill name.
+
+    This is the case that matters. "Trusted to run the hosting-expiry check unattended, but
+    the billing chase needs a person" is the ordinary shape of a real permission, and if it
+    could not be expressed the only options would be trusting every script or none.
+
+    Deleting this loses the only record that the mechanism reaches individual skills, and
+    the next person to look at the target grammar will conclude, reasonably, that it does
+    not."""
+
+    def only(skill: str) -> Scope:
+        return Scope(clauses=(Clause(field="skill", op=Op.EQ, value=skill),))
+
+    leash = Leash(
+        entries=(
+            LeashEntry(
+                agent_id=AGENT,
+                target="skill.run_script",
+                scope=only("hosting-expiry"),
+                rung=AutonomyTier.AUTONOMOUS,
+            ),
+            LeashEntry(
+                agent_id=AGENT,
+                target="skill.run_script",
+                scope=only("billing-chase"),
+                rung=AutonomyTier.ASSISTED,
+            ),
+        )
+    )
+
+    def run_of(skill: str) -> AutonomyTier:
+        return leash.rung_for(AGENT, "skill.run_script", {"skill": skill})
+
+    assert run_of("hosting-expiry") is AutonomyTier.AUTONOMOUS
+    assert run_of("billing-chase") is AutonomyTier.ASSISTED
+    # A skill nobody configured, and a call that did not say which skill it was running.
+    # Both fall to the missing-entry rung rather than inheriting either entry above, which
+    # is what makes forgetting to populate the row a refusal instead of a promotion.
+    assert run_of("something-nobody-configured") is AutonomyTier.SHADOW
+    assert leash.rung_for(AGENT, "skill.run_script", {}) is AutonomyTier.SHADOW
 
 
 def test_two_matching_entries_compose_to_the_stricter_rung() -> None:

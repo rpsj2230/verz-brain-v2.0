@@ -649,7 +649,7 @@
     <li><strong>Custom code adapter</strong> — a sandboxed module for anything odd, including legacy SOAP or a scraped portal.</li>
   </ul>
   <p>Two properties enforced regardless of transport: <em>scope at connect</em> (one Drive folder, not the whole Drive) and <em>read-only by default</em>, with write as a separate deliberate grant shown at connect time. Every tool declares whose identity it runs as — the requester's by default. Third-party servers are pinned by a hash of their full manifest including tool descriptions, so a silent redefinition fails closed on reconnect.</p>
-  <p>Skills import in a non-executable state until a named reviewer approves. Progressive disclosure keeps cost down: the agent sees names and descriptions, loading full instructions on demand. A skill's scripts run through one tool, <code>run_skill_script</code>, carrying the sandbox, the leash and output redaction like any other.</p>
+  <p>Skills import in a non-executable state until a named reviewer approves. Progressive disclosure keeps cost down: the agent sees names and descriptions, loading full instructions on demand. A skill's scripts run through one tool, <code>skill.run_script</code>, carrying the sandbox, the leash and output redaction like any other. (Named <code>run_skill_script</code> in earlier drafts of this document, which is not a legal tool name: the closed grammar is <code>source.verb_noun</code> and that has no source. The code is the thing that runs, so the document moved.)</p>
 </section>
 
 <section id="s13">
