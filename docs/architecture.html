@@ -757,9 +757,9 @@
       <caption>Priority and fallback matrix · editable in the console</caption>
       <thead><tr><th>Tier</th><th>Chain</th><th>Fallback fires on</th></tr></thead>
       <tbody>
-        <tr><td class="k">Simple</td><td class="m">default → next model, same provider → next model → next provider</td><td rowspan="3">A closed set only: connection error, timeout, 429, 5xx, context exceeded, content-policy refusal. <strong>Never</strong> "the answer looked weak".</td></tr>
-        <tr><td class="k">Medium</td><td class="m">same shape, heavier default</td></tr>
-        <tr><td class="k">Complex</td><td class="m">same shape, heaviest default</td></tr>
+        <tr><td class="k">small</td><td class="m">default → next model, same provider → next model → next provider</td><td rowspan="3">A closed set only: connection error, timeout, 429, 5xx, context exceeded. <strong>Never</strong> "the answer looked weak".<br><br><em>Open question:</em> this set originally also carried <strong>content-policy refusal</strong>. The implementation excludes it, on the grounds that a refusal is a property of the request rather than of the provider's health, so the next rung reproduces it at full cost, and a rung that does answer has shopped for a "yes". Awaiting a decision; see <a href="/build/needs-rupash">Needs Rupash</a>.</td></tr>
+        <tr><td class="k">main</td><td class="m">same shape, heavier default</td></tr>
+        <tr><td class="k">heavy</td><td class="m">same shape, heaviest default</td></tr>
       </tbody>
     </table>
   </div>
