@@ -115,11 +115,26 @@ class OpenReason(enum.StrEnum):
     PROBE_FAILURES_WHILE_IDLE = "probe_failures_while_idle"
 
 
+def _is_stale(seconds_since: float | None, stale_after: float) -> bool:
+    """True only when live evidence is *known* to be too old to speak for now.
+
+    `None` means the age is unknown, and unknown is deliberately not stale. The first
+    version had it the other way round and three tests caught it: treating unknown as
+    stale lets probe evidence override live evidence any time a caller does not pass a
+    clock, which is a silent widening of the one rule that must never widen. The
+    empty-ring case does not rely on this at all; it is handled by the caller checking
+    that the ring has anything in it.
+    """
+    return seconds_since is not None and seconds_since > stale_after
+
+
 def opens_now(
     *,
     live: Sequence[bool],
     consecutive_failures: int,
     probe: Sequence[bool],
+    seconds_since_live: float | None = None,
+    stale_after_seconds: float = LIVE_EVIDENCE_STALE_SECONDS,
 ) -> OpenReason | None:
     """The complete M5.4.4 rule, in one readable place, or None to stay closed.
 
@@ -143,11 +158,25 @@ def opens_now(
         failures = sum(1 for ok in live if not ok)
         if failures / len(live) > BREAKER_FAIL_RATIO:
             return OpenReason.LIVE_FAIL_RATIO
-    # Probe evidence counts only where there is no live evidence to contradict it. With
-    # live traffic flowing the live rules are strictly better informed, and a probe that
-    # fails while real requests succeed is telling us about the prober's path, not the
-    # provider's health.
-    if not live:
+    # Probe evidence counts only where there is no *current* live evidence to contradict
+    # it. With live traffic flowing the live rules are strictly better informed, and a
+    # probe that fails while real requests succeed is telling us about the prober's path
+    # rather than the provider's health.
+    #
+    # "No live evidence" originally meant an empty ring, and that made this rule
+    # unreachable for the exact deployment it exists for. The ring is bounded by count and
+    # never by age, so once a deployment has served any traffic it never empties again: a
+    # rung that served twenty requests this morning and died at six carries a full ring of
+    # successes, the prober probes it, every probe fails, and nothing opens. It stays in
+    # the chain until a real request fails, which is the outcome the prober exists to
+    # pre-empt.
+    #
+    # So the test is staleness rather than emptiness. Live evidence older than five
+    # minutes is not evidence about now, and probe results are then the freshest thing
+    # anyone has. This does not let probes override live evidence; it stops evidence from
+    # this morning being treated as evidence about this minute.
+    live_is_current = bool(live) and not _is_stale(seconds_since_live, stale_after_seconds)
+    if not live_is_current:
         recent = tuple(probe)[-PROBE_FAILURES_TO_OPEN_IDLE:]
         if len(recent) >= PROBE_FAILURES_TO_OPEN_IDLE and not any(recent):
             return OpenReason.PROBE_FAILURES_WHILE_IDLE
@@ -232,13 +261,23 @@ class ProviderHealth:
             return 0.0
         return sum(1 for ok in self.probe if not ok) / len(self.probe)
 
-    def would_open(self) -> OpenReason | None:
+    def would_open(self, now: datetime | None = None) -> OpenReason | None:
         """Why this deployment is unhealthy right now, by the written rule. For the
-        console, and for the test that keeps the written rule and the breaker in step."""
+        console, and for the test that keeps the written rule and the breaker in step.
+
+        `now` is optional because the two live rules do not need a clock, and a console
+        asking "is this one sick" should not have to supply one to get an answer. Without
+        it the staleness test cannot run, so the probe rule is skipped rather than guessed
+        at: a rule that fired on an assumed clock would open breakers at times nobody could
+        reproduce.
+        """
         return opens_now(
             live=self.breaker.live,
             consecutive_failures=self.breaker.consecutive_failures,
             probe=self.probe,
+            seconds_since_live=(
+                _seconds_since(self.last_live_at, now) if now is not None else None
+            ),
         )
 
     # --------------------------------------------------------------------- transitions
@@ -333,6 +372,7 @@ class ProviderHealth:
             live=breaker.live,
             consecutive_failures=breaker.consecutive_failures,
             probe=probe,
+            seconds_since_live=_seconds_since(current.last_live_at, now),
         )
         if reason is OpenReason.PROBE_FAILURES_WHILE_IDLE:
             # Opening without recording a live failure, which is precisely what must not

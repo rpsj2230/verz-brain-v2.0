@@ -1047,10 +1047,18 @@ class RoutePlan:
         return self.selection.skipped
 
     @property
-    def depth(self) -> int:
-        """How many rungs survived. Alerting reads this, not final failure: by the time
-        the last rung fails the outage is already visible, whereas a chain quietly running
-        one rung deeper every day is the signal that arrives in time to matter."""
+    def surviving_rungs(self) -> int:
+        """How many rungs this plan still has to try.
+
+        **This is not the depth alerting reads**, and it used to say it was. This number
+        *shrinks* as providers fail: a two-rung chain with one breaker open reports 1.
+        M5.4.8 wants the opposite, how far down the chain a request actually had to go,
+        which *grows*. That lives on `brain.models.health.ChainOutcome.depth`, is counted
+        upward from the rung that served, and includes the open breakers skipped above it.
+
+        Renamed because two attributes called `depth` in one subsystem meaning opposite
+        things is a trap that reads correct at every call site.
+        """
         return len(self.selection.rungs)
 
 

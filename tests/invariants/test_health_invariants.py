@@ -46,6 +46,7 @@ from brain.models.driver import (
 )
 from brain.models.health import (
     DEPTH_NOT_FINAL_FAILURE,
+    PROBE_FAILURES_TO_OPEN_IDLE,
     PROBE_OUTCOMES_STAY_OUT_OF_THE_LIVE_RING,
     PROBE_WINDOW,
     AlertLevel,
@@ -128,8 +129,11 @@ def test_a_probe_outcome_never_moves_the_live_ratio() -> None:
     live_before = health.live
     ratio_before = health.breaker.fail_ratio()
 
+    # Inside the staleness window on purpose. This test is about probes never moving the
+    # live ratio; running past the window would also make the live evidence stale, and the
+    # state check below would then measure the staleness rule rather than ring separation.
     for index in range(PROBE_WINDOW):
-        health = health.record_probe(ok=False, now=T0 + timedelta(seconds=60 * (index + 1)))
+        health = health.record_probe(ok=False, now=T0 + timedelta(seconds=10 * (index + 1)))
 
     assert health.live == live_before, "a probe outcome reached the live ring"
     assert health.breaker.fail_ratio() == ratio_before
@@ -170,15 +174,48 @@ def test_a_breaker_opened_by_probes_alone_has_recorded_no_live_failures() -> Non
     assert health.would_open() is None
 
 
-def test_probe_evidence_cannot_open_a_breaker_that_live_traffic_contradicts() -> None:
-    """Where live evidence exists it is strictly better informed. Without this bound, a
-    prober on a broken network path takes the whole estate out of rotation while every real
-    request is succeeding."""
+def test_probe_evidence_cannot_open_a_breaker_that_current_live_traffic_contradicts() -> None:
+    """Where *current* live evidence exists it is strictly better informed. Without this
+    bound, a prober on a broken network path takes the whole estate out of rotation while
+    every real request is succeeding.
+
+    "Current" is the qualifier, and it was added deliberately. The rule used to be that any
+    live evidence at all silenced the probe rule, which made that rule unreachable for the
+    deployment it exists for: the live ring is bounded by count and never by age, so once a
+    deployment has served anything it never empties again.
+    """
     health = ProviderHealth.for_deployment("busy")
     for index in range(BREAKER_RATIO_MIN_SAMPLES):
         health = health.record_live_success(T0 + timedelta(seconds=index))
+    # Probes inside the staleness window, so the live successes still speak for now.
     for index in range(PROBE_WINDOW):
-        health = health.record_probe(ok=False, now=T0 + timedelta(seconds=60 * (index + 1)))
+        health = health.record_probe(ok=False, now=T0 + timedelta(seconds=10 * (index + 1)))
+    assert health.state is BreakerState.CLOSED
+
+
+def test_probes_do_open_a_breaker_whose_live_evidence_has_gone_stale() -> None:
+    """The case the old rule could not reach, and the one the prober exists for. A rung
+    that served twenty requests this morning and died at six carries a full ring of
+    successes; every probe fails and nothing opened, so it stayed in the chain until a real
+    request hit it. That is precisely the outcome probing is meant to pre-empt."""
+    health = ProviderHealth.for_deployment("idle")
+    for index in range(BREAKER_RATIO_MIN_SAMPLES):
+        health = health.record_live_success(T0 + timedelta(seconds=index))
+
+    # Well past LIVE_EVIDENCE_STALE_SECONDS: this morning's successes are not evidence
+    # about this minute.
+    later = T0 + timedelta(hours=3)
+    for index in range(PROBE_FAILURES_TO_OPEN_IDLE):
+        health = health.record_probe(ok=False, now=later + timedelta(seconds=60 * index))
+    assert health.state is BreakerState.OPEN
+
+
+def test_stale_live_evidence_does_not_let_a_single_probe_failure_open_anything() -> None:
+    """Staleness widens which evidence counts, never how much of it is needed. One failed
+    probe is still one observation."""
+    health = ProviderHealth.for_deployment("idle")
+    health = health.record_live_success(T0)
+    health = health.record_probe(ok=False, now=T0 + timedelta(hours=3))
     assert health.state is BreakerState.CLOSED
 
 

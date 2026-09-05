@@ -912,7 +912,7 @@ def test_the_global_entry_says_plainly_that_it_promises_nothing() -> None:
 def test_a_plan_classifies_and_then_filters_in_one_call() -> None:
     result = plan(RoutingRequest(lane=Lane.TASK), seed_chain())
     assert result.decision.tier is Tier.HEAVY
-    assert result.depth == 2
+    assert result.surviving_rungs == 2
 
 
 def test_a_plan_carries_the_skipped_rungs_so_chain_depth_can_be_alerted_on() -> None:
@@ -923,7 +923,7 @@ def test_a_plan_carries_the_skipped_rungs_so_chain_depth_can_be_alerted_on() -> 
         RoutingRequest(lane=Lane.ANSWER, residency=EU_ONLY),
         seed_chain(),
     )
-    assert result.depth == 0
+    assert result.surviving_rungs == 0
     assert len(result.skipped) == 2
 
 
