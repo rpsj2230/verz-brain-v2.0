@@ -1,0 +1,318 @@
+{
+  "_comment": [
+    "Company Brain realm, as configuration in the repository rather than as clicks in an",
+    "admin console. Task id M1.1.1.",
+    "",
+    "WHY THIS FILE EXISTS. A Keycloak realm configured by hand is a permission-adjacent",
+    "system whose current state nobody can diff, review or restore. Every value below is a",
+    "decision, and several of them are the difference between a working sign-in and a",
+    "silent bypass, so they belong where a reviewer sees them change.",
+    "",
+    "THIS HAS NOT BEEN IMPORTED INTO A RUNNING KEYCLOAK. There is no Keycloak in this",
+    "repository's compose file and none was contacted. Treat it as a reviewed starting",
+    "point that still needs one import against a real server before anybody calls M1.1.1",
+    "done. Realm JSON is version-sensitive; expect kcadm to reject or ignore fields on a",
+    "version other than the one below.",
+    "",
+    "THE SETTINGS THAT MATTER, AND WHY:",
+    "",
+    "defaultSignatureAlgorithm RS256, and every client pinned to it. brain.identity.oidc",
+    "refuses HS256 outright, because an HMAC-signed token is signed by anything holding the",
+    "client secret and the classic confusion attack presents the published RSA public key",
+    "as that secret. The two ends agree here so a misconfiguration fails at login rather",
+    "than becoming an accepted token.",
+    "",
+    "ssoSessionMaxLifespan 36000 (10 hours) matches SESSION_ABSOLUTE_MAX in",
+    "brain.identity.sessions. If the realm allowed longer, a refresh loop would keep a",
+    "March sign-in alive in September on the Keycloak side while our own registry refused",
+    "it, and the mismatch would present as random logouts rather than as a policy.",
+    "",
+    "revokeRefreshToken true with refreshTokenMaxReuse 0 makes a stolen refresh token",
+    "detectable: replaying one invalidates the chain. Without it a copied refresh token is",
+    "a ten-hour credential with no way to notice it was taken.",
+    "",
+    "directAccessGrantsEnabled false everywhere. The password grant skips the browser flow,",
+    "which means it skips the second factor and every conditional step configured in it. A",
+    "flow whose checks can be bypassed by asking a different endpoint is not a flow.",
+    "",
+    "implicitFlowEnabled false, standardFlowEnabled true, PKCE S256 required on the public",
+    "console client. The implicit flow puts the token in a URL fragment, which lands in",
+    "browser history and referrer headers.",
+    "",
+    "GROUPS CARRY ROLES AND NEVER CAPABILITIES. The groups below map to the six platform",
+    "roles in brain.identity.roles through GroupRoleRule, and to nothing else. There is",
+    "deliberately no group, attribute or client role here that names a capability: putting",
+    "one in this file would move the answer to 'who can read the margin on this client'",
+    "into a directory that nobody in this company reviews."
+  ],
+
+  "realm": "brain",
+  "displayName": "Company Brain",
+  "enabled": true,
+  "sslRequired": "all",
+  "registrationAllowed": false,
+  "resetPasswordAllowed": true,
+  "rememberMe": false,
+  "verifyEmail": true,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "editUsernameAllowed": false,
+
+  "bruteForceProtected": true,
+  "permanentLockout": false,
+  "failureFactor": 10,
+  "waitIncrementSeconds": 60,
+  "maxFailureWaitSeconds": 900,
+  "quickLoginCheckMilliSeconds": 1000,
+  "minimumQuickLoginWaitSeconds": 60,
+
+  "defaultSignatureAlgorithm": "RS256",
+  "revokeRefreshToken": true,
+  "refreshTokenMaxReuse": 0,
+
+  "accessTokenLifespan": 300,
+  "accessTokenLifespanForImplicitFlow": 300,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 36000,
+  "ssoSessionIdleTimeoutRememberMe": 0,
+  "ssoSessionMaxLifespanRememberMe": 0,
+  "offlineSessionIdleTimeout": 1800,
+  "offlineSessionMaxLifespanEnabled": true,
+  "offlineSessionMaxLifespan": 36000,
+  "clientSessionIdleTimeout": 1800,
+  "clientSessionMaxLifespan": 36000,
+  "accessCodeLifespan": 60,
+  "accessCodeLifespanUserAction": 300,
+  "accessCodeLifespanLogin": 1800,
+
+  "otpPolicyType": "totp",
+  "otpPolicyAlgorithm": "HmacSHA1",
+  "otpPolicyDigits": 6,
+  "otpPolicyPeriod": 30,
+  "otpPolicyLookAheadWindow": 1,
+
+  "attributes": {
+    "frontendUrl": "",
+    "acr.loa.map": "{\"silver\":1,\"gold\":2}"
+  },
+
+  "groups": [
+    {
+      "name": "brain",
+      "path": "/brain",
+      "_comment": "A container, mapped to nothing. Membership of /brain alone confers no role.",
+      "subGroups": [
+        { "name": "super-admin", "path": "/brain/super-admin" },
+        { "name": "member", "path": "/brain/member" },
+        { "name": "auditor", "path": "/brain/auditor" },
+        { "name": "connector-admin", "path": "/brain/connector-admin" },
+        {
+          "name": "department-admin",
+          "path": "/brain/department-admin",
+          "_comment": [
+            "Never mapped itself. department_admin is in SCOPE_REQUIRED, so a rule for it",
+            "must carry a scope, and only the per-department children below can supply one.",
+            "A rule for the bare parent would be a company-wide admin created by a group."
+          ],
+          "subGroups": [
+            { "name": "web", "path": "/brain/department-admin/web" },
+            { "name": "maintenance", "path": "/brain/department-admin/maintenance" }
+          ]
+        },
+        {
+          "name": "approver",
+          "path": "/brain/approver",
+          "_comment": "Also scope-required. Same rule as department-admin: children only.",
+          "subGroups": [
+            { "name": "web", "path": "/brain/approver/web" },
+            { "name": "maintenance", "path": "/brain/approver/maintenance" }
+          ]
+        }
+      ]
+    }
+  ],
+
+  "clientScopes": [
+    {
+      "name": "brain-identity",
+      "description": "The claims brain.identity.oidc.ClaimMapping reads. Nothing else.",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "false"
+      },
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "config": {
+            "claim.name": "groups",
+            "full.path": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "_comment": "full.path true because GroupRoleRule compares the whole path exactly; a bare leaf name would make /brain/approver/web and /clientx/approver/web the same string."
+          }
+        },
+        {
+          "name": "department",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "config": {
+            "user.attribute": "department",
+            "claim.name": "department",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+
+  "clients": [
+    {
+      "clientId": "brain-console",
+      "name": "Company Brain console",
+      "description": "The browser app. Public client, authorisation code with PKCE.",
+      "enabled": true,
+      "publicClient": true,
+      "protocol": "openid-connect",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "frontchannelLogout": false,
+      "redirectUris": ["https://brain.example.invalid/auth/callback"],
+      "webOrigins": ["https://brain.example.invalid"],
+      "defaultClientScopes": ["openid", "profile", "email", "brain-identity"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "access.token.signed.response.alg": "RS256",
+        "id.token.signed.response.alg": "RS256",
+        "user.info.response.signature.alg": "RS256",
+        "backchannel.logout.session.required": "true",
+        "backchannel.logout.revoke.offline.tokens": "true",
+        "backchannel.logout.url": "https://brain.example.invalid/auth/backchannel-logout",
+        "post.logout.redirect.uris": "https://brain.example.invalid/signed-out"
+      },
+      "_comment": [
+        "webOrigins is an explicit origin and never '*' or '+'. A wildcard here lets any",
+        "site read a token from this realm.",
+        "backchannel.logout.session.required true makes Keycloak send the sid, which is",
+        "what SessionRegistry.end_session needs; end_all_for covers the case where it does",
+        "not arrive or the session was never seen by this replica.",
+        "redirectUris are .invalid placeholders on purpose. Setting a real hostname here",
+        "would put a production URL in a file that gets copied between environments, and a",
+        "stale redirect URI in a realm import is an open redirect."
+      ]
+    },
+    {
+      "clientId": "brain-api",
+      "name": "Company Brain API",
+      "description": "The audience every token this system accepts is minted for.",
+      "enabled": true,
+      "publicClient": false,
+      "bearerOnly": false,
+      "protocol": "openid-connect",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "attributes": {
+        "access.token.signed.response.alg": "RS256",
+        "id.token.signed.response.alg": "RS256"
+      },
+      "protocolMappers": [
+        {
+          "name": "brain-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "brain-api",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          },
+          "_comment": "Without an explicit audience mapper, a token minted for the console carries no aud for the API, and validate_token refuses it. That refusal is correct: a token is issued for a party, and accepting one issued for somebody else is the confused deputy."
+        }
+      ]
+    },
+    {
+      "clientId": "brain-sync",
+      "name": "Example service account",
+      "description": "A machine caller. Client credentials only; no browser flow at all.",
+      "enabled": true,
+      "publicClient": false,
+      "protocol": "openid-connect",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "attributes": {
+        "access.token.signed.response.alg": "RS256",
+        "use.refresh.tokens": "false"
+      },
+      "_comment": [
+        "No secret is stored in this file and none ever should be. kcadm prints one on",
+        "creation; it belongs in OpenBao.",
+        "use.refresh.tokens false: a client-credentials caller can ask for a new token",
+        "whenever it likes, so a refresh token is a second long-lived credential with no",
+        "purpose.",
+        "This client's tokens carry no sid, which is how brain.identity.sessions keeps the",
+        "interactive and service paths disjoint. The owner, ceiling and expiry live in our",
+        "own ServiceAccount record, not here: Keycloak knows the robot exists, and this",
+        "system decides what it may borrow."
+      ]
+    }
+  ],
+
+  "identityProviders": [
+    {
+      "_comment": [
+        "Template for M1.1.4, disabled and pointed at .invalid. A client's SAML IdP is added",
+        "per deployment; brain.identity.oidc.SamlFederation is the reviewed shape of these",
+        "same fields, and it refuses the two settings that are always got wrong:",
+        "wantAssertionsSigned false and validateSignature false, either of which turns an",
+        "assertion into a form post claiming to be a person.",
+        "principalType ATTRIBUTE with a stable attribute, never a transient NameID: a",
+        "transient identifier changes every session, so nobody would be recognised twice and",
+        "principal_for would return UnmappedSubject to the same person every morning."
+      ],
+      "alias": "client-saml-template",
+      "providerId": "saml",
+      "enabled": false,
+      "trustEmail": false,
+      "storeToken": false,
+      "linkOnly": false,
+      "firstBrokerLoginFlowAlias": "first broker login",
+      "config": {
+        "entityId": "https://idp.example.invalid/metadata",
+        "singleSignOnServiceUrl": "https://idp.example.invalid/sso",
+        "singleLogoutServiceUrl": "https://idp.example.invalid/slo",
+        "nameIDPolicyFormat": "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
+        "principalType": "ATTRIBUTE",
+        "principalAttribute": "employeeId",
+        "wantAssertionsSigned": "true",
+        "wantAssertionsEncrypted": "false",
+        "validateSignature": "true",
+        "forceAuthn": "false",
+        "postBindingResponse": "true",
+        "postBindingAuthnRequest": "true",
+        "signingCertificate": "REPLACE_WITH_CLIENT_CERTIFICATE"
+      }
+    }
+  ],
+
+  "requiredActions": [
+    {
+      "alias": "CONFIGURE_TOTP",
+      "name": "Configure OTP",
+      "enabled": true,
+      "defaultAction": true,
+      "priority": 10,
+      "_comment": "defaultAction true so a new account is asked to set up a second factor at first login. Assurance.STRONG is what brain.gate.admission requires for approve and admin, so without this nobody can approve anything."
+    }
+  ]
+}
