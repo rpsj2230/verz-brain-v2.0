@@ -8,7 +8,7 @@ The ledger fake is a set with an atomic-looking API, because the real point of
 `NonceLedger.consume` is that a caller cannot write the racy version. A fake with a
 `was_consumed` read would let this file prove something the protocol forbids.
 
-Task ids: M10.3.2, M10.3.4
+Task ids: M10.3.1, M10.3.2, M10.3.4
 """
 
 from __future__ import annotations
