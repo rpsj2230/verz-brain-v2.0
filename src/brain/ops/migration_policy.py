@@ -23,6 +23,7 @@ Task ids: M31.2.2.2, M31.2.2.3, M31.2.2.4, M31.2.2.5
 
 from __future__ import annotations
 
+import ast
 import re
 import sys
 from dataclasses import dataclass
@@ -55,10 +56,42 @@ class Finding:
         return f"{self.file}: {self.rule} — {self.detail}"
 
 
-def _downgrade_body(text: str) -> str:
-    if "def downgrade()" not in text:
-        return ""
-    return text.split("def downgrade()", 1)[1]
+def _downgrade_state(text: str) -> str:
+    """Whether the file has a downgrade, and whether it does anything: parsed, not counted.
+
+    Three answers: `"missing"`, `"empty"` and `"present"`.
+
+    **This was a line count and the line count had a hole.** The old rule flagged a body
+    whose last line was `pass` only when the whole body was two lines or fewer, so a
+    downgrade gutted to `pass` passed clean the moment it carried a docstring or a commented
+    out statement, which is exactly what a gutted downgrade looks like: somebody deleted the
+    statements and left the explanation. Found by an agent's mutation of an unrelated
+    migration and reproduced before this was changed.
+
+    An `ast` parse asks the real question rather than a proxy for it. A docstring and
+    comments are not statements, so no amount of prose makes an empty body look full.
+
+    A file that will not parse is reported as missing rather than passed over. A migration
+    with a syntax error has no downgrade in any sense that matters, and returning "present"
+    for it would make the one file nobody can run the file nobody checks.
+    """
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return "missing"
+
+    for node in tree.body:
+        if not isinstance(node, ast.FunctionDef) or node.name != "downgrade":
+            continue
+        body = list(node.body)
+        # A leading string expression is the docstring, and a docstring is not a statement.
+        if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
+            if isinstance(body[0].value.value, str):
+                body = body[1:]
+        if not body or all(isinstance(stmt, ast.Pass) for stmt in body):
+            return "empty"
+        return "present"
+    return "missing"
 
 
 def check_file(path: Path) -> list[Finding]:
@@ -77,13 +110,14 @@ def check_file(path: Path) -> list[Finding]:
             )
             break
 
-    down = _downgrade_body(text)
-    if not down.strip():
+    down = _downgrade_state(text)
+    if down == "missing":
         findings.append(Finding(name, "no downgrade", "a deploy with no way back"))
-    elif down.strip().splitlines()[-1].strip() == "pass" and len(down.strip().splitlines()) <= 2:
+    elif down == "empty":
         # An empty downgrade is either a mistake or a deliberate one-way change. The
         # deliberate case says so with NotImplementedError and a reason; `pass` says
-        # nothing and is indistinguishable from forgetting.
+        # nothing and is indistinguishable from forgetting. `raise NotImplementedError` is
+        # a statement, so a deliberate one-way migration passes this on its own.
         findings.append(
             Finding(
                 name,

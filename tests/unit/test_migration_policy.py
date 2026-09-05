@@ -64,6 +64,55 @@ def test_an_empty_downgrade_is_indistinguishable_from_forgetting(tmp_path: Path)
     assert "empty downgrade" in rules(check_file(p))
 
 
+def test_an_empty_downgrade_is_still_empty_when_it_is_explained_at_length(
+    tmp_path: Path,
+) -> None:
+    """The hole the test above did not cover, and the shape a gutted downgrade actually has.
+
+    This rule was a line count: a body was flagged only if its last line was `pass` AND the
+    whole body was two lines or fewer. So the moment somebody deleted the statements and left
+    a docstring or commented the old call out, the file passed clean. That is not a contrived
+    case, it is what deleting a downgrade looks like when the person is being conscientious
+    about explaining themselves.
+
+    Delete this and the check goes back to being satisfiable by writing more prose."""
+    p = write(
+        tmp_path,
+        migration(
+            ["op.create_table('x')"],
+            [
+                '"""Reverses the upgrade, dropping the table it created.',
+                "",
+                "    Left as a comment while the table is empty and nothing reads it.",
+                '    """',
+                "# op.drop_table('x')",
+                "pass",
+            ],
+        ),
+    )
+    assert "empty downgrade" in rules(check_file(p))
+
+
+def test_a_downgrade_that_does_one_real_thing_passes(tmp_path: Path) -> None:
+    """So the parse cannot be tightened into refusing every downgrade, which would satisfy
+    both tests above."""
+    p = write(tmp_path, migration(["op.create_table('x')"], ["op.drop_table('x')"]))
+
+    assert "empty downgrade" not in rules(check_file(p))
+    assert "no downgrade" not in rules(check_file(p))
+
+
+def test_a_migration_that_does_not_parse_is_reported_rather_than_passed_over(
+    tmp_path: Path,
+) -> None:
+    """A file with a syntax error has no downgrade in any sense that matters. Returning
+    "present" for it would make the one file nobody can run the one file nobody checks."""
+    broken = "\n".join(["def downgrade() -> None", "    op.drop_table('x')", ""])
+    p = write(tmp_path, broken)
+
+    assert "no downgrade" in rules(check_file(p))
+
+
 def test_a_deliberate_one_way_migration_is_accepted(tmp_path: Path) -> None:
     p = write(
         tmp_path,
