@@ -34,6 +34,7 @@ case "$1" in
     cat "$STATE/running"; exit 0 ;;
   exec)
     case "$*" in
+      *health/live*) cat "$STATE/commit"; exit 0 ;;
       *printenv*) cat "$STATE/commit"; exit 0 ;;
       *health/ready*) exit "$(cat "$STATE/ready_rc")" ;;
     esac

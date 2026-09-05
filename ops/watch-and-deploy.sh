@@ -50,8 +50,21 @@ local_latest() {
   docker image inspect "$IMAGE:latest" --format '{{index .Id}}' 2>/dev/null || echo none
 }
 
+# Asks the application rather than the environment, and the difference is not academic.
+# `printenv BRAIN_COMMIT_SHA` returned `unknown` for every deploy in this file, because
+# Coolify keeps its own copy of the compose and that copy had resolved a
+# `${COMMIT_SHA:-unknown}` default to the literal string at save time - and an explicit
+# compose entry beats an image's ENV. So the record said `unknown` while the image knew
+# perfectly well what it was.
+#
+# `/health/live` resolves the same question against the release manifest baked into the
+# image, which no environment variable can override. It is also simply the right source:
+# the record should say what the running process believes it is, not what something
+# outside it was told to say.
 running_commit() {
-  docker exec "app-$UUID" printenv BRAIN_COMMIT_SHA 2>/dev/null || echo unknown
+  docker exec "app-$UUID" python -c \
+    "import json,urllib.request;print(json.load(urllib.request.urlopen('http://127.0.0.1:8000/health/live',timeout=4))['commit'])" \
+    2>/dev/null || echo unknown
 }
 
 # Readiness, not liveness: a container that is up but cannot reach its database answers
