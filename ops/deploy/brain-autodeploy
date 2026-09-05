@@ -13,11 +13,19 @@
 # after CI succeeds. So the tag moving *is* the statement that the gate passed. Watching a
 # branch or a commit instead would deploy code that never passed anything.
 #
-# SILENT FAILURE IS THE THING TO AVOID HERE. A poller that dies stops deploying and says
-# nothing, which is exactly the bug this replaces. Two answers: this writes a heartbeat on
-# every run whether or not it acts, and the Deploy workflow separately polls the live site
-# and fails if the commit it published never appears there. The second is the real guard,
-# because it runs on GitHub and does not depend on this machine being well.
+# HOW "IS THERE ANYTHING NEW" IS ANSWERED, AND THE BUG THAT TAUGHT IT. The first version
+# read the registry manifest and compared its digest to the local one. It redeployed on
+# every single tick: twelve restarts in twenty-five minutes, each one a healthy deploy of
+# the image that was already running. `docker manifest inspect --verbose` emits several
+# objects each carrying a `digest` field, and taking the first one with `grep -m1` returned
+# a digest that is not the image's repo digest, so the comparison could never match.
+#
+# The fix is not a better parser. It is to stop parsing: pull first, then compare the image
+# id the *tag* now points at against the image id the *container* is running. Both come from
+# `docker inspect` in the same format, so there is no encoding to get wrong, and a pull when
+# nothing has changed is a cheap conditional request rather than a download. The lesson is
+# narrow and worth keeping: a comparison between two values produced by different commands
+# is a comparison that needs proving equal in the working case, and I never proved it.
 set -euo pipefail
 
 IMAGE="ghcr.io/rpsj2230/verz-brain-v2.0:latest"
@@ -30,32 +38,30 @@ note() {
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" > "$HEARTBEAT"
 }
 
-# The digest the registry currently serves for the tag.
-remote=$(docker manifest inspect --verbose "$IMAGE" 2>/dev/null \
-  | grep -m1 '"digest"' | cut -d'"' -f4 || true)
-if [ -z "$remote" ]; then
-  note "error" "could not read the remote manifest"
-  echo "could not read the remote manifest for $IMAGE" >&2
+# Bring the tag up to date. Cheap when nothing has moved: the registry answers with a 304
+# and no layer is transferred.
+if ! docker pull -q "$IMAGE" >/dev/null 2>&1; then
+  note "error" "could not reach the registry"
+  echo "could not pull $IMAGE" >&2
   exit 1
 fi
 
-# What the local tag resolves to, by registry digest rather than by image id. The image id
-# is a local content hash and is not what the registry names, so comparing it to a remote
-# digest never matches and would redeploy on every run.
-local_digest=$(docker image inspect "$IMAGE" --format '{{index .RepoDigests 0}}' 2>/dev/null \
-  | cut -d'@' -f2 || true)
-
-# What the container is actually serving. Checked separately from the tag because a pull
-# moves the tag without restarting anything, and a deploy that stopped half way would
-# otherwise look complete for ever.
-running=$(docker inspect "$CONTAINER" --format '{{.Image}}' 2>/dev/null || true)
 tag_id=$(docker image inspect "$IMAGE" --format '{{.Id}}' 2>/dev/null || true)
+running=$(docker inspect "$CONTAINER" --format '{{.Image}}' 2>/dev/null || true)
 
-if [ -n "$remote" ] && [ "$local_digest" = "$remote" ] && [ -n "$running" ] && [ "$running" = "$tag_id" ]; then
-  note "up-to-date" "$remote"
+if [ -z "$tag_id" ]; then
+  note "error" "the tag resolves to no local image"
+  echo "no local image for $IMAGE after a successful pull" >&2
+  exit 1
+fi
+
+# Both sides are an image id from `docker inspect`, so they are the same kind of value in
+# the same format. An empty `running` means the container is gone, which is a deploy.
+if [ -n "$running" ] && [ "$running" = "$tag_id" ]; then
+  note "up-to-date" "$tag_id"
   exit 0
 fi
 
-note "deploying" "$remote"
+note "deploying" "$tag_id"
 /usr/local/bin/brain-deploy
-note "deployed" "$remote"
+note "deployed" "$tag_id"
