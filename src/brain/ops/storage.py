@@ -78,6 +78,12 @@ class ObjectKind(enum.StrEnum):
 
     CONSOLE_ASSET = "console_asset"
     AGENT_ATTACHMENT = "agent_attachment"
+    #: The file a person uploaded, kept as it arrived so a re-parse reads the same bytes the
+    #: scan cleared. Added because `brain.knowledge.uploads` was filing originals under
+    #: `AGENT_ATTACHMENT` and saying so in a comment: the two share a bucket today, and an
+    #: original is not an attachment, so the day their retention differs the mismatch would
+    #: have been the reason nobody noticed.
+    KNOWLEDGE_ORIGINAL = "knowledge_original"
     BROWSER_RUN_RECORDING = "browser_run_recording"
     COMPLIANCE_EXPORT = "compliance_export"
     DATABASE_DUMP = "database_dump"
@@ -188,7 +194,7 @@ def bucket_for(kind: ObjectKind) -> Bucket:
     would file it wherever the default pointed, and the default is always `assets`.
     """
     match kind:
-        case ObjectKind.CONSOLE_ASSET | ObjectKind.AGENT_ATTACHMENT:
+        case ObjectKind.CONSOLE_ASSET | ObjectKind.AGENT_ATTACHMENT | ObjectKind.KNOWLEDGE_ORIGINAL:
             return bucket("assets")
         case ObjectKind.BROWSER_RUN_RECORDING:
             return bucket("recordings")
