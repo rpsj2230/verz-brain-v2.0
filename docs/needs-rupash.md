@@ -2,7 +2,7 @@
 
 Decisions and access I cannot resolve alone. Served at `/build/needs-rupash`.
 
-**Five of the seven were decided on 5 September and are marked below.** **Item 9 was decided on 5 September.** One remains open: **8**, rewritten in plainer words because the first versions led with the mechanism rather than with what is at stake, which is not a decidable thing to put in front of somebody. They came out of building the audit
+**Five of the seven were decided on 5 September and are marked below.** **Item 9 was decided on 5 September.** Open: **8**, rewritten in plainer words because the first versions led with the mechanism rather than with what is at stake, which is not a decidable thing to put in front of somebody. They came out of building the audit
 ledger, the routing matrix and the redaction walker, where the specification asks for two
 things that cannot both be true. Each one has my recommendation attached, so most should
 take you a minute.
@@ -223,6 +223,52 @@ remembered" into "the adapter cannot forget".
 **No decision needed if you agree** — I will write it into M16 when I get there. It is here
 because it is the kind of dependency that gets lost between two modules, and the failure is
 invisible from either side.
+
+---
+
+## 13. Can a leash rule say "supervise everywhere except maintenance"?
+
+**The plain problem: today it cannot, and the safe choice I made is probably not the one
+you would expect.**
+
+A leash decides whether an agent does something by itself, shows a person first, or only
+pretends. You set it per agent, per thing it touches, per part of the business.
+
+When two of your rules both apply to one action, something has to decide which wins. I made
+**the stricter one win**, because that is how every other permission in this system behaves
+and it fails safely.
+
+**What that costs you.** You cannot write "this agent needs supervision everywhere, except
+in maintenance where it can just get on with it". The company-wide rule wins and the
+maintenance exception never applies. To get that behaviour you would write the narrow rules
+one by one and leave the broad one off.
+
+**The alternative** is most-specific-wins, which reads more naturally and is how most people
+expect settings to work. The cost is real: a company-wide "supervise everything" rule could
+then be cancelled by somebody adding a narrower row, and working out what an agent may
+actually do stops being a lookup and becomes a question of which rule is more specific.
+
+**My recommendation:** keep strictest-wins. It is the same rule as everywhere else in the
+system, and "the safe setting cannot be quietly overridden" is worth more than the
+convenience. If you want the exception style, say so now rather than after leashes are
+configured, because changing it later silently loosens every rule already written.
+
+---
+
+## 14. An approval card can show the approver something they are not allowed to see
+
+**Not a decision, a gap I am recording so it is not forgotten.**
+
+When an agent wants to do something that needs sign-off, it renders a card showing what is
+about to happen, and a person approves it. That card is currently built using the
+permissions of the person who *asked*, not the person *approving*.
+
+So if a junior asks for something, and a manager with narrower access to that particular
+client approves it, the card can show the manager a value they would not be able to look up
+themselves.
+
+Nothing is broken yet, because approvals are not wired to a screen. It needs fixing before
+they are, and it belongs with the approval work rather than here.
 
 ---
 
