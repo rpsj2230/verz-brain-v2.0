@@ -1,0 +1,137 @@
+# Staging, on the same server as production and sharing nothing with it.
+#
+# Task ids: M38.1.4.2, M38.1.4.4
+#
+# **A separate compose project, not a profile.** `name: brain-staging` gives this stack its
+# own network, its own volume namespace and its own container names, so `docker compose
+# down` here cannot reach production's database and a typo in a service name resolves to
+# nothing rather than to the wrong thing. A profile inside the production file would share
+# all three.
+#
+# **Sized to be obviously safe on a shared box.** This host also runs a different project of
+# Rupash's, which is production for that project. Staging is given roughly a third of what
+# production gets: enough to run the suite against a real Postgres, not enough that a
+# runaway query here takes down somebody else's live system. Every service carries an
+# explicit limit for the same reason production's does.
+#
+# **Seed data only, and there is no path that puts anything else here (M38.1.4.4).** The
+# only writer is `python -m brain.seed`, which refuses to run against a database holding
+# rows it does not own. Nothing copies production data down: a restore into staging would
+# put real client records on a stack with weaker limits and the same network as a test
+# harness, and the moment that is possible somebody does it to reproduce a bug.
+
+name: brain-staging
+
+services:
+  app:
+    image: ${STAGING_IMAGE:-ghcr.io/rpsj2230/verz-brain-v2.0:latest}
+    restart: unless-stopped
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+      cache:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://brain:${STAGING_POSTGRES_PASSWORD}@pgbouncer:5432/brain
+      VALKEY_URL: redis://cache:6379/0
+      # Not "production". `brain.config` requires `valkey_url` in production and not in
+      # staging, and more importantly the environment name decides how the app describes
+      # itself: a staging box reporting itself as production is how somebody investigates
+      # the wrong incident.
+      BRAIN_ENV: staging
+      APP_ROLE_PASSWORD: ${STAGING_APP_ROLE_PASSWORD:-}
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health/ready',timeout=4).status==200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 45s
+
+  pgbouncer:
+    image: edoburu/pgbouncer:v1.24.1-p1
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_USER: brain
+      DB_PASSWORD: ${STAGING_POSTGRES_PASSWORD}
+      DB_NAME: brain
+      # Transaction mode here too, deliberately. Staging exists to catch what production
+      # would do, and the pooling mode is the single setting most likely to produce a bug
+      # that only appears in production: prepared statements and session-level advisory
+      # locks both behave differently behind it, and both have already bitten this project.
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: "50"
+      DEFAULT_POOL_SIZE: "5"
+      AUTH_TYPE: scram-sha-256
+    expose:
+      - "5432"
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U brain"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 20s
+
+  db:
+    image: pgvector/pgvector:pg18
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: brain
+      POSTGRES_PASSWORD: ${STAGING_POSTGRES_PASSWORD}
+      POSTGRES_DB: brain
+    volumes:
+      # `brain-staging-db`, and the project name namespaces it further. Production's volume
+      # is `brain-db`; the two cannot be confused by a command run in the wrong directory.
+      # PostgreSQL 18 takes the volume at /var/lib/postgresql, not one level deeper.
+      - brain-staging-db:/var/lib/postgresql
+    expose:
+      - "5432"
+    command: >
+      postgres
+      -c shared_buffers=128MB
+      -c work_mem=8MB
+      -c maintenance_work_mem=64MB
+      -c max_connections=30
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U brain -d brain"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  cache:
+    image: valkey/valkey:8-alpine
+    restart: unless-stopped
+    # No persistence in staging. The cache holds entitlements and answers, both derivable
+    # from the database, and a staging cache that survives a restart hides exactly the
+    # cold-start behaviour staging exists to exercise.
+    command: valkey-server --save "" --appendonly no --maxmemory 64mb --maxmemory-policy allkeys-lru
+    expose:
+      - "6379"
+    deploy:
+      resources:
+        limits:
+          memory: 96M
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  brain-staging-db:

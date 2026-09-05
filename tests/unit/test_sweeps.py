@@ -6,6 +6,7 @@ Task ids: M0.5.4, M0.5.5, M0.5.6, M0.5.7, M0.5.8
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -158,3 +159,69 @@ def test_the_lite_profile_says_why_there_is_no_full_one() -> None:
     lite = (repo / "docker-compose.lite.yml").read_text(encoding="utf-8")
     assert "docker-compose.full.yml" in lite
     assert "worker" in lite
+
+
+# ------------------------------------------------ staging shares nothing (M38.1.4.2)
+def _compose(name: str) -> dict[str, Any]:
+    """Parsed rather than grepped. A compose file is YAML, and a substring search over one
+    passes happily on a line that is commented out."""
+    import yaml
+
+    repo = Path(__file__).resolve().parents[2]
+    parsed: dict[str, Any] = yaml.safe_load((repo / name).read_text(encoding="utf-8"))
+    return parsed
+
+
+def test_staging_is_its_own_compose_project() -> None:
+    """A separate project gives staging its own network, volume namespace and container
+    names, so `docker compose down` in the wrong directory cannot reach production's
+    database and a typo in a service name resolves to nothing rather than to the wrong
+    thing. A profile inside the production file would share all three."""
+    staging = _compose("docker-compose.staging.yml")
+    production = _compose("docker-compose.yml")
+    assert staging["name"] == "brain-staging"
+    assert staging["name"] != production.get("name")
+
+
+def test_the_two_stacks_share_no_volume() -> None:
+    """The failure this prevents is not subtle and is entirely plausible: one command run
+    from the wrong directory, against the volume holding real client data."""
+    staging = set(_compose("docker-compose.staging.yml").get("volumes") or {})
+    production = set(_compose("docker-compose.yml").get("volumes") or {})
+    assert staging
+    assert production
+    assert not (staging & production)
+
+
+def test_staging_does_not_reuse_a_production_credential() -> None:
+    """If staging read `POSTGRES_PASSWORD`, the two databases would share a password and
+    staging would stop being a boundary at all: anything that leaked from the weaker stack
+    would open the stronger one."""
+    import re
+
+    repo = Path(__file__).resolve().parents[2]
+    text = (repo / "docker-compose.staging.yml").read_text(encoding="utf-8")
+    referenced = set(re.findall(r"\$\{([A-Z_]+)", text))
+    for shared in ("POSTGRES_PASSWORD", "APP_ROLE_PASSWORD", "APP_IMAGE"):
+        assert shared not in referenced, f"staging reads production's {shared}"
+
+
+def test_staging_does_not_call_itself_production() -> None:
+    """`brain.config` requires different settings per environment, and more importantly the
+    name decides how the app describes itself. A staging box reporting itself as production
+    is how somebody investigates the wrong incident."""
+    staging = _compose("docker-compose.staging.yml")
+    app = staging["services"]["app"]
+    assert app["environment"]["BRAIN_ENV"] == "staging"
+
+
+def test_staging_pools_the_same_way_production_does() -> None:
+    """The pooling mode is the single setting most likely to produce a bug that appears
+    only in production. Prepared statements and session-level advisory locks both behave
+    differently behind a transaction pooler, and both have already bitten this project.
+    Staging exercising a different mode would be staging that cannot catch either."""
+    staging = _compose("docker-compose.staging.yml")
+    production = _compose("docker-compose.yml")
+    left = staging["services"]["pgbouncer"]["environment"]["POOL_MODE"]
+    right = production["services"]["pgbouncer"]["environment"]["POOL_MODE"]
+    assert left == right == "transaction"

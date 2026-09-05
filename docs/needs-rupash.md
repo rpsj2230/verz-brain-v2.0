@@ -2,7 +2,7 @@
 
 Decisions and access I cannot resolve alone. Served at `/build/needs-rupash`.
 
-**Four items are open: 17, 19, 20 and 21.** None of them blocks anything today. 17 needs
+**Five items are open: 17, 19, 20, 21 and 22.** None of them blocks anything today. 17 needs
 answering before the secrets vault is deployed; 19 is two numbers to confirm; 20 and 21 are
 design contradictions I have resolved one way and would rather you saw than inherited.
 Everything else on this page is decided.
@@ -432,6 +432,46 @@ directory-sourced grants in their own table that the sync owns and can also remo
 **My recommendation:** the second. The sync needs to be able to take a role away when
 somebody leaves a group, and a process that can delete rows a person created is a worse
 thing to build than a process that owns its own table.
+
+---
+
+## 22. The plan says production deploys only tested releases. You asked for every push.
+
+**These are both reasonable and they cannot both happen. I have kept yours running and am
+not changing it without you saying so.**
+
+On 5 September you asked whether deploys should be automatic and answered yes. They are:
+every push to the main branch builds an image, and the server picks it up within three
+minutes.
+
+The build plan says something different for production: deploy only from a tagged release
+that has passed staging. That is the safer arrangement and it is slower by design.
+
+**What each one costs.**
+
+| | Every push (what runs today) | Only tested releases (what the plan says) |
+|---|---|---|
+| How fast a fix reaches you | Three minutes | When somebody tags a release |
+| What reaches production | Whatever passed the automated checks | Only what also ran against a real database with real migrations |
+| When it goes wrong | The rollback puts the previous version back automatically | It mostly does not get that far |
+| Who has to do something | Nobody | Somebody tags, and somebody looks at staging |
+
+**Why this is worth deciding now rather than later.** Right now nothing is behind the
+permission gate and no client data is in the system, so a bad deploy costs three minutes of
+a page being down. That stops being true the moment real connector credentials go in.
+
+**My recommendation, and it is a middle option rather than either column.** Keep every push
+deploying automatically, and add staging *in front of it* rather than instead: the push
+deploys to staging, the full test suite runs there against a real database, and production
+follows automatically only if that passes. You keep the three minutes; the difference is
+that the three minutes now includes a real migration against a real Postgres, which is the
+one thing the current automated checks cannot do.
+
+That is roughly a day of work and it needs no decision from you beyond "yes, do that".
+
+**What exists already:** the staging stack is built and its isolation is tested. It is not
+deployed yet, and it uses about 1.4 GB on a server with 6.4 GB free, which is comfortable
+alongside your other project on the same box.
 
 ---
 
