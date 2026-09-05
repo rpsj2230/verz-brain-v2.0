@@ -1,0 +1,158 @@
+# The lite profile (M0.4.1).
+#
+# This file is byte-identical to `docker-compose.yml` and a CI check keeps it that way.
+# The duplication is deliberate and the check is the reason it is safe: the architecture
+# asks for the profiles to be named files an operator can point at, and Coolify deploys
+# `docker-compose.yml` by that name. Two files that must agree, with nothing enforcing it,
+# is how a profile quietly stops being the thing it is named after.
+#
+# **Lite is the whole stack minus the worker**: application, transaction pooler, database,
+# cache. It is not a cut-down or development configuration; it is what a client without
+# background automation runs, and it is what is running in production today.
+#
+# **There is no `docker-compose.full.yml` yet, and that is not an oversight.** The full
+# profile adds a worker and a session-mode pooler beside it, because LISTEN/NOTIFY binds to
+# a session and a transaction pooler silently stops delivering notifications (see
+# `src/brain/session.py`). `make_worker_engine` exists for that. What does not exist is a
+# worker process for it to serve, so a full profile today would declare a container with no
+# command. M0.4.2 is deliberately not claimed until there is something for the worker to do.
+
+# The stack Coolify deploys.
+#
+# Sizing note, written down because the host it lands on is shared: that box already runs
+# ~29 containers using about 4.5 GiB of 11.7 GiB, including a different live project.
+# Every service below carries an explicit memory limit. Without limits, one runaway query
+# in this stack would take down someone else's production.
+#
+# There is no migrate service. Migrations run inside the application's startup, under a
+# PostgreSQL advisory lock, before readiness passes — see src/brain/migrate.py. A one-shot
+# container did the job correctly but exits when it succeeds, and Coolify has no way to be
+# told a container is meant to stop, so a successful migration displayed as a red "Exited"
+# beside three healthy services.
+#
+# Task ids: M0.3.4, M0.3.5, M0.4.1, M0.4.2, M38.1.3
+
+services:
+  app:
+    image: ${APP_IMAGE:-ghcr.io/rpsj2230/verz-brain-v2.0:latest}
+    restart: unless-stopped
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+      cache:
+        condition: service_healthy
+    environment:
+      # Through the pooler, never straight to the database. See the pgbouncer service.
+      DATABASE_URL: postgresql+psycopg://brain:${POSTGRES_PASSWORD}@pgbouncer:5432/brain
+      VALKEY_URL: redis://cache:6379/0
+      BRAIN_ENV: ${BRAIN_ENV:-production}
+      # BRAIN_COMMIT_SHA is deliberately absent. The image bakes it in at build
+      # time, and a runtime environment entry would override that with whatever
+      # the deployment happens to know — which, in Coolify's case, is the literal
+      # string "unknown" resolved once at save time and never updated again.
+      APP_ROLE_PASSWORD: ${APP_ROLE_PASSWORD:-}
+    deploy:
+      resources:
+        limits:
+          memory: 1024M
+    healthcheck:
+      # Readiness, not liveness. A container that is up but cannot reach its database
+      # still answers questions, from whatever it can still reach.
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health/ready',timeout=4).status==200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 45s
+
+  # PgBouncer in transaction mode. The application connects here, never to db directly.
+  #
+  # Sizing is the point: 200 client connections against a pool of 20 means the application
+  # can hold two hundred while Postgres sees twenty. Without it, max_connections=100 on a
+  # box this size is reached by two app replicas and a worker.
+  #
+  # src/brain/session.py sets prepare_threshold=None because of this container. Transaction
+  # pooling hands a different backend to every transaction, so a server-side prepared
+  # statement made on one and executed on another fails — and only ever in production,
+  # because development has no pooler.
+  pgbouncer:
+    image: edoburu/pgbouncer:v1.24.1-p1
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_USER: brain
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_NAME: brain
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: "200"
+      DEFAULT_POOL_SIZE: "20"
+      AUTH_TYPE: scram-sha-256
+    expose:
+      - "5432"
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U brain"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 20s
+
+  db:
+    image: pgvector/pgvector:pg18
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: brain
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: brain
+    volumes:
+      # PostgreSQL 18 changed this. Earlier images took the volume at
+      # /var/lib/postgresql/data; 18+ expects it one level up and keeps data in a
+      # major-version subdirectory, so pg_upgrade --link never crosses a mount boundary.
+      # Mounting the old path makes 18 refuse to start with a message about finding data
+      # in an "unused mount/volume", which reads like corruption but is only convention.
+      - brain-db:/var/lib/postgresql
+    # Not published to the host. Nothing outside this compose project reaches the
+    # database, which matters more than usual on a box with no firewall.
+    expose:
+      - "5432"
+    command: >
+      postgres
+      -c shared_buffers=512MB
+      -c work_mem=16MB
+      -c maintenance_work_mem=256MB
+      -c autovacuum_work_mem=128MB
+      -c max_connections=100
+    deploy:
+      resources:
+        limits:
+          memory: 2048M
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U brain -d brain"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  cache:
+    image: valkey/valkey:8-alpine
+    restart: unless-stopped
+    command: ["valkey-server", "--maxmemory", "384mb", "--maxmemory-policy", "allkeys-lru", "--save", ""]
+    expose:
+      - "6379"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  brain-db:

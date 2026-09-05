@@ -2,19 +2,19 @@
 
 Decisions and access I cannot resolve alone. Served at `/build/needs-rupash`.
 
-**Five of the seven were decided on 5 September and are marked below.** **Item 9 was decided on 5 September.** **Everything is now decided.** Items 8 and 9 were rewritten in plainer words because the first versions led with the mechanism rather than with what is at stake, which is not a decidable thing to put in front of somebody. Nothing here is waiting on anyone. They came out of building the audit
-ledger, the routing matrix and the redaction walker, where the specification asks for two
-things that cannot both be true. Each one has my recommendation attached, so most should
-take you a minute.
+**One item is open: 17, who holds the keys to the secrets vault.** It needs answering
+before that vault is deployed, not before the next piece of work, so nothing is waiting on
+it. Everything else on this page is decided.
 
-Items 6 to 10 are choices. **Item 11 is different: it is a gap in a rule we already
-promise**, and it needs a yes rather than a preference.
+The rest is kept as a record. Each item states what the problem was, what I built, and why,
+so the reasoning outlives the conversation it happened in.
 
-Nothing is blocked on them. I have built the version I think is right in every case, and
-the code says so in a comment. If you disagree, the change is small now and expensive
-later, which is why they are here rather than in a footnote.
+Items 6 to 16 came out of building the audit ledger, the routing matrix, the redaction
+walker and the leash, where the specification asked for two things that could not both be
+true. Items 8 and 9 are written twice over: the first versions led with the mechanism rather
+than with what was at stake, which is not a decidable thing to put in front of anybody.
 
-**Items 1 to 5 were answered on 5 September** and are kept below for the record.
+**Items 1 to 5 were answered earlier on 5 September** and are at the bottom.
 
 ---
 
@@ -324,6 +324,51 @@ check that the two agree, so an Approver with no approve permission shows up as 
 misconfiguration rather than a silent nothing.
 
 **No action needed from you if you agree** with that, and I will add the consistency check.
+
+---
+
+## 17. Who holds the keys to the secrets vault?
+
+**Not a design question. A physical-custody question only you can answer, and it has to be
+settled before the vault goes in rather than after.**
+
+Connector credentials, provider keys and database passwords will live in a secrets vault
+(OpenBao). It starts **sealed**: on every restart it is a locked box that cannot read its
+own contents until somebody opens it with the unseal keys.
+
+Those keys get split into several pieces, and a set number of pieces are needed to open it.
+The point of splitting them is that no single person can open the vault alone, and no single
+person losing their piece locks everyone out.
+
+**What I need from you, three answers:**
+
+1. **How many pieces, and how many needed to open?** My recommendation for a 126-person
+   company with a small technical team: **five pieces, any three open it.** Three people
+   have to agree, and you survive losing two.
+2. **Who holds a piece?** Name five people. They should not all be reachable through the
+   same laptop, the same phone or the same building. At least one should be someone who is
+   never on call, so a piece exists outside the group that would be handling an incident.
+3. **Where does the root token go after setup?** It can do anything, including undo every
+   policy. Standard practice is to revoke it once normal access is configured, so nothing
+   holds unlimited power permanently. I recommend revoking it.
+
+**Why it cannot wait.** Everything about the vault is reversible except this. Deploy it,
+put real credentials in, then decide custody, and you now have to re-key a live system while
+it is holding the keys to your client data.
+
+**What happens meanwhile:** I am building everything around the vault that does not need
+it running, and the tasks that need real keys are already scheduled for go-live rather than
+now. Nothing is blocked.
+
+---
+
+## 18. Nothing is waiting on you right now
+
+Items 1 to 16 are all decided. Item 17 is the only open one, and it is not blocking: it
+needs answering before the vault is deployed, not before the next piece of work.
+
+Everything else on this page is kept as a record of what was decided and why, so the
+reasoning outlives the conversation it happened in.
 
 ---
 

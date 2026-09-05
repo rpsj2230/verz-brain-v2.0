@@ -5,6 +5,8 @@ Task ids: M0.5.4, M0.5.5, M0.5.6, M0.5.7, M0.5.8
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from brain.core import department
@@ -131,3 +133,28 @@ def test_the_collision_sweep_reports_how_many_names_it_compared(
     assert "scope(s)" in out
     assert "agent(s)" in out
     assert "tool object(s)" in out
+
+
+# ------------------------------------------------ the deployment profiles (M0.4.1)
+def test_the_lite_profile_and_the_deployed_compose_do_not_drift() -> None:
+    """Two files that must agree, with nothing enforcing it, is how a profile quietly stops
+    being the thing it is named after. Coolify deploys `docker-compose.yml` by that name and
+    the architecture asks for the profiles to be named files an operator can point at, so
+    both exist and this is what keeps them the same stack."""
+    repo = Path(__file__).resolve().parents[2]
+    base = (repo / "docker-compose.yml").read_text(encoding="utf-8")
+    lite = (repo / "docker-compose.lite.yml").read_text(encoding="utf-8")
+    assert lite.endswith(base), (
+        "docker-compose.lite.yml no longer contains docker-compose.yml verbatim; "
+        "change one and copy it across, or the profiles describe different stacks"
+    )
+
+
+def test_the_lite_profile_says_why_there_is_no_full_one() -> None:
+    """A missing file reads as an oversight. The full profile adds a worker and a
+    session-mode pooler beside it, and there is no worker process yet for it to serve, so a
+    full profile today would declare a container with no command."""
+    repo = Path(__file__).resolve().parents[2]
+    lite = (repo / "docker-compose.lite.yml").read_text(encoding="utf-8")
+    assert "docker-compose.full.yml" in lite
+    assert "worker" in lite
