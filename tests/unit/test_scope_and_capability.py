@@ -144,3 +144,57 @@ def test_a_wildcard_does_not_cross_the_entity_boundary() -> None:
 
 def test_a_narrower_capability_does_not_cover_a_wider_one() -> None:
     assert not Capability(value="read:client.name").covers(Capability(value="read:client.*"))
+
+
+# ------------------------------------------- the two evaluators must admit the same rows
+def test_a_prefix_wildcard_is_neutralised_before_it_reaches_like() -> None:
+    """SQL LIKE reads `%` and `_`; `str.startswith` does not. Unescaped, a scope written
+    to reach `web_` also reaches `webXnorth`, so a grant meant for one team reaches every
+    team whose name differs by one character.
+
+    Found by the agent building M2, reported rather than worked around, and fixed here at
+    the type rather than downstream, so no caller can render an unescaped pattern.
+    """
+    sql, params = Clause(field="d", op=Op.PREFIX, value="web_").to_sql("p")
+    assert "ESCAPE" in sql
+    assert params["p"] == r"web\_%"
+
+
+def test_a_percent_in_a_prefix_cannot_match_everything() -> None:
+    """`web%` unescaped is "anything starting with web", which is what the author wrote,
+    and `%` alone would be every row in the table."""
+    _, params = Clause(field="d", op=Op.PREFIX, value="%").to_sql("p")
+    assert params["p"] == r"\%%"
+
+
+def test_a_backslash_is_escaped_before_the_wildcards_are() -> None:
+    """Order matters: escape the escape character last and it would escape the escapes.
+
+    `chr(92)` rather than a literal, because this exact test was first written with one
+    backslash too few and passed a backspace character instead, which proves nothing.
+    """
+    backslash = chr(92)
+    _, params = Clause(field="d", op=Op.PREFIX, value=f"a{backslash}b").to_sql("p")
+    assert params["p"] == f"a{backslash}{backslash}b%"
+
+
+def test_a_membership_clause_cannot_hold_a_bare_string() -> None:
+    """`matches` requires a tuple and admits nothing; `to_sql` called `list("abc")` and
+    admitted three values nobody wrote. The SQL side was the wider one."""
+    with pytest.raises(ValidationError, match="needs a tuple"):
+        Clause(field="d", op=Op.IN, value="abc")
+
+
+def test_a_prefix_clause_cannot_hold_a_non_string() -> None:
+    """`matches` admits nothing; `to_sql` rendered `str(None)` into `LIKE 'None%'`, which
+    matches any row whose value happens to start with "None"."""
+    with pytest.raises(ValidationError, match="needs a string"):
+        Clause(field="d", op=Op.PREFIX, value=None)
+
+
+def test_the_shapes_that_merely_match_nothing_are_still_allowed() -> None:
+    """Narrow on purpose. An empty IN and an EQ against None match nothing in Python and
+    nothing in SQL, so the evaluators agree and both fail closed. Refusing them here would
+    be authoring-time sanity, which is a different job and a different layer."""
+    assert Clause(field="d", op=Op.IN, value=()).matches({"d": "x"}) is False
+    assert Clause(field="d", op=Op.EQ, value=None).matches({"d": "x"}) is False

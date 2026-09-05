@@ -17,7 +17,7 @@ from __future__ import annotations
 import enum
 from typing import Any, Self
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class Op(enum.StrEnum):
@@ -33,6 +33,14 @@ class Op(enum.StrEnum):
     ANY = "any"
 
 
+def _escape_like(value: str) -> str:
+    """Neutralise LIKE wildcards so a prefix means the same thing in SQL as in Python.
+
+    Backslash first, or the escapes added afterwards would themselves be escaped.
+    """
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 class Clause(BaseModel):
     """One field test."""
 
@@ -41,6 +49,38 @@ class Clause(BaseModel):
     field: str = Field(min_length=1, max_length=120, pattern=r"^[a-z][a-z0-9_.]*$")
     op: Op
     value: str | tuple[str, ...] | None = None
+
+    @model_validator(mode="after")
+    def _value_shape_cannot_make_sql_wider_than_python(self) -> Self:
+        """Refuse only the shapes where the two evaluators disagree, and nothing else.
+
+        This is a narrow rule on purpose. Plenty of odd clauses are merely useless: `EQ`
+        with a None value, or an empty `IN`, match nothing in Python and nothing in SQL.
+        They agree, and they fail closed, so refusing them here would be a different job
+        (authoring-time sanity, which `scope_sql` does) and would make them impossible to
+        write a test about.
+
+        Two shapes genuinely diverge, and in both the SQL side is the wider one:
+
+        - `IN` given a bare string. `matches` requires a tuple and admits nothing, while
+          `to_sql` calls `list("abc")` and admits "a", "b" and "c" as three values.
+        - `PREFIX` given a non-string. `matches` admits nothing, while `to_sql` renders
+          `str(None)` and produces `LIKE 'None%'`, which matches any row whose value
+          starts with "None".
+        """
+        if self.op is Op.IN and not isinstance(self.value, tuple):
+            msg = (
+                f"an IN clause needs a tuple, not {type(self.value).__name__}; "
+                "a bare string is admitted character by character in SQL"
+            )
+            raise ValueError(msg)
+        if self.op is Op.PREFIX and not isinstance(self.value, str):
+            msg = (
+                f"a PREFIX clause needs a string, not {type(self.value).__name__}; "
+                "anything else is rendered into the LIKE pattern and matches rows"
+            )
+            raise ValueError(msg)
+        return self
 
     def matches(self, row: dict[str, Any]) -> bool:
         if self.op is Op.ANY:
@@ -58,7 +98,12 @@ class Clause(BaseModel):
         return isinstance(self.value, str) and actual_s.startswith(self.value)
 
     def to_sql(self, param_prefix: str) -> tuple[str, dict[str, Any]]:
-        """Render to a parameterised SQL fragment. Never interpolates a value."""
+        """Render to a parameterised SQL fragment. Never interpolates a value.
+
+        The rule this has to satisfy is stronger than "no injection": the SQL must admit
+        exactly the rows `matches` admits. Anywhere the two disagree, the SQL side is the
+        one that runs against the whole table.
+        """
         col = f"row_data ->> '{self.field}'"
         match self.op:
             case Op.ANY:
@@ -68,7 +113,15 @@ class Clause(BaseModel):
             case Op.IN:
                 return f"{col} = ANY(:{param_prefix})", {param_prefix: list(self.value or ())}
             case Op.PREFIX:
-                return f"{col} LIKE :{param_prefix}", {param_prefix: f"{self.value}%"}
+                # LIKE reads % and _ as wildcards; str.startswith does not. Without
+                # escaping, a stored prefix of `web_` narrows in Python and widens in SQL,
+                # matching `webXnorth` as well as `web_north`. Escape first, then say so
+                # with ESCAPE, because the default escape character is backslash only by
+                # convention and not in every configuration.
+                return (
+                    f"{col} LIKE :{param_prefix} ESCAPE '\\'",
+                    {param_prefix: f"{_escape_like(str(self.value))}%"},
+                )
 
 
 class Scope(BaseModel):
