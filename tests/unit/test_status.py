@@ -453,3 +453,56 @@ def test_the_real_document_reports_what_its_own_first_paragraph_says() -> None:
     stated = re.search(r"\*\*(\d+) items are open", text)
     assert stated, "the document no longer states how many items are open"
     assert int(stated.group(1)) == _needs_count()
+
+
+# ------------------------------- the two pages that show progress must agree
+#
+# `/build` reads `docs/status.json`, written by `brain.status`. `/build/tracker` is
+# `docs/tracker.html`, written by `docs/wbs/render.js`. Two programs, two languages, one
+# WBS, and both shown to the client on the same site.
+
+
+def _tracker_leaves_per_wave() -> dict[int, int]:
+    """Every leaf checkbox in the tracker, counted by the wave the page assigns it."""
+    import collections
+    import re
+
+    html = (Path(__file__).resolve().parents[2] / "docs" / "tracker.html").read_text(
+        encoding="utf-8"
+    )
+    found = re.findall(r'class="cb"[^>]*data-wave="(\d+)"', html)
+    counted = collections.Counter(int(w) for w in found)
+    return dict(counted)
+
+
+def _status_leaves_per_wave() -> dict[int, int]:
+    payload = json.loads(
+        (Path(__file__).resolve().parents[2] / "docs" / "status.json").read_text(encoding="utf-8")
+    )
+    return {int(w["wave"]): int(w["total"]) for w in payload["waves"]}
+
+
+def test_the_tracker_and_the_status_page_put_each_leaf_in_the_same_wave() -> None:
+    """The bug this exists for was visible on the live site and the owner found it, not a
+    test: `/build` said wave 0 was 110/112 and `/build/tracker` said 110/129, from one WBS.
+
+    The tracker bucketed each leaf by its *module's* wave. A leaf can sit later than its
+    module - M38's delivery pipeline is wave 0, and "what is live after wave 3" cannot be
+    done before wave 3 - so seventeen leaves nobody could start sat in wave 0's denominator,
+    and wave 0 could never reach 100%. `render.js` already had `waveOfLeaf` for exactly this
+    and used it for the schedule sizing, just not for the rollup shown to a reader.
+
+    Compared per wave rather than on the totals, because two different partitions of 1150
+    leaves sum to 1150 either way. Delete this and the two pages drift again, silently, and
+    the person who notices is the client."""
+    assert _tracker_leaves_per_wave() == _status_leaves_per_wave()
+
+
+def test_every_leaf_appears_exactly_once_on_the_tracker() -> None:
+    """The denominator has to be the whole plan. A partition that dropped a leaf would still
+    let the test above pass if both sides dropped it, so this checks the total against the
+    WBS itself rather than against the other page."""
+    wbs = status.load_wbs(Path(__file__).resolve().parents[2] / "docs" / "wbs.json")
+    expected = sum(len(m["leaf_ids"]) for m in wbs["modules"])
+
+    assert sum(_tracker_leaves_per_wave().values()) == expected

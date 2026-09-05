@@ -18,6 +18,10 @@ const TREE = MODS.map(m => ({
   k: m.tasks.map(t => norm({ n: t.n, k: t.s }))
 }));
 
+//: Module id to its wave, resolved the same way `TREE` resolves it. Needed at render time
+//: so each leaf can carry its own wave, which is not always its module's.
+const MODWAVE = Object.fromEntries(TREE.map(m => [m.id, m.wave]));
+
 let LEAVES = 0, NODES = 0, MAXD = 0;
 function walk(n, d) { NODES++; MAXD = Math.max(MAXD, d); if (!n.k.length) LEAVES++; else n.k.forEach(c => walk(c, d + 1)); }
 TREE.forEach(m => m.k.forEach(t => walk(t, 2)));
@@ -109,7 +113,7 @@ function renderNode(node, id, depth) {
   let h = `<li class="n d${depth}${leaf ? " leaf" : ""}" data-id="${id}">`;
   h += `<div class="row">`;
   const dt = DATE[id];
-  h += leaf ? `<input type="checkbox" class="cb" id="cb-${id}" data-id="${id}" data-due="${dt?iso(dt):""}"><label class="lbl" for="cb-${id}"><span class="tid">${id}</span><span class="txt">${esc(node.n)}</span><span class="due" data-due="${dt?iso(dt):""}">${dt?fmt(dt):""}</span></label>`
+  h += leaf ? `<input type="checkbox" class="cb" id="cb-${id}" data-id="${id}" data-wave="${waveOfLeaf(id, MODWAVE[id.split(".")[0]])}" data-due="${dt?iso(dt):""}"><label class="lbl" for="cb-${id}"><span class="tid">${id}</span><span class="txt">${esc(node.n)}</span><span class="due" data-due="${dt?iso(dt):""}">${dt?fmt(dt):""}</span></label>`
             : `<span class="tid">${id}</span><span class="txt grp">${esc(node.n)}</span><span class="prog" data-for="${id}"></span>`;
   h += `</div>`;
   if (!leaf) {
@@ -308,7 +312,14 @@ Derived from the Company Brain architecture, module by module, so coverage is tr
     boxes.forEach(function(b){
       var id=b.getAttribute("data-id");
       var mod=id.split(".")[0];
-      var w=waveOf[mod];
+      // The leaf's own wave, not its module's. A leaf can sit later than its module: M38's
+      // pipeline is wave 0, and "what is live after wave 3" cannot be done before wave 3.
+      // This read the module wave and put seventeen of M38 leaves into wave 0 denominator,
+      // so this page said 110/129 for wave 0 while /build said 110/112 from the same WBS.
+      // waveOfLeaf was already defined above and used for the schedule sizing; it simply
+      // was not used here. No backticks in this comment: it sits inside a template string.
+      var w=b.getAttribute("data-wave");
+      if(w===null||w==="")w=String(waveOf[mod]);
       byWave[w]=byWave[w]||{d:0,t:0}; byWave[w].t++;
       byMod[mod]=byMod[mod]||{d:0,t:0}; byMod[mod].t++;
       if(state[id]){done++;byWave[w].d++;byMod[mod].d++;b.checked=true;b.closest("li.leaf").classList.add("done")}
