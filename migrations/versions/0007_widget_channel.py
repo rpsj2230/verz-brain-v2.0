@@ -75,12 +75,22 @@ SUPERSEDES: dict[str, str] = {WITHOUT_WIDGET: WITH_WIDGET}
 
 def upgrade() -> None:
     for schema, table in CONSTRAINED:
-        op.drop_constraint(f"ck_{table}_channel", table, schema=schema, type_="check")
+        # The bare name. Alembic applies `NAMING_CONVENTION["ck"]` on top, so passing the
+        # already-prefixed `ck_<table>_channel` renders
+        # `ck_principal_identity_ck_principal_identity_channel`, and the DROP names a
+        # constraint that has never existed. This is the first drop_constraint in the
+        # repository, so there was no idiom to copy; there is a test now.
+        op.drop_constraint("channel", table, schema=schema, type_="check")
         op.create_check_constraint("channel", table, WITH_WIDGET, schema=schema)
 
 
 def downgrade() -> None:
     """Narrow the list again. Fails if a row already carries `widget`, deliberately."""
     for schema, table in CONSTRAINED:
-        op.drop_constraint(f"ck_{table}_channel", table, schema=schema, type_="check")
+        # The bare name. Alembic applies `NAMING_CONVENTION["ck"]` on top, so passing the
+        # already-prefixed `ck_<table>_channel` renders
+        # `ck_principal_identity_ck_principal_identity_channel`, and the DROP names a
+        # constraint that has never existed. This is the first drop_constraint in the
+        # repository, so there was no idiom to copy; there is a test now.
+        op.drop_constraint("channel", table, schema=schema, type_="check")
         op.create_check_constraint("channel", table, WITHOUT_WIDGET, schema=schema)

@@ -231,6 +231,33 @@ def test_a_migration_that_declares_a_supersession_actually_performs_it() -> None
             )
 
 
+def test_every_constraint_a_migration_drops_is_one_that_exists() -> None:
+    """A DROP CONSTRAINT naming something that was never created fails only against a real
+    database, and only at deploy time.
+
+    The trap is specific and silent: Alembic applies `NAMING_CONVENTION["ck"]` to the name
+    handed to `op.drop_constraint`, so passing the already-prefixed `ck_session_channel`
+    renders `ck_session_ck_session_channel`. The migration reads correctly, renders without
+    complaint, and drops nothing.
+
+    Checked against the names the models declare, which is where the convention is applied
+    once. Delete this and the next migration to alter a constraint learns the same lesson
+    from a failed deploy."""
+    declared = {
+        str(c.name) for t in metadata.tables.values() for c in t.constraints if c.name is not None
+    }
+    dropped = re.findall(
+        r"DROP CONSTRAINT (\w+)",
+        " ".join(
+            squash(rendered(direction, path))
+            for path in sorted(VERSIONS.glob("*.py"))
+            for direction in ("upgrade", "downgrade")
+        ),
+    )
+    unknown = sorted({name for name in dropped if name not in declared})
+    assert not unknown, f"migrations drop constraints no model declares: {unknown}"
+
+
 def as_amended(sql: str) -> str:
     """The creating migration's SQL, brought up to what later migrations left behind.
 
