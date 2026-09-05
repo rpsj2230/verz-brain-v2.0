@@ -35,7 +35,24 @@ json shapes and the difference is not visible in a column type. `Scope.model_dum
 so a document-form predicate written here is refused rather than parsed as an empty scope -
 which is to say, rather than being read as unrestricted.
 
-Task ids: M1.4.1, M1.4.3, M4.2.1
+Both shapes now live in this schema, which makes that paragraph load-bearing rather than
+explanatory. `capability_grant.scope` and `capability_pack_assignment.scope` hold the first;
+`scope.predicate` holds the second, and is named `predicate` rather than `scope` for exactly
+that reason. `PREDICATE_SHAPE` refuses a `clauses` key the way `SCOPE_SHAPE` requires one,
+so each column rejects the other's contents instead of accepting them and meaning something
+else. A `{"clauses": [...]}` document read by `parse_predicate` is a scope whose only field
+is called `clauses`, which matches no row; the reverse - a document form read as a
+`Scope` - is a scope with no clauses, which is unrestricted. One failure is invisible and
+the other is company-wide, so neither is left to a naming convention.
+
+**Where the version and the epoch live, and why they are two tables.** `grants_version` is
+per principal and is what makes `brain.gate.resolve.cache_key` change the instant somebody
+is revoked; `policy_epoch` is global and is what invalidates everything at once. They are
+separate because they answer different questions and are read on different paths: the
+version is read on every single request for one principal, and a global counter read that
+often would be the hottest row in the database.
+
+Task ids: M1.4.1, M1.4.3, M1.4.5, M1.4.6, M1.4.7, M1.5.1, M2.1.1, M2.2.1, M4.2.1
 """
 
 from __future__ import annotations
@@ -44,10 +61,24 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, String, Text, Uuid, func, text
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    SmallInteger,
+    String,
+    Text,
+    Uuid,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
+from brain.core.department import SLUG_PATTERN
 from brain.core.entitlement import CAPABILITY_RE, VERBS
 from brain.core.field_policy import NAME_PATTERN, Classification
 from brain.db import Base, SoftDeleteMixin, TimestampMixin
@@ -76,6 +107,26 @@ NAME_SQL_PATTERN = NAME_PATTERN
 #: A scope with no clauses is unrestricted, so the failure mode of the weaker check is a
 #: predicate that widens to the whole company.
 SCOPE_SHAPE = "jsonb_typeof(scope) = 'object' AND jsonb_typeof(scope -> 'clauses') = 'array'"
+
+#: The mirror image, for `gate.scope.predicate`, which holds the *document* form that
+#: `parse_predicate` reads. There is no positive shape to check - a document is an object
+#: mapping arbitrary field names to matchers, so any object is structurally plausible - so
+#: this refuses the one object that is definitely the wrong shape. `? 'clauses'` is the
+#: jsonb key-existence operator; a document whose only key is `clauses` would parse into a
+#: scope testing a field called `clauses`, which matches nothing, and dead configuration
+#: reads from the far end of a query exactly like a permission bug.
+PREDICATE_SHAPE = "jsonb_typeof(predicate) = 'object' AND NOT (predicate ? 'clauses')"
+
+#: `Department.slug`, `Team.slug` and `ScopeRecord.slug` are all
+#: `Field(min_length=2, max_length=60, pattern=SLUG_PATTERN)`.
+SLUG_CHARS = 60
+
+#: `Department.name` and `Team.name` are `Field(max_length=120)`; `ScopeRecord.label` too.
+LABEL_CHARS = 120
+
+#: `Department.company_id` and `Team.company_id` are `Field(max_length=128)`. The same width
+#: as a principal id, and for the same reason: it is an identifier from somewhere else.
+COMPANY_ID_CHARS = 128
 
 
 def _reason_present(column: str = "reason") -> str:
@@ -220,11 +271,12 @@ class CapabilityPackAssignmentRow(TimestampMixin, SoftDeleteMixin, Base):
     assigned to eleven people in eleven different scopes, instead of eleven near-identical
     sets of grants that drift apart.
 
-    Note for whoever writes `brain.ops.sweeps`' next revision: this is a grant table, and
-    `sweep_grant_isolation` will not see it. That sweep matches `src.relname LIKE '%grant%'`
-    and this table is called an assignment, so a foreign key from here to a connector table
-    would pass the build. There is none, and the sweep's pattern is the thing that should
-    change - the name follows M1.4.3.
+    This is a grant table, and `sweep_grant_isolation` does now see it: the sweep matches
+    `src.relname LIKE '%grant%' OR src.relname LIKE '%pack%'`, and the second clause is what
+    catches a table whose name says assignment. The note that used to sit here said the
+    opposite and was true when it was written; it is left recorded rather than deleted
+    because the gap it describes - a grant-bearing table the isolation sweep cannot see by
+    name - is one a differently-named table would reopen.
     """
 
     __tablename__ = "capability_pack_assignment"
@@ -326,5 +378,260 @@ class FieldPolicyRow(TimestampMixin, SoftDeleteMixin, Base):
             unique=True,
             postgresql_where=text("deleted_at IS NULL"),
         ),
+        {"schema": "gate"},
+    )
+
+
+class ScopeRow(TimestampMixin, SoftDeleteMixin, Base):
+    """`gate.scope`. Mirrors `brain.core.department.ScopeRecord` (M2.1.1).
+
+    The column is `predicate` and not `scope`, which is the single most important thing in
+    this class. See the module docstring: two json shapes exist in this schema, and a column
+    called `scope` on a table called `scope` would be the obvious place for somebody to put
+    the wrong one. `PREDICATE_SHAPE` refuses the shape the grant tables hold.
+
+    `is_department` is a boolean rather than a separate `department_scope` table. A second
+    table would let a department point at a scope that no longer carries the flag, which is
+    the state `assign_department_admin` refuses at authoring time; a column cannot get out
+    of step with itself.
+
+    Two rules `ScopeRecord` enforces are deliberately absent here, because a check
+    constraint cannot express either. `assert_conjunctive` walks the clause list and reports
+    every violation at once; `is_unsatisfiable` compares clauses on the same field against
+    each other. Both need iteration over a json array, which means a subquery, which a check
+    constraint may not contain. They stay in the type, and the type is the only supported
+    way to write one of these rows.
+    """
+
+    __tablename__ = "scope"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
+    )
+    slug: Mapped[str] = mapped_column(String(SLUG_CHARS), nullable=False)
+
+    #: The document form that `parse_predicate` reads, never `Scope.model_dump()`.
+    predicate: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+
+    #: True for the one scope that *is* a department, as opposed to a scope written inside
+    #: one. Only a flagged record may back a department or bound its admin.
+    is_department: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    label: Mapped[str] = mapped_column(
+        String(LABEL_CHARS), nullable=False, server_default=text("''")
+    )
+
+    __table_args__ = (
+        CheckConstraint(f"slug ~ '{SLUG_PATTERN}'", name="slug_grammar"),
+        CheckConstraint("length(slug) >= 2", name="slug_long_enough"),
+        CheckConstraint(PREDICATE_SHAPE, name="predicate_shape"),
+        # `ScopeRecord.model_post_init` refuses a department scope that restricts nothing,
+        # because an unbounded department scope is the whole company wearing a department's
+        # name. The empty object is the one unrestricted predicate a check constraint can
+        # recognise without iterating, so it is the half that is enforced here.
+        CheckConstraint(
+            "NOT is_department OR predicate <> '{}'::jsonb",
+            name="a_department_scope_restricts_something",
+        ),
+        # Live rows only, for the reason `principal_identity` gives: a total unique
+        # constraint would mean a retired slug could never be used again, and a department
+        # that was wound up and later restarted is an ordinary event.
+        Index(
+            "uq_scope_slug_live",
+            "slug",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+        # The reverse question again, as on the grant tables: which scopes mention this
+        # department. An access review reads it, and so does the console.
+        Index(
+            "ix_scope_predicate",
+            "predicate",
+            postgresql_using="gin",
+            postgresql_ops={"predicate": "jsonb_path_ops"},
+        ),
+        {"schema": "gate"},
+    )
+
+
+class DepartmentRow(TimestampMixin, SoftDeleteMixin, Base):
+    """`gate.department`. Mirrors `brain.core.department.Department` (M2.2.1).
+
+    In `gate` rather than in a schema of its own, and not in `auth`. `department.py` is
+    explicit that a department is not a container: it is a predicate over rows, and the
+    record exists only to give that predicate a name, an owner and somewhere to hang an
+    admin. A predicate belongs with the scopes.
+
+    There is no parent department column, for the reason the type has no parent field:
+    nesting makes the entitlement lookup recursive. Depth that is genuinely wanted is a
+    longer `scope_path` and a prefix clause, or a team.
+
+    **`scope_slug` is not a foreign key, and that is a trade-off rather than an oversight.**
+    `gate.scope.slug` is unique only among live rows, and PostgreSQL cannot back a foreign
+    key with a partial unique index. The alternative is a total unique constraint on the
+    slug, which would make retiring a scope a one-way door on its name - the same failure
+    the partial index on `principal_identity` exists to avoid. So the reference is a plain
+    column, and the join carries `AND deleted_at IS NULL`, which every query against a
+    soft-deleted table needs anyway.
+    """
+
+    __tablename__ = "department"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
+    )
+    company_id: Mapped[str] = mapped_column(String(COMPANY_ID_CHARS), nullable=False, index=True)
+    slug: Mapped[str] = mapped_column(String(SLUG_CHARS), nullable=False)
+    name: Mapped[str] = mapped_column(String(LABEL_CHARS), nullable=False)
+
+    #: The `gate.scope` row that defines this department. Never nullable: a department with
+    #: no predicate is a label, and a label cannot decide who sees what.
+    scope_slug: Mapped[str] = mapped_column(String(SLUG_CHARS), nullable=False, index=True)
+
+    __table_args__ = (
+        CheckConstraint(f"slug ~ '{SLUG_PATTERN}'", name="slug_grammar"),
+        CheckConstraint("length(slug) >= 2", name="slug_long_enough"),
+        CheckConstraint(f"scope_slug ~ '{SLUG_PATTERN}'", name="scope_slug_grammar"),
+        CheckConstraint("length(btrim(name)) > 0", name="name_present"),
+        Index(
+            "uq_department_company_id_slug_live",
+            "company_id",
+            "slug",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+        {"schema": "gate"},
+    )
+
+
+class TeamRow(TimestampMixin, SoftDeleteMixin, Base):
+    """`gate.team`. Mirrors `brain.identity.teams.Team` (M1.5.1).
+
+    **Within a department is a foreign key, not a convention.** `Team.department_slug` is
+    non-optional in the type because a team floating outside a department has no scope to be
+    narrower than. The column here points at `gate.department.id` rather than repeating the
+    department's slug, so the containment is enforced by the database and a rename does not
+    leave orphaned strings behind. `company_id` is likewise not repeated: the department
+    already carries it, and a second copy is a second thing to keep in step.
+
+    That does mean `Team.path` - `<department>.<team>`, the value a `scope_path` prefix
+    clause matches against - is a join rather than a column. Denormalising it was considered
+    and rejected: a stored path is a cached answer to a question the join answers exactly,
+    and it goes stale on the first rename, silently, in the direction of reaching rows that
+    belong to somebody else.
+
+    `Team._check` refuses a team whose slug equals its department's. That one cannot be a
+    check constraint - it needs the parent row, and a check constraint may not contain a
+    subquery - so it stays in the type. It is worth saying which rule is where rather than
+    letting a reader assume the database holds all of them.
+    """
+
+    __tablename__ = "team"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
+    )
+    department_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("gate.department.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    slug: Mapped[str] = mapped_column(String(SLUG_CHARS), nullable=False)
+    name: Mapped[str] = mapped_column(String(LABEL_CHARS), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(f"slug ~ '{SLUG_PATTERN}'", name="slug_grammar"),
+        CheckConstraint("length(slug) >= 2", name="slug_long_enough"),
+        CheckConstraint("length(btrim(name)) > 0", name="name_present"),
+        Index(
+            "uq_team_department_id_slug_live",
+            "department_id",
+            "slug",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+        {"schema": "gate"},
+    )
+
+
+class GrantsVersionRow(TimestampMixin, Base):
+    """`gate.grants_version`. One counter per principal, moved only by triggers (M1.4.6).
+
+    `brain.gate.resolve` builds its cache key as `ent:<principal>:<version>` and says why
+    the version is in the key rather than checked after a read: a write bumps
+    `grants_version`, and every key built from the old version is orphaned in the same
+    instant. This is the column that bumps. Without it `VersionSource` has no
+    implementation, so the cache either goes unused or serves a revoked permission for as
+    long as the sixty-second TTL lasts (M1.4.5).
+
+    **Nothing in the application writes this row.** `0003` puts the bump in an AFTER trigger
+    on every grant-bearing table, because the code path that forgets is the one written in a
+    hurry during an incident, and a revocation that does not bump is a revocation that does
+    not take effect until the TTL expires. A trigger cannot be forgotten by a caller who
+    does not know it is there.
+
+    No `SoftDeleteMixin`, and the absence is the design: a version cannot be retired. A
+    hidden row would send the reader to its default, so a bumped counter would silently
+    return to zero - which is a cache key colliding with one minted before the revocation,
+    the exact failure the counter exists to prevent.
+
+    The row is created on the first bump rather than seeded beside the principal. A reader
+    coalesces a missing row to zero, so a principal who has never held a grant needs no row
+    at all, and `0003` therefore writes no data.
+    """
+
+    __tablename__ = "grants_version"
+
+    principal_id: Mapped[str] = mapped_column(
+        String(PRINCIPAL_ID_CHARS),
+        ForeignKey("auth.principal.id", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    version: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default=text("0"))
+
+    __table_args__ = (
+        # Monotonic. A counter that can go backwards hands out a key that was already used
+        # under a wider entitlement, and whatever is cached under it is still readable.
+        CheckConstraint("version >= 0", name="version_non_negative"),
+        {"schema": "gate"},
+    )
+
+
+class PolicyEpochRow(TimestampMixin, Base):
+    """`gate.policy_epoch`. One global counter, moved by every entitlement mutation (M1.4.7).
+
+    Separate from `grants_version` because the two invalidate different things.
+    `grants_version` is per principal and answers whether *this person's* reach has changed.
+    The epoch is global and answers whether the shape of the permission model has changed at
+    all, which is what a cached *answer* has to be keyed on, because an answer drew on rows
+    that other people's grants also govern.
+
+    **A name collision worth stating plainly, because it is already in the code.**
+    `brain.core.field_policy.FieldPolicy.epoch()` is also called a policy epoch and is a
+    different object: a 32-character digest over the field-policy rule set, which is what
+    `brain.gate.cache_key.CacheKeyParts.policy_epoch` receives - typed `int` there and `str`
+    on `brain.core.redaction.RedactionTrace`, which is the same disagreement one layer up.
+    This column is M1.4.7's counter and nothing else. Whoever wires the answer cache has to
+    decide which of the two the key carries, or carry both; what must not happen is one
+    quietly standing in for the other, because a digest that does not move when a grant
+    changes leaves every cached answer reachable.
+
+    One row, pinned by a check constraint rather than by convention. Two rows would make the
+    epoch an aggregate, and an aggregate over a table anybody can insert into is a number
+    that goes backwards when somebody removes the wrong row.
+    """
+
+    __tablename__ = "policy_epoch"
+
+    #: Always 1. Not a boolean and not a partial unique index on a constant, because both
+    #: read as though a second row were imaginable.
+    id: Mapped[int] = mapped_column(SmallInteger, primary_key=True, autoincrement=False)
+    epoch: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default=text("0"))
+
+    __table_args__ = (
+        CheckConstraint("id = 1", name="exactly_one_row"),
+        CheckConstraint("epoch >= 0", name="epoch_non_negative"),
         {"schema": "gate"},
     )

@@ -44,7 +44,18 @@ by convention with an extra step. When retention is built it needs its own migra
 its own argument; until then the ledger only grows, which is the failure that can be fixed
 later rather than the one that cannot.
 
-Task ids: M24.1.1
+**Since 0003, the application is not the only writer, and that is the point of M1.4.8.**
+Every grant, revocation and pack assignment appends an entry from an AFTER trigger rather
+than from whoever made the write. A caller that has to remember to audit is a caller that
+forgets during an incident, which is the one occasion the entry is worth having. The
+consequence is stated here because it is surprising: `ledger.append`'s docstring says the
+caller must pass one authoritative clock's reading, and warns that "either the caller reads
+the clock from the database and passes it in, or the digest has to be computed in the
+database". 0003 takes the second branch. `obs.audit_entry_hash` is `compute_entry_hash`
+written in SQL, and the constants below are what the two implementations share so the
+agreement is checkable rather than asserted.
+
+Task ids: M1.4.8, M24.1.1
 """
 
 from __future__ import annotations
@@ -95,6 +106,56 @@ def _bare(pattern: str) -> str:
 #: written as one regex: the validator does the same job in two steps, which a check
 #: constraint cannot.
 SUBJECT_PATTERN = f"^({'|'.join(sorted(SUBJECT_KINDS))}):{_bare(IDENTIFIER)}$"
+
+
+# --------------------------------------------------- what a trigger-written entry carries
+#: The kind a grant row and a pack assignment are both recorded under. `SUBJECT_KINDS` has
+#: no `pack` member and this file deliberately does not add one: the vocabulary is closed
+#: because the client-visible audit view filters on it, and widening it to make one trigger
+#: read better is how a closed set stops being closed.
+GRANT_SUBJECT_KIND = "grant"
+
+#: The action a pack assignment is recorded under, and the reason.
+#:
+#: `AuditAction` has no member for assigning a pack, and adding one was rejected for the
+#: reason the enum's own docstring gives - a new member is a deliberate edit in two places,
+#: and this is not a new *kind* of event. An assignment is a grant: `packs.expand` is the
+#: only route from a pack to a grant, and every capability it produces is one the holder now
+#: has. Recording it as `GRANT` means "what did this person gain, and when" is answerable
+#: from one action, which is the question the ledger is read for. `details` carries the pack
+#: name, so the two are still distinguishable by anyone who cares which route it took.
+PACK_ASSIGNMENT_ACTION = AuditAction.GRANT
+
+#: Session settings the application sets so the trigger can attribute the write. They are
+#: read with `current_setting(<name>, true)`, which returns null rather than raising when
+#: nothing set them, so a write from a migration or a psql session still produces an entry.
+#:
+#: A GUC rather than a column, because the actor of a *revocation* is not on the row: the
+#: grant tables record `granted_by` and nothing records who removed it. Adding a
+#: `revoked_by` column would be the honest fix and is a schema change M1.4 does not ask for;
+#: until then the fallback names the granter, and `details` says the attribution was
+#: inferred so nobody reads it as a record of who revoked.
+ACTOR_SETTING = "brain.actor_id"
+ENT_HASH_SETTING = "brain.ent_hash"
+TRACE_ID_SETTING = "brain.trace_id"
+
+#: What `ent_hash` holds when the application did not supply one.
+#:
+#: The trigger cannot compute a real one. `EntitlementSet.ent_hash` sorts grants, serialises
+#: each scope with `model_dump_json` and hashes the result; reproducing pydantic's json
+#: rendering in SQL would be a second implementation of the digest, and the two would agree
+#: right up until somebody added a field. So the column records a sentinel instead of a
+#: plausible wrong value. Thirty-two zeros is the same shape `GENESIS_HASH` uses for the
+#: same purpose: unmistakably "not supplied" rather than a digest of something.
+UNSUPPLIED_ENT_HASH = "0" * ENT_HASH_CHARS
+
+#: Whether the subject still holds anything at all after the change, as a field name so it
+#: survives `redact_details`. This is what the audit trigger asks the resolver for, and it
+#: is the reason the trigger calls it: a revocation that leaves somebody with nothing and one
+#: that leaves them with plenty are different events, and an auditor cannot tell them apart
+#: from a row naming only the capability that went.
+HOLDS_NONE = "none"
+HOLDS_SOME = "some"
 
 
 class AuditEntryRow(Base):

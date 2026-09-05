@@ -26,11 +26,20 @@ to be able to re-enable them and because the ledger refers to them. Deleting is 
 and the row-level security policy hides those rows. Collapsing the two would mean either
 that re-enabling is impossible or that offboarded staff keep appearing in every list.
 
-Task ids: M1.2.1, M1.2.2
+**A disabled principal with a live session is not disabled.** `disabled_at` is a column,
+and a column on its own changes nothing that is already running: a console tab holding a
+token, a Lark thread mid-conversation, a scheduled run that opened its session an hour ago.
+`auth.session` below is where those live, and `0003` ends them from a trigger on
+`auth.principal` rather than from whichever code path happened to set the column. That is
+the whole content of M1.2.3, and the direction is deliberately one-way - re-enabling
+restores the ability to sign in, never the sessions that were ended.
+
+Task ids: M1.2.1, M1.2.2, M1.2.3
 """
 
 from __future__ import annotations
 
+import enum
 import uuid
 from collections.abc import Iterable
 from datetime import datetime
@@ -73,6 +82,36 @@ IDENTITY_HASH_PATTERN = f"^[0-9a-f]{{{IDENTITY_HASH_CHARS}}}$"
 #: `Principal.model_post_init` requires these two to carry `not_after`. Named here so the
 #: constraint below is generated from the same tuple the model checks against.
 BOUNDED_EMPLOYMENTS = (Employment.CONTRACTOR, Employment.PARTNER)
+
+#: `BreakGlassSession.session_id` is `Field(max_length=120)`, and the ledger's subject
+#: grammar is what bounds it: a session id has to survive `session:<id>` in an audit row.
+SESSION_ID_CHARS = 120
+
+
+class SessionEndReason(enum.StrEnum):
+    """Why a session stopped being live. Closed, and every member is a field name.
+
+    Closed for the reason `BreakGlassReason` is closed: the value is recordable in the
+    ledger only if it matches the field-name grammar, and "how many sessions did the
+    disable cascade end last quarter" is a query rather than a reading exercise.
+
+    There is deliberately no `revoked` member, and the omission is not cosmetic.
+    `brain.identity.packs.subtractive_state` refuses that word across the identity package
+    because a row that subtracts turns resolution into an evaluation-order problem. A
+    session is not a grant, so the rule does not formally reach here - but two vocabularies
+    where one says `revoked` and the other refuses to is how the word gets back in.
+    """
+
+    #: The holder signed out.
+    SIGNED_OUT = "signed_out"
+    #: `expires_at` passed and a sweep tidied the row up.
+    EXPIRED = "expired"
+    #: The cascade from `auth.principal.disabled_at` (M1.2.3).
+    PRINCIPAL_DISABLED = "principal_disabled"
+    #: The cascade from `auth.principal.deleted_at`. Separate from the above because
+    #: offboarding and a temporary disable are different events, and the question asked
+    #: afterwards ("was she still working here?") has different answers.
+    PRINCIPAL_RETIRED = "principal_retired"
 
 
 def one_of(column: str, values: Iterable[str]) -> str:
@@ -219,6 +258,85 @@ class PrincipalIdentityRow(TimestampMixin, SoftDeleteMixin, Base):
             "identity_hash",
             unique=True,
             postgresql_where=text("deleted_at IS NULL"),
+        ),
+        {"schema": "auth"},
+    )
+
+
+class SessionRow(TimestampMixin, Base):
+    """`auth.session`. A live channel session, and the thing a disable has to reach (M1.2.3).
+
+    There is no pydantic type this mirrors, which is worth saying plainly rather than
+    leaving a reader to look for one. `brain.identity.roles.BreakGlassSession` is a
+    different object: a time-boxed elevation with its own grants, its own chain and its own
+    notification. This is the ordinary thing - somebody is signed in on a channel right now
+    - and it exists because `disabled_at` on its own disables nobody who is already holding
+    a token.
+
+    **`ended_at` rather than `deleted_at`, and no `SoftDeleteMixin`.** Every other table
+    here retires rows with `deleted_at` and hides them behind a row-level security policy.
+    A session must not be hidden when it ends: "which sessions were open when she was
+    disabled, and when did they stop" is exactly the question asked afterwards, and a
+    policy that filtered them out would make the cascade unverifiable from the outside.
+    Carrying both columns was considered and rejected for the reason `disabled_at` and
+    `deleted_at` are two columns and not one: two names for one fact is how they come to
+    disagree, and here they would genuinely be one fact.
+
+    **`expires_at` is not the same as `ended_at`.** The first is when the session was
+    always going to stop; the second is when it actually did. A session that runs its full
+    length ends at its expiry and records `expired`; one the cascade closes ends early and
+    records why. Collapsing them would lose the only evidence that the cascade ran.
+    """
+
+    __tablename__ = "session"
+
+    #: Not a surrogate uuid: the identity provider mints the session id and the ledger
+    #: refers to it as `session:<id>`, so it has to be the string that arrives.
+    id: Mapped[str] = mapped_column(String(SESSION_ID_CHARS), primary_key=True)
+
+    principal_id: Mapped[str] = mapped_column(
+        String(PRINCIPAL_ID_CHARS),
+        # RESTRICT for the same reason `principal_identity` uses it: the record that a
+        # session existed must outlive the account, because that is what an offboarding
+        # review reads.
+        ForeignKey("auth.principal.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    channel: Mapped[str] = mapped_column(String(16), nullable=False)
+
+    #: How strongly the holder was authenticated when this session opened. Unlike a
+    #: binding, a session may legitimately carry AUTHENTICATED or STRONG: those levels are
+    #: *about* a live session, which is what this row is.
+    assurance: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    end_reason: Mapped[str | None] = mapped_column(String(24), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(one_of("channel", Channel), name="channel"),
+        CheckConstraint(
+            f"assurance BETWEEN {int(Assurance.UNVERIFIED)} AND {int(Assurance.STRONG)}",
+            name="assurance_in_range",
+        ),
+        CheckConstraint("expires_at > started_at", name="expires_after_it_starts"),
+        # Both or neither. An `ended_at` with no reason is a session that stopped for
+        # reasons nobody recorded, which is the row the cascade audit needs most; a reason
+        # with no time is a claim about an event with no moment.
+        CheckConstraint(
+            "(ended_at IS NULL) = (end_reason IS NULL)",
+            name="ended_with_a_reason",
+        ),
+        CheckConstraint(one_of("end_reason", SessionEndReason), name="end_reason"),
+        # The cascade's working set, and the one query the gate runs on every request:
+        # "is this principal's session still live". Partial, because the ended rows are
+        # kept forever and are never the answer to that question.
+        Index(
+            "ix_session_principal_id_live",
+            "principal_id",
+            postgresql_where=text("ended_at IS NULL"),
         ),
         {"schema": "auth"},
     )

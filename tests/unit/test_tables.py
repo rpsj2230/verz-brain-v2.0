@@ -13,7 +13,12 @@ policies admit and refuse the right rows for `brain_app`, and that the append-on
 actually fires. Those are behaviours of a running server, and asserting them here would only
 assert that this file's idea of PostgreSQL matches PostgreSQL.
 
-Task ids: M1.2.1, M1.2.2, M1.4.1, M1.4.3, M4.2.1, M24.1.1
+The same line is drawn again for 0003. Its resolver, its counters and its triggers are the
+subject of `tests/unit/test_resolver.py`, which says which of its properties need a server;
+what is here is the shape of the nine tables it adds.
+
+Task ids: M1.2.1, M1.2.2, M1.2.3, M1.4.1, M1.4.3, M1.4.6, M1.4.7, M1.5.1, M2.1.1, M2.2.1,
+M4.2.1, M5.2.2, M5.3.1, M5.3.4, M24.1.1
 """
 
 from __future__ import annotations
@@ -33,6 +38,12 @@ from sqlalchemy.pool import NullPool
 from sqlalchemy.schema import CreateIndex, CreateTable
 
 import brain.tables as tables
+
+# Imported for its side effect as well as its constants: `brain.tables.__init__` does not
+# import this module, so without the line below `Base.metadata` would be missing three
+# tables and every exhaustive assertion here would quietly check a smaller set. That gap is
+# recorded on `ROUTING_TABLES_IN_DEPENDENCY_ORDER`; the import belongs in `__init__`.
+import brain.tables.routing as routing_tables
 from brain.audit.ledger import SUBJECT_KINDS, AuditAction
 from brain.core.entitlement import VERBS
 from brain.core.field_policy import Classification
@@ -41,13 +52,54 @@ from brain.db import metadata
 from brain.gate.admission import Assurance
 from brain.gate.context import Channel
 from brain.gate.ingress import identity_hash
+from brain.models.routing import FallbackTrigger, RungRole, Tier
 from brain.ops.migration_policy import check_file
+from brain.tables.identity import SessionEndReason
+from brain.tables.routing import ATTEMPT_OUTCOMES
 
 REPO = Path(__file__).resolve().parents[2]
-MIGRATION = REPO / "migrations" / "versions" / "0002_core_tables.py"
+VERSIONS = REPO / "migrations" / "versions"
+MIGRATION = VERSIONS / "0002_core_tables.py"
+MIGRATION_RESOLVER = VERSIONS / "0003_resolver_and_tables.py"
 
-#: Every table carrying `deleted_at`. The ledger is the one that must not.
-SOFT_DELETED = tuple(t for t in tables.TABLES_IN_DEPENDENCY_ORDER if t != "obs.audit_entry")
+#: The seven tables 0002 built. `brain.tables.TABLES_IN_DEPENDENCY_ORDER` still names exactly
+#: these, because `brain/tables/__init__.py` was outside the remit of the change that added
+#: the nine below.
+CORE_TABLES = tables.TABLES_IN_DEPENDENCY_ORDER
+
+#: The nine 0003 adds, in the order a migration must create them. Written here rather than
+#: read from the migration, so that the migration's own tuple is compared against something
+#: rather than against itself.
+RESOLVER_TABLES: tuple[str, ...] = (
+    "gate.scope",
+    "gate.department",
+    "gate.team",
+    "auth.session",
+    "gate.grants_version",
+    "gate.policy_epoch",
+    *routing_tables.ROUTING_TABLES_IN_DEPENDENCY_ORDER,
+)
+
+ALL_TABLES = CORE_TABLES + RESOLVER_TABLES
+
+
+def _soft_deleted(qualified: tuple[str, ...]) -> tuple[str, ...]:
+    """The subset carrying `deleted_at`, read from the metadata rather than listed.
+
+    A hand-written list is a second copy of a fact the models already carry, and the copy is
+    wrong the first time a table gains or loses the mixin - in the direction of not checking
+    the policy on the table that just acquired one.
+    """
+    return tuple(q for q in qualified if "deleted_at" in metadata.tables[q].columns)
+
+
+#: Every 0002 table carrying `deleted_at`. The ledger is the one that must not.
+SOFT_DELETED = _soft_deleted(CORE_TABLES)
+
+#: And the same for 0003. Four of its nine deliberately have no `deleted_at`: two counters
+#: that must not be able to go backwards, a session whose end is not a retirement, and an
+#: attempt row that would make the reconstructed chain a claim if it could be hidden.
+SOFT_DELETED_RESOLVER = _soft_deleted(RESOLVER_TABLES)
 
 #: A PostgreSQL dialect to render DDL against. Taken from an engine rather than from
 #: `postgresql.dialect()` because that constructor is untyped and mypy runs strict here.
@@ -60,14 +112,14 @@ def migration_source() -> str:
 
 
 @functools.cache
-def migration_module() -> types.ModuleType:
-    """Import 0002 as a module so its constants and its two functions can be reached.
+def migration_module(path: Path = MIGRATION) -> types.ModuleType:
+    """Import a migration as a module so its constants and its two functions can be reached.
 
     Importing it runs nothing: `upgrade` and `downgrade` are functions, and `alembic.op` is
     a proxy that reaches a database only when one of them is called under a context that
     has one.
     """
-    spec = importlib.util.spec_from_file_location("migration_0002", MIGRATION)
+    spec = importlib.util.spec_from_file_location(f"migration_{path.stem}", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -75,7 +127,7 @@ def migration_module() -> types.ModuleType:
 
 
 @functools.cache
-def rendered(direction: str) -> str:
+def rendered(direction: str, path: Path = MIGRATION) -> str:
     """The SQL the migration emits, rendered without a database.
 
     This is Alembic's `--sql` mode driven in-process. It matters that the tests below read
@@ -87,7 +139,7 @@ def rendered(direction: str) -> str:
         dialect_name="postgresql",
         opts={"as_sql": True, "output_buffer": buffer, "target_metadata": metadata},
     )
-    module = migration_module()
+    module = migration_module(path)
     with Operations.context(context):
         getattr(module, direction)()
     return buffer.getvalue()
@@ -131,9 +183,9 @@ def quoted_values(sql: str) -> list[str]:
 def test_every_table_the_domain_needs_is_registered_on_the_metadata() -> None:
     """Without this the models exist and nothing can reach them: `Base.metadata` is what a
     migration, a seed and a query all go through."""
-    for qualified in tables.TABLES_IN_DEPENDENCY_ORDER:
+    for qualified in ALL_TABLES:
         assert qualified in metadata.tables, f"{qualified} is not on the metadata"
-    assert set(metadata.tables) == set(tables.TABLES_IN_DEPENDENCY_ORDER)
+    assert set(metadata.tables) == set(ALL_TABLES)
 
 
 def test_no_table_lands_in_the_public_schema() -> None:
@@ -149,7 +201,7 @@ def test_the_tables_are_ordered_so_a_table_follows_what_it_points_at() -> None:
     `upgrade` fails on a foreign key to a table that does not exist yet, while `downgrade`
     fails on a table something still references."""
     seen: set[str] = set()
-    for qualified in tables.TABLES_IN_DEPENDENCY_ORDER:
+    for qualified in ALL_TABLES:
         for constraint in table(qualified).constraints:
             if not isinstance(constraint, ForeignKeyConstraint):
                 continue
@@ -265,7 +317,7 @@ def test_no_grant_table_points_at_a_connector() -> None:
     """`sweep_grant_isolation` fails the build on one, and the reason runs both ways: a
     connector that cascades into grants can remove them, and a connector that can be added
     becomes a way to touch the permission graph."""
-    for qualified in tables.TABLES_IN_DEPENDENCY_ORDER:
+    for qualified in ALL_TABLES:
         for constraint in table(qualified).constraints:
             if not isinstance(constraint, ForeignKeyConstraint):
                 continue
@@ -461,7 +513,12 @@ def test_the_migration_creates_exactly_the_tables_the_models_declare() -> None:
     imports `brain.db` and not `brain.tables`, so its metadata is empty."""
     module = migration_module()
     assert module.TABLES == tables.TABLES_IN_DEPENDENCY_ORDER
-    assert set(module.TABLES) == set(metadata.tables)
+    resolver = migration_module(MIGRATION_RESOLVER)
+    assert resolver.TABLES == RESOLVER_TABLES
+    # Every table has a migration and every migration has a model. The union is the check
+    # that matters: either half on its own would let a table be created twice or not at all.
+    assert set(module.TABLES) | set(resolver.TABLES) == set(metadata.tables)
+    assert not set(module.TABLES) & set(resolver.TABLES)
 
 
 @pytest.mark.parametrize("qualified", tables.TABLES_IN_DEPENDENCY_ORDER)
@@ -623,5 +680,435 @@ def test_nothing_the_migration_runs_needs_a_superuser() -> None:
     exists. A migration that quietly required more would make every policy written here
     decoration, and the tests would still pass because they would run as the same role."""
     emitted = rendered("upgrade").upper() + rendered("downgrade").upper()
+    for forbidden in ("SUPERUSER", "BYPASSRLS", "SET ROLE", "SECURITY DEFINER"):
+        assert forbidden not in emitted, f"the migration runs {forbidden}"
+
+
+# ============================================================ 0003: the remaining tables
+# The resolver, the counters and the triggers 0003 also creates are the subject of
+# `tests/unit/test_resolver.py`. What is below is the shape of the nine tables.
+
+
+def resolver_sql(direction: str) -> str:
+    return squash(rendered(direction, MIGRATION_RESOLVER))
+
+
+# ------------------------------------------------------------------- M1.2.3 sessions
+def test_a_session_records_when_it_actually_ended_and_why() -> None:
+    """M1.2.3 cascades a disable to sessions, and the cascade is only auditable if the row
+    says what closed it. Without `end_reason` a session ended by the cascade is
+    indistinguishable from one that simply expired, so "did disabling her actually stop
+    anything" has no answer."""
+    columns = table("auth.session").columns
+    assert columns["ended_at"].nullable
+    assert columns["end_reason"].nullable
+    assert quoted_values(checks("auth.session")["ck_session_end_reason"]) == sorted(
+        r.value for r in SessionEndReason
+    )
+
+
+def test_a_session_cannot_end_without_saying_why() -> None:
+    """Both columns or neither. An `ended_at` with no reason is a session that stopped for
+    reasons nobody recorded, which is exactly the row a disable audit needs; a reason with no
+    time is a claim about an event with no moment."""
+    assert (
+        checks("auth.session")["ck_session_ended_with_a_reason"]
+        == "(ended_at IS NULL) = (end_reason IS NULL)"
+    )
+
+
+def test_when_a_session_was_always_going_to_stop_is_not_when_it_did() -> None:
+    """`expires_at` and `ended_at` are different facts. Collapsing them would lose the only
+    evidence that the cascade ran early, because a session closed by a disable would look
+    exactly like one that ran its full length."""
+    columns = table("auth.session").columns
+    assert not columns["expires_at"].nullable
+    assert columns["ended_at"].nullable
+    assert checks("auth.session")["ck_session_expires_after_it_starts"] == "expires_at > started_at"
+
+
+def test_a_session_is_never_hidden_when_it_ends() -> None:
+    """No `deleted_at`, so no policy filters ended rows away. Which sessions were open when
+    somebody was disabled is precisely the question asked afterwards, and a row-level
+    security policy that hid them would make the cascade unverifiable from outside the
+    database."""
+    assert "deleted_at" not in table("auth.session").columns
+    assert "auth.session" not in SOFT_DELETED_RESOLVER
+
+
+def test_a_session_may_carry_stronger_evidence_than_a_binding() -> None:
+    """`principal_identity.assurance` is capped at BOUND because a binding is evidence about
+    the day it was made. A session is evidence about now, so AUTHENTICATED and STRONG are
+    legitimate here - and capping this column the same way would make a second factor
+    unrecordable."""
+    sql = checks("auth.session")["ck_session_assurance_in_range"]
+    assert sql == f"assurance BETWEEN {int(Assurance.UNVERIFIED)} AND {int(Assurance.STRONG)}"
+
+
+# ------------------------------------------------------------------ M2.1.1 the scope table
+def test_the_scope_table_refuses_the_shape_the_grant_tables_hold() -> None:
+    """Two json shapes now live in one schema. `capability_grant.scope` is
+    `Scope.model_dump()`; `scope.predicate` is the document form `parse_predicate` reads.
+    Read as each other they mean opposite things: a document form parsed as a `Scope` has no
+    clauses, which is unrestricted. Deleting this removes what stands between a
+    copy-and-pasted predicate and a company-wide scope."""
+    assert "scope" not in table("gate.scope").columns, "the column must be called predicate"
+    sql = checks("gate.scope")["ck_scope_predicate_shape"]
+    assert "jsonb_typeof(predicate) = 'object'" in sql
+    assert "NOT (predicate ? 'clauses')" in sql
+
+
+def test_a_department_scope_has_to_restrict_something() -> None:
+    """`ScopeRecord.model_post_init` refuses a flagged scope that is unrestricted, because an
+    unbounded department scope is the whole company wearing a department's name. The empty
+    object is the one unrestricted predicate a check constraint can recognise without
+    iterating a json array, so it is the half the database holds."""
+    assert (
+        checks("gate.scope")["ck_scope_a_department_scope_restricts_something"]
+        == "NOT is_department OR predicate <> '{}'::jsonb"
+    )
+
+
+def test_a_scope_slug_may_be_used_again_after_the_scope_is_retired() -> None:
+    """Partial rather than total, for the reason `principal_identity` gives. A department
+    wound up and later restarted would otherwise never get its own name back, because the
+    retired row still occupies it and nothing here holds DELETE."""
+    index = indexes("gate.scope")["uq_scope_slug_live"]
+    assert index.unique
+    assert "deleted_at IS NULL" in str(index.dialect_options["postgresql"]["where"])
+
+
+# -------------------------------------------------------------- M2.2.1 the department table
+def test_a_department_names_the_scope_that_defines_it() -> None:
+    """`Department.scope_slug` is not optional in the type because a department with no
+    predicate is a label, and a label cannot decide who sees what. A nullable column here
+    would let one be written."""
+    columns = table("gate.department").columns
+    assert not columns["scope_slug"].nullable
+    assert not columns["company_id"].nullable
+
+
+def test_a_department_has_no_parent_department() -> None:
+    """`Department` has no parent field because nesting makes the entitlement lookup
+    recursive. A column here would be the place somebody adds one, and every later feature
+    would be built on the walk."""
+    columns = set(table("gate.department").columns.keys())
+    assert "parent_id" not in columns
+    assert "parent_slug" not in columns
+
+
+def test_one_live_department_per_slug_per_company() -> None:
+    """Two live rows for one name make "which department is web" depend on which came back
+    first, and every grant scoped to `department = web` then reaches whichever the resolver
+    happened to pick."""
+    index = indexes("gate.department")["uq_department_company_id_slug_live"]
+    assert index.unique
+    assert [c.name for c in index.columns] == ["company_id", "slug"]
+
+
+# ------------------------------------------------------------------- M1.5.1 the team table
+def test_a_team_cannot_exist_outside_a_department() -> None:
+    """`Team.department_slug` is non-optional because a team floating outside a department
+    has no scope to be narrower than, so a grant naming it would be bounded by nothing. The
+    foreign key is that rule where the rows are, rather than only where the type is."""
+    keys = [
+        c
+        for c in table("gate.team").constraints
+        if isinstance(c, ForeignKeyConstraint)
+        for element in c.elements
+        if element.column.table.fullname == "gate.department"
+    ]
+    assert keys, "team does not point at a department"
+    assert not table("gate.team").columns["department_id"].nullable
+
+
+def test_a_team_does_not_repeat_its_departments_name() -> None:
+    """A stored department slug is a second copy of the parent's name, and it goes stale on
+    the first rename - silently, in the direction of matching rows that belong to somebody
+    else. `Team.path` is a join."""
+    columns = set(table("gate.team").columns.keys())
+    assert "department_slug" not in columns
+    assert "path" not in columns
+    assert "company_id" not in columns
+
+
+# ------------------------------------------------------ M1.4.6 and M1.4.7 the two counters
+def test_a_grants_version_cannot_be_retired_or_go_backwards() -> None:
+    """The version is what `brain.gate.resolve.cache_key` puts in the key. A hidden row sends
+    the reader to its default, so a bumped counter silently returns to zero - which is a key
+    colliding with one minted before the revocation, and whatever is cached under it is still
+    readable."""
+    assert "deleted_at" not in table("gate.grants_version").columns
+    assert checks("gate.grants_version")["ck_grants_version_version_non_negative"] == "version >= 0"
+
+
+def test_the_version_is_per_principal_and_the_epoch_is_not() -> None:
+    """They invalidate different things: one answers whether this person's reach changed, the
+    other whether the shape of the model did. One table doing both would make a single
+    revocation invalidate every cached answer in the company."""
+    assert [c.name for c in table("gate.grants_version").primary_key.columns] == ["principal_id"]
+    assert [c.name for c in table("gate.policy_epoch").primary_key.columns] == ["id"]
+    assert "principal_id" not in table("gate.policy_epoch").columns
+
+
+def test_there_is_exactly_one_policy_epoch_row() -> None:
+    """Two rows would make the epoch an aggregate, and an aggregate over a table anybody can
+    write to is a number that moves backwards when the wrong row goes."""
+    assert checks("gate.policy_epoch")["ck_policy_epoch_exactly_one_row"] == "id = 1"
+    assert table("gate.policy_epoch").columns["id"].autoincrement is False
+
+
+# ------------------------------------------------------------------- M5.2.2 routing tiers
+def test_a_routing_tier_carries_a_jsonb_rule_set() -> None:
+    """M5.2.2 names it. The console edits tier assignment roughly monthly as providers ship
+    models, and a change that needs an engineer and a release is a change that stops
+    happening, after which the pools rot."""
+    columns = table("ops.routing_tier").columns
+    assert not columns["rules"].nullable
+    assert checks("ops.routing_tier")["ck_routing_tier_rules_object"] == (
+        "jsonb_typeof(rules) = 'object'"
+    )
+    assert quoted_values(checks("ops.routing_tier")["ck_routing_tier_tier"]) == sorted(
+        t.value for t in Tier
+    )
+
+
+def test_a_tiers_context_window_is_a_column_and_not_a_rule() -> None:
+    """`RoutingChain.narrowest_window`: a tier's window must be the narrowest of its rungs,
+    never the widest, or a request sized to fit the primary overflows the fallback and the
+    chain fails precisely when it is reached. A number under an invariant belongs where a
+    constraint can reach it, not inside a json blob."""
+    assert "context_window" in table("ops.routing_tier").columns
+    assert (
+        checks("ops.routing_tier")["ck_routing_tier_context_window_non_negative"]
+        == "context_window >= 0"
+    )
+
+
+# -------------------------------------------------------------------- M5.3.1 routing rungs
+def test_a_routing_rung_carries_every_column_the_leaf_names() -> None:
+    """Tier, scope, position, role, deployment, attempts, timeout, concurrency. A rung
+    missing any one of them cannot be executed from the table, so the matrix stays a
+    function and editing a timeout stays a deploy."""
+    columns = set(table("ops.routing_rung").columns.keys())
+    for name in (
+        "tier",
+        "scope",
+        "position",
+        "role",
+        "deployment_id",
+        "attempts",
+        "timeout_seconds",
+        "max_concurrency",
+    ):
+        assert name in columns, f"the rung has nowhere to record {name}"
+
+
+def test_a_rung_with_no_attempts_cannot_be_written() -> None:
+    """`RoutingRung.__post_init__`: the way to remove a rung is to remove it. A rung with zero
+    attempts silently never runs and reads in the console as configured, so the chain is
+    shorter than the person looking at it believes."""
+    rung = checks("ops.routing_rung")
+    assert rung["ck_routing_rung_at_least_one_attempt"] == "attempts >= 1"
+    assert rung["ck_routing_rung_timeout_positive"] == "timeout_seconds > 0"
+    assert rung["ck_routing_rung_concurrency_at_least_one"] == "max_concurrency >= 1"
+
+
+def test_one_rung_per_position_in_a_tier() -> None:
+    """`RoutingChain.__post_init__` refuses two rungs sharing a position, and says the cost:
+    the chain order would depend on insertion order, so the executed chain stops being
+    reconstructable from the attempt rows - which is the whole point of recording them."""
+    index = indexes("ops.routing_rung")["uq_routing_rung_tier_position_live"]
+    assert index.unique
+    assert [c.name for c in index.columns] == ["tier", "position"]
+
+
+def test_a_rungs_role_is_drawn_from_the_closed_set() -> None:
+    """`RungRole` has three members and M5.3.2 will derive the column from position and
+    provider rather than letting it be typed. Until then the vocabulary is at least closed,
+    so a rung cannot claim to be something the chain has no concept of."""
+    assert quoted_values(checks("ops.routing_rung")["ck_routing_rung_role"]) == sorted(
+        r.value for r in RungRole
+    )
+
+
+def test_no_rung_points_at_a_deployment_table_that_does_not_exist() -> None:
+    """The provider registry is M5.1 and has not been built. A foreign key to a table nobody
+    has designed is not an option, and inventing it here would mean two people designing it.
+    The column is a plain identifier and the constraint says only that it is present."""
+    for constraint in table("ops.routing_rung").constraints:
+        assert not isinstance(constraint, ForeignKeyConstraint), constraint
+    assert (
+        checks("ops.routing_rung")["ck_routing_rung_deployment_present"]
+        == "length(btrim(deployment_id)) > 0"
+    )
+
+
+# ------------------------------------------------------------------ M5.3.4 attempt rows
+def test_one_attempt_row_per_try() -> None:
+    """The leaf, as a constraint. Two rows claiming one position in a trace make the
+    reconstructed chain depend on which came back first, so a trace would assert a fallback
+    rather than show it."""
+    index = indexes("ops.model_attempt")["uq_model_attempt_trace_id_sequence"]
+    assert index.unique
+    assert [c.name for c in index.columns] == ["trace_id", "sequence"]
+
+
+def test_the_executed_chain_reconstructs_from_a_join() -> None:
+    """Attempt to rung to tier, ordered by sequence. Without the foreign key the join has
+    nothing to run through and the attempt row records a model name that nothing ties back to
+    the chain that chose it."""
+    targets = {
+        element.column.table.fullname
+        for constraint in table("ops.model_attempt").constraints
+        if isinstance(constraint, ForeignKeyConstraint)
+        for element in constraint.elements
+    }
+    assert targets == {"ops.routing_rung"}
+
+
+def test_an_attempt_cannot_be_hidden_from_the_chain_it_belongs_to() -> None:
+    """No `deleted_at`. An attempt that can be retired makes the reconstructed chain a claim
+    rather than a record: it would come back shorter with nothing anywhere to say so."""
+    assert "deleted_at" not in table("ops.model_attempt").columns
+    assert "ops.model_attempt" not in SOFT_DELETED_RESOLVER
+
+
+def test_an_attempt_in_flight_is_visible_as_an_attempt_in_flight() -> None:
+    """The row is written when the try starts and finished once. Writing one row at the end
+    instead would lose the case where an attempt never returns, which is the one an operator
+    is looking at during an incident."""
+    columns = table("ops.model_attempt").columns
+    assert not columns["started_at"].nullable
+    assert columns["finished_at"].nullable
+    assert columns["outcome"].nullable
+    assert (
+        checks("ops.model_attempt")["ck_model_attempt_finished_with_an_outcome"]
+        == "(finished_at IS NULL) = (outcome IS NULL)"
+    )
+
+
+def test_the_attempt_outcomes_are_the_closed_fallback_set_and_nothing_else() -> None:
+    """`QUALITY_FALLBACK_REJECTED` at the storage layer. A column that could record "the
+    answer looked weak" is somewhere to put the number afterwards, which is how an argument
+    that was settled gets reopened - and a quality trigger has no falsifiable off condition,
+    so the retry loop it drives terminates on luck."""
+    recorded = quoted_values(checks("ops.model_attempt")["ck_model_attempt_outcome"])
+    assert recorded == sorted(ATTEMPT_OUTCOMES)
+    assert {t.value for t in FallbackTrigger} <= set(recorded)
+    for invented in ("weak", "quality", "poor_answer", "content_policy"):
+        assert invented not in recorded
+
+
+# ------------------------------------------------- 0003 matches its models and reverses
+def test_the_resolver_migration_satisfies_the_migration_policy() -> None:
+    """The policy is what stops a rename written as a drop plus an add, a not-null column
+    with no default, and schema mixed with data. 0003 creates nine tables and six functions
+    and writes not one row, which is why it can be rolled back at all."""
+    assert check_file(MIGRATION_RESOLVER) == []
+
+
+@pytest.mark.parametrize("qualified", RESOLVER_TABLES)
+def test_the_resolver_migration_builds_each_table_exactly_as_the_model_declares_it(
+    qualified: str,
+) -> None:
+    """Same reasoning as for 0002: the migration copies the models' predicates rather than
+    importing them, so the copy needs something comparing it or it rots without saying so.
+    The comparison is on rendered DDL, so a difference in type, width, nullability, default
+    or constraint is caught rather than a difference in how either file is written."""
+    expected = squash(str(CreateTable(table(qualified)).compile(dialect=DIALECT)))
+    assert expected in resolver_sql("upgrade")
+
+
+@pytest.mark.parametrize("qualified", RESOLVER_TABLES)
+def test_the_resolver_migration_builds_every_index_the_model_declares(qualified: str) -> None:
+    """An index that exists only in the model is never built, and the unique ones are
+    constraints: without them two rungs can share a position and two attempt rows can claim
+    one try, which is the reconstructable chain gone."""
+    emitted = resolver_sql("upgrade")
+    for index in table(qualified).indexes:
+        expected = squash(str(CreateIndex(index).compile(dialect=DIALECT)))
+        assert expected in emitted, f"{index.name} is never created"
+
+
+def test_the_resolver_migrations_downgrade_drops_everything_it_creates() -> None:
+    """A migration that cannot be reversed is a deploy with no way home, and this one adds
+    objects that do not belong to any table it drops - six functions and six triggers on
+    0002's tables - so dropping the tables is not enough."""
+    down = resolver_sql("downgrade")
+    up = resolver_sql("upgrade")
+    for qualified in RESOLVER_TABLES:
+        assert f"CREATE TABLE {qualified}" in up
+        assert f"DROP TABLE {qualified}" in down
+
+
+def test_the_resolver_migration_drops_in_the_reverse_of_the_creation_order() -> None:
+    """Dropping `gate.department` before `gate.team` fails on the foreign key, and the same
+    for `ops.routing_rung` before `ops.model_attempt`. A downgrade in the wrong order cannot
+    run, which is discovered during a rollback at the worst possible moment."""
+    down = resolver_sql("downgrade")
+    positions = [down.index(f"DROP TABLE {q}") for q in RESOLVER_TABLES]
+    assert positions == sorted(positions, reverse=True)
+
+
+def test_the_resolver_migration_changes_no_data() -> None:
+    """Both counters start empty and their readers coalesce to zero, precisely so this
+    migration stays a schema change. Schema and data in one migration cannot be rolled back
+    independently: the schema half reverses and the data half usually cannot."""
+    emitted = resolver_sql("upgrade").upper()
+    for statement in ("INSERT INTO", "DELETE FROM"):
+        assert statement not in emitted, f"the migration emits {statement}"
+
+
+@pytest.mark.parametrize("qualified", RESOLVER_TABLES)
+def test_row_level_security_is_enabled_on_every_table_0003_adds(qualified: str) -> None:
+    """A table without it is one forgotten WHERE clause away from returning every row to
+    every caller. `sweep_rls` covers `auth`, `gate`, `obs`, `proj`, `know`, `agent`, `mem` and
+    `er` and not `ops`, so nothing in CI would notice the three routing tables missing it.
+    This is what does."""
+    assert f"ALTER TABLE {qualified} ENABLE ROW LEVEL SECURITY" in resolver_sql("upgrade")
+
+
+@pytest.mark.parametrize("qualified", SOFT_DELETED_RESOLVER)
+def test_the_policy_on_a_soft_deleted_table_0003_adds_still_permits_retiring_a_row(
+    qualified: str,
+) -> None:
+    """Without an explicit `WITH CHECK`, PostgreSQL reuses the USING expression to check the
+    new row, so setting `deleted_at` would be refused by the very policy meant to hide the
+    row afterwards. Soft delete would be impossible and the failure would read as a
+    permissions bug."""
+    _schema, _, name = qualified.partition(".")
+    policy = (
+        f"CREATE POLICY {name}_live ON {qualified} FOR ALL TO brain_app "
+        "USING (deleted_at IS NULL) WITH CHECK (true)"
+    )
+    assert policy in resolver_sql("upgrade")
+
+
+@pytest.mark.parametrize("qualified", RESOLVER_TABLES)
+def test_every_table_0003_adds_grants_the_application_role_what_it_needs(
+    qualified: str,
+) -> None:
+    """0001 granted no default privileges on purpose, so a table that forgets to grant is a
+    table the application cannot read at all - and the failure arrives at the first request
+    rather than at deploy. The triggers run as the same role, so this is also what they
+    hold."""
+    assert f"ON {qualified} TO brain_app" in resolver_sql("upgrade")
+
+
+def test_nothing_0003_grants_can_hard_delete() -> None:
+    """A hard delete destroys the audit trail for the thing deleted. It would also let a
+    counter go backwards, which hands out a cache key that was already used under a wider
+    entitlement."""
+    for line in rendered("upgrade", MIGRATION_RESOLVER).splitlines():
+        if line.strip().startswith("GRANT"):
+            assert "DELETE" not in line.upper(), line.strip()
+
+
+def test_nothing_0003_runs_needs_a_superuser() -> None:
+    """0001 creates the application role `NOBYPASSRLS`, and a SECURITY DEFINER function would
+    undo that from the inside: the triggers would do more than the application can, which is
+    a privilege escalation living inside the permission system."""
+    emitted = resolver_sql("upgrade").upper() + resolver_sql("downgrade").upper()
     for forbidden in ("SUPERUSER", "BYPASSRLS", "SET ROLE", "SECURITY DEFINER"):
         assert forbidden not in emitted, f"the migration runs {forbidden}"
