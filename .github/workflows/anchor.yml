@@ -1,0 +1,92 @@
+# Records the audit ledger's head in this repository, on a schedule.
+#
+# The audit chain proves nobody edited an old entry. It proves nothing about deletion from
+# the end: remove the newest twenty entries and what remains verifies perfectly, because a
+# chain has no idea how long it was meant to be. Writing the head somewhere else turns that
+# into a detectable fact.
+#
+# **This pulls; the server never pushes.** GitHub Actions reads the digest from the running
+# application and commits it here. The alternative, having the server write its own anchor,
+# needs a write credential on the one machine the anchor is supposed to be independent of,
+# and then anyone who could delete audit entries could also write an anchor agreeing with
+# the deletion. Nothing new lands on the VPS for this to work.
+#
+# The tamper-evidence is git's own history. An anchor committed on Tuesday stays visible in
+# the log even if somebody later rewrites the file, and force-pushing over it is both
+# blocked on this branch and loud.
+#
+# Task ids: M24.1.2
+
+name: Anchor
+
+on:
+  schedule:
+    # Every six hours. Frequent enough that at most six hours of entries can vanish without
+    # contradicting an anchor; rare enough that the log stays readable by a person.
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  # Two runs committing anchors at once produce a push race, and the loser retries against
+  # a moved head. One at a time, and a queued run is never worth keeping.
+  group: anchor
+  cancel-in-progress: false
+
+jobs:
+  anchor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read the ledger head
+        id: read
+        env:
+          BRAIN_URL: ${{ vars.BRAIN_URL || 'https://brain.194.233.66.89.sslip.io' }}
+        run: |
+          set -euo pipefail
+          # --fail so a 502 is a failed step rather than an anchor file containing an
+          # error page, which would verify against nothing and look like data.
+          if ! curl --fail --silent --show-error --max-time 20 \
+                 "$BRAIN_URL/api/audit/anchor" -o anchor.json; then
+            echo "the application did not answer; no anchor this run"
+            echo "taken=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          python -c "
+          import json, sys
+          d = json.load(open('anchor.json'))
+          for field in ('chain', 'head', 'seq', 'taken_at'):
+              if field not in d:
+                  sys.exit(f'anchor is missing {field}')
+          if len(d['head']) != 64:
+              sys.exit('head is not a sha256 digest')
+          print(f\"{d['chain']} seq={d['seq']} head={d['head'][:12]}...\")
+          "
+          echo "taken=true" >> "$GITHUB_OUTPUT"
+
+      - name: Commit it
+        if: steps.read.outputs.taken == 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p anchors
+          # One file per day, overwritten within the day. Four anchors a day in one file
+          # keeps the directory readable for years; the git history keeps every version.
+          stamp="$(date -u +%Y-%m-%d)"
+          mv anchor.json "anchors/$stamp.json"
+
+          if git diff --quiet -- anchors/; then
+            echo "the head has not moved since the last anchor; nothing to commit"
+            exit 0
+          fi
+
+          git config user.name "brain-anchor"
+          git config user.email "anchor@users.noreply.github.com"
+          git add anchors/
+          git commit -m "Anchor the audit ledger at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          # Rebase rather than merge: an anchor history full of merge commits is a history
+          # nobody reads, and these commits never conflict with anything but each other.
+          git pull --rebase --quiet
+          git push

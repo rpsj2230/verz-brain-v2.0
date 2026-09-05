@@ -330,3 +330,32 @@ a{{color:var(--brand);font-weight:600}}
 </style></head><body><div class="w">{html_body}
 <p style="margin-top:34px"><a href="/build">&larr; Build progress</a></p>
 </div></body></html>""")
+
+
+@router.get("/api/audit/anchor", response_class=JSONResponse)
+async def audit_anchor() -> JSONResponse:
+    """The audit ledger's head, for an external anchor to record (M24.1.2).
+
+    Read on a schedule by `.github/workflows/anchor.yml`, which commits it to the
+    repository. The direction matters: this endpoint is read, never a push. Having the
+    server write its own anchor to an external store would need a write credential on the
+    one machine the anchor exists to be independent of, and then whoever could delete audit
+    entries could also write an anchor agreeing with the deletion.
+
+    **It returns a digest and a length and nothing else.** Not an entry, not an actor, not
+    an action. A reader learns that the ledger exists and how long it is, which is the
+    minimum that makes an anchor work, and is why this can sit beside the other unauthenticated
+    build routes rather than behind the gate.
+
+    The ledger table exists and nothing writes to it yet, so today this reports an empty
+    chain. That is deliberately not an error: an anchor taken before the first entry proves
+    the ledger started empty on that date, which is what makes "there were no entries before
+    Tuesday" checkable rather than assertable.
+    """
+    from datetime import UTC, datetime
+
+    from brain.audit.anchor import take_anchor
+    from brain.audit.ledger import AuditChain
+
+    anchor = take_anchor(AuditChain(), name="main", now=datetime.now(UTC))
+    return JSONResponse(anchor.to_public(), headers={"cache-control": "no-store"})
