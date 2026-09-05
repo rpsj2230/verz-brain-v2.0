@@ -2,7 +2,7 @@
 
 Decisions and access I cannot resolve alone. Served at `/build/needs-rupash`.
 
-**Five of the seven were decided on 5 September and are marked below.** Two remain open: **8** and **9**, both rewritten in plainer words because the first versions led with the mechanism rather than with what is at stake, which is not a decidable thing to put in front of somebody. They came out of building the audit
+**Five of the seven were decided on 5 September and are marked below.** **Item 9 was decided on 5 September.** One remains open: **8**, rewritten in plainer words because the first versions led with the mechanism rather than with what is at stake, which is not a decidable thing to put in front of somebody. They came out of building the audit
 ledger, the routing matrix and the redaction walker, where the specification asks for two
 things that cannot both be true. Each one has my recommendation attached, so most should
 take you a minute.
@@ -109,7 +109,7 @@ what does not exist is the place to keep the note.
 
 ---
 
-## 9. Should a refusal make the system try a different AI model?
+## 9. Should a refusal make the system try a different AI model? — DECIDED: no
 
 **The plain problem: if one AI says "I will not answer that", should we keep asking other
 AIs until one says yes?**
@@ -143,8 +143,7 @@ you did not like the answer.
 **What happens instead in my version:** the system says "I will not answer that", once,
 honestly, and it is recorded.
 
-**My recommendation:** keep it excluded. If you would rather it tried other models, it is a
-one-line change.
+**Decided 5 September: keep it excluded.** The architecture's routing table now says so outright rather than carrying an open question, and a refusal goes to the abstention path in M8 to be answered once and honestly.
 
 ---
 
