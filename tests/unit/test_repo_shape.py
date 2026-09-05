@@ -36,6 +36,7 @@ def _pyproject() -> dict[str, object]:
 EXPECTED_PACKAGES = (
     "agents",
     "audit",
+    "channels",
     "chat",
     "connectors",
     "console",
