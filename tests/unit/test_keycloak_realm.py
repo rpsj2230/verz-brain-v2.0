@@ -12,15 +12,31 @@ time, and the edits that matter here do not look dangerous: turning on the passw
 get a script working, lengthening a session because people complain about logouts, adding a
 client without pinning its algorithm. Each is one line and each undoes a paragraph.
 
-**M1.1.1 is deliberately not claimed by this file.** The realm header says plainly that it
-has never been imported into a running Keycloak, that none was contacted, and that it needs
-one real import before anybody calls the leaf done. That is still true: there is no Keycloak
-in the compose file. These tests make the document trustworthy as a document; they cannot
-make it a realm that exists, and passing them is not evidence that it imports.
+**M1.1.1 is claimed now, and it was not before.** These tests were written first and the
+leaf was left open, because the realm's own header said it had never been imported into a
+running Keycloak and that one real import was the condition for calling it done. Passing a
+test suite over a JSON file is not evidence that the file imports.
 
-What they do catch is drift between this file and `brain.identity`, which is the failure
-that would otherwise be discovered as "random logouts" or as a token nobody should have
-accepted.
+It has been imported since: 2026-09-06, Keycloak 26.0, an ephemeral container on a throwaway
+server, with what the server stored read back and compared to what the file says. The header
+of `ops/keycloak/realm-export.json` records the run and what it found.
+
+The import earned its keep immediately. It logged three warnings that no amount of reading
+would have produced, because they are a fact about how Keycloak treats a full import rather
+than about the file's contents: `brain-console` referenced the `openid`, `profile` and
+`email` client scopes, a full import replaces the client scope set with the one the file
+declares, and the file declares only `brain-identity`. All three were silently discarded.
+`test_every_client_scope_a_client_asks_for_is_defined_in_this_file` is that finding turned
+into a check.
+
+Still not claimed by anything: `ops/keycloak/setup.sh`. The import mounted this file and
+started the server with `--import-realm`; it never went through kcadm, so the script's own
+"has never been run" header is still accurate.
+
+What these tests catch day to day is drift between this file and `brain.identity`, which
+would otherwise be discovered as "random logouts" or as a token nobody should have accepted.
+
+Task ids: M1.1.1
 """
 
 from __future__ import annotations
@@ -189,6 +205,64 @@ def test_no_group_or_role_in_the_realm_names_a_capability() -> None:
     offenders = sorted(name for name in names if ":" in name)
 
     assert not offenders, f"these name capabilities rather than roles: {offenders}"
+
+
+def test_every_client_scope_a_client_asks_for_is_defined_in_this_file() -> None:
+    """**Written because the first real import found three that were not.**
+
+    A full realm import replaces the client scope set with the one this file declares, so a
+    client naming a scope the file does not define gets nothing. Keycloak does not refuse
+    it: it logs `Referenced client scope 'profile' doesn't exist. Ignoring` and carries on,
+    which means the client imports looking configured and is missing the claims somebody
+    thought they had assigned.
+
+    `brain-console` listed `openid`, `profile` and `email`. None was defined here and all
+    three were discarded on import against Keycloak 26.0 on 2026-09-06. `openid` was wrong
+    twice over: it is a scope value a client asks for in a request, never a client scope an
+    administrator defines.
+
+    Nothing was lost, because `brain.identity.oidc` reads exactly two claims, `groups` and
+    `department`, and the `brain-identity` scope maps both. What was lost was a silent
+    import, and an import that prints warnings is one where the next person cannot tell the
+    harmless lines from the real ones.
+
+    Delete this and a scope name can be added here that resolves to nothing on the server,
+    which is invisible in the file and visible only in a log nobody keeps."""
+    realm = _realm()
+    defined = {s["name"] for s in realm.get("clientScopes", [])}
+
+    dangling: dict[str, list[str]] = {}
+    for client in _clients():
+        asked = list(client.get("defaultClientScopes") or []) + list(
+            client.get("optionalClientScopes") or []
+        )
+        missing = sorted(set(asked) - defined)
+        if missing:
+            dangling[str(client["clientId"])] = missing
+
+    assert not dangling, f"these clients name client scopes this file does not define: {dangling}"
+
+
+def test_the_scope_the_console_uses_maps_the_two_claims_the_code_reads() -> None:
+    """The other half of the check above: the scope exists, and it carries what is consumed.
+
+    `brain.identity.oidc` defaults `groups_claim` to "groups" and `department_claim` to
+    "department". Those two claims are the whole interface between the identity provider and
+    this system's permission model: groups become roles, department becomes scope. A scope
+    that exists but maps neither would satisfy the dangling-reference test and still produce
+    a token this system can do nothing with.
+
+    Delete this and the mappers can be removed from the scope while every other test here
+    stays green."""
+    scopes = {s["name"]: s for s in _realm().get("clientScopes", [])}
+
+    assert "brain-identity" in scopes
+    mapped = {
+        m.get("config", {}).get("claim.name")
+        for m in scopes["brain-identity"].get("protocolMappers", [])
+    }
+
+    assert {"groups", "department"} <= mapped, f"brain-identity maps {mapped}"
 
 
 def test_the_realm_is_the_one_the_application_expects() -> None:
