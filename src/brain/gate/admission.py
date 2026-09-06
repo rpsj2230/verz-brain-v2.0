@@ -75,6 +75,25 @@ CHANNEL_VERBS: dict[Channel, frozenset[str]] = {
     # verbs would otherwise be decided by the assurance level alone. A person may sign in
     # through a widget; they may not approve a payment through one.
     Channel.WIDGET: frozenset({"read"}),
+    # Read alone, and narrower than Lark although both are chat behind a company login. Lark
+    # is the tenant identity provider's own client, so a Lark account is a directory account.
+    # A Slack workspace keeps its own membership beside the directory and carries guests and
+    # Slack Connect members from other companies, so being in the workspace is not evidence
+    # of being staff. A Block Kit button press arrives signed by Slack, which proves the
+    # request came from Slack and not that the named person held a live session here; and a
+    # button on a message in a channel is pressable by everybody who can see the message.
+    # See `brain.channels.slack.A_BUTTON_IN_A_CHANNEL_IS_PRESSABLE_BY_THE_CHANNEL`.
+    Channel.SLACK: frozenset({"read"}),
+    # Read alone, for WhatsApp's reason and two of its own. A Telegram bot webhook is
+    # authenticated by a shared secret in a header, which says the update came from
+    # something holding the secret and says nothing whatever about who sent the message, so
+    # an effect here would be an effect attributable to a header. A Telegram account is
+    # recovered by a code sent to its phone number and the chat history lives in Telegram's
+    # cloud rather than on the handset, so a swapped SIM yields the whole account rather
+    # than only what arrives after the swap. And the bot receives messages from groups it
+    # was added to, where the sender is anybody a member chose to invite.
+    # See `brain.channels.telegram.THE_HEADER_AUTHENTICATES_TELEGRAM_AND_NOT_THE_PERSON`.
+    Channel.TELEGRAM: frozenset({"read"}),
 }
 
 #: The verbs each assurance level may carry.
@@ -104,6 +123,8 @@ def verbs_for_channel(channel: Channel) -> frozenset[str]:
             | Channel.WEBHOOK
             | Channel.SCHEDULER
             | Channel.WIDGET
+            | Channel.SLACK
+            | Channel.TELEGRAM
         ):
             return CHANNEL_VERBS[channel]
         case _:

@@ -40,6 +40,12 @@ class Channel(enum.StrEnum):
     LARK = "lark"
     WHATSAPP = "whatsapp"
     EMAIL = "email"
+    #: A consumer chat application reached over a bot webhook. Separate from WhatsApp even
+    #: though both are chat on a personal handset, because the two differ on what a message
+    #: can arrive from: a WhatsApp message reaches us from one person's account, while a
+    #: Telegram bot also receives messages from groups it was added to, whose membership it
+    #: cannot enumerate. See `brain.channels.telegram`.
+    TELEGRAM = "telegram"
     API = "api"
     SCHEDULER = "scheduler"
     WEBHOOK = "webhook"
@@ -49,6 +55,11 @@ class Channel(enum.StrEnum):
     #: visitor watching a cursor blink as automation makes every degradation decision about
     #: them wrong in the direction of queueing an answer nobody will come back for.
     WIDGET = "widget"
+    #: A Slack workspace. Separate from LARK rather than folded into a "chat" member,
+    #: because the two answer `gate.admission.CHANNEL_VERBS` differently: Lark is the tenant
+    #: identity provider's own client and Slack is a workspace whose membership is
+    #: maintained beside the directory. See `brain.channels.slack`.
+    SLACK = "slack"
 
 
 class TrafficClass(enum.StrEnum):
@@ -81,7 +92,17 @@ def traffic_class_for(channel: Channel) -> TrafficClass:
     happened to be.
     """
     match channel:
-        case Channel.CONSOLE | Channel.LARK | Channel.WHATSAPP | Channel.WIDGET:
+        case (
+            Channel.CONSOLE
+            | Channel.LARK
+            | Channel.WHATSAPP
+            | Channel.WIDGET
+            | Channel.SLACK
+            # Somebody is holding the handset and watching for the reply, exactly as they
+            # are on WhatsApp. Queueing a Telegram answer would leave a person waiting on a
+            # notification that arrives after they have put the phone down.
+            | Channel.TELEGRAM
+        ):
             return TrafficClass.HUMAN_INTERACTIVE
         case Channel.EMAIL:
             # A reply that arrives in four minutes is fine; a wrong one is not. Queue.

@@ -450,7 +450,12 @@ def test_the_real_document_reports_what_its_own_first_paragraph_says() -> None:
     from brain.docs_routes import DOCS, NEEDS_FILE, _needs_count
 
     text = (DOCS / NEEDS_FILE).read_text(encoding="utf-8")
-    stated = re.search(r"\*\*(\d+) items are open", text)
+    # Singular as well as plural. The pattern was `(\d+) items are open`, which quietly
+    # required the document to be ungrammatical the day exactly one item was left, and that
+    # day arrived: the sentence read "1 item is open" and the test reported that the
+    # document no longer stated a count at all. A guard that fails on the correct wording
+    # teaches whoever meets it to edit the prose to suit the regex.
+    stated = re.search(r"\*\*(\d+) items? (?:are|is) open", text)
     assert stated, "the document no longer states how many items are open"
     assert int(stated.group(1)) == _needs_count()
 
