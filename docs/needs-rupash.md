@@ -21,222 +21,6 @@ in.
 
 # Open
 
-## 28. Production restarts every few minutes - DONE, and it was a leftover timer of mine
-
-**Fixed and verified on 2026-09-06.** You told me to run the command, I ran it, and the
-recreates stopped.
-
-**The evidence, before and after.** In the ninety minutes before the fix, `brain-deploy`
-ran 21 times and deployed on all 21, recreating the container every time. No new images were
-being published in that window, so every one of those was pointless and every one dropped
-whatever was in flight. The last was at 02:41:22. `sudo systemctl disable --now
-brain-deploy.timer` ran at 02:57, and there has not been another since. `brain-autodeploy`
-is untouched and still deploying real changes.
-
-Still worth doing when convenient, and not urgent: delete `/usr/local/bin/brain-deploy`, so
-that the next person reading that directory does not find two scripts that look
-interchangeable and re-enable the wrong one.
-
-The diagnosis below is kept because it was wrong first, and the way it was wrong is the
-useful part.
-
----
-
-**Corrected on 2026-09-06. The earlier diagnosis on this page was wrong, and it was wrong
-because I checked one of two things that could have caused it.** What follows replaces it.
-
-**Nothing is broken and nothing is lost.** The app is healthy and serving the right commit,
-and every recreate passes its health check within about eight seconds. But it is being
-recreated every three minutes and is briefly unreachable each time, which drops in-flight
-requests.
-
-**The cause: there are two deploy timers on your server, and the old one redeploys
-unconditionally.**
-
-| Timer | Interval | Behaviour |
-|---|---|---|
-| `brain-autodeploy.timer` | 2 min | Correct. Compares the pulled image against the running one and does nothing when they match. |
-| `brain-deploy.timer` | 3 min | **The problem.** Pulls and recreates the container every single run, whether or not anything changed. |
-
-`brain-deploy` is the older script, the one with the redeploy-loop bug. I rewrote it as
-`brain-autodeploy` and installed that. **I never disabled the old timer,** so both have been
-running side by side ever since, and the old one has been recreating production every three
-minutes.
-
-**How I know, rather than inferring it.** The recreate is logged by the process that did it.
-At 08:28:39 `brain-deploy.service` started; at 08:28:42 it logged `pulling` and `deploying`;
-at 08:28:42 to 08:28:44 it logged `Recreate`, `Recreated`, `Starting`, `Started` against the
-app container; Docker's own event stream shows the matching create/kill/die/destroy/start
-burst at 08:28:43. Across the same window `brain-autodeploy` ran twice, at 08:27:07 and
-08:29:17, and deployed nothing both times.
-
-**Why the previous answer was wrong.** It blamed Coolify healing an exited one-shot `migrate`
-container, and its evidence line said "my own deploy timer logged no deploys across the same
-window, so it is not me". That check was real, and it looked at `brain-autodeploy`. It never
-occurred to me to ask whether there was a second timer. There was, it was also mine, and it
-was the one doing it. The `migrate` service is not involved: the current compose has no
-`migrate` service at all.
-
-**The fix is one command, and it is reversible.**
-
-```
-sudo systemctl disable --now brain-deploy.timer
-```
-
-`brain-autodeploy.timer` already does the job properly and is unaffected. It deployed
-tonight's work correctly seven times, most recently `db2a227`, healthy in eight seconds. If
-anything goes wrong, `sudo systemctl enable --now brain-deploy.timer` puts the old one back.
-
-**Why I have not run it.** Changing systemd units on your production host is outside what I
-am permitted to do unattended, and the guard that stopped me is the right guard. It is one
-command and the diagnosis above is measured, so it should take you a minute.
-
-**Worth doing afterwards, and not urgent:** remove `/usr/local/bin/brain-deploy` as well, so
-the next person reading `/usr/local/bin` does not find two scripts that look
-interchangeable and re-enable the wrong one.
-
----
-
-## 26. The chat widget on a client's marketing site - DECIDED: public knowledge only, no login
-
-**Decided 2026-09-06.** In your words: public users get public knowledge only, a Super Admin
-or Department Admin decides what counts as public knowledge, and there is no login for a
-visitor to chat with the widget.
-
-**What that means in this system, and it fits the existing model rather than bending it.**
-An anonymous widget session holds exactly one grant, over knowledge explicitly marked
-public, and nothing else. Entitlements here are additive only, so a stranger still holds
-nothing by default: the difference is that one narrow grant now exists to be held, instead
-of none.
-
-Three consequences worth reading before this is built, because they are the parts that go
-wrong quietly:
-
-**Marking something public is a one-way door in practice.** Once an answer has been given to
-the internet it has been given, and un-marking the source afterwards does not retrieve it.
-So the marking action is going to be audited, and it is going to name the person who did it,
-in the same way a grant does.
-
-**Public is a property of the knowledge, never of the question.** The widget cannot be
-allowed to reach a general search that then filters for public items, because the filter
-becomes the only thing standing between a stranger and everything else. The reach is
-computed the same way it is for staff, and a public grant simply resolves to a narrow scope.
-That is the whole reason this fits: it is the same code path, with a smaller set.
-
-**A department admin can only publish their own department's knowledge.** Their role already
-requires a scope, and this is exactly what that scope is for. A Super Admin has no such
-limit, which is the distinction between the two roles here.
-
-**Rate limiting and abuse become load-bearing rather than hygiene**, because the widget is
-now a service anybody on the internet can call. M23 already carries the widget session
-minting and abuse guard, and it stops being an optional refinement the moment this ships.
-
-Not yet built: the public marking itself, the audit row for it, and the anonymous grant.
-Those are wave 3 and 4 work and they now have a decision to be built against.
-
----
-
-**Nothing is blocked.** The plumbing is being built either way, and it is safe by default
-today: an anonymous visitor currently holds nothing, so the widget can mint a session and
-that session can ask nothing. Your answer decides what, if anything, that session is allowed
-to reach.
-
-**The situation.** The plan has a chat widget embedded on a client's public website. Whoever
-loads that page is a stranger: not signed in, not an employee, possibly a competitor, a
-bot, or a journalist. The rest of this system answers "what may this person see" by looking
-up what they hold. A stranger holds nothing, and the way this platform is built, nothing
-means nothing: entitlements are additive only, so an anonymous caller sees exactly what has
-been explicitly granted to anonymous callers, and no such grant exists.
-
-**So the widget works and answers nothing, unless you decide otherwise.** That is a
-deliberate safe default rather than an oversight, and it is where it will stay until you
-choose.
-
-**The three shapes it could take, and what each costs:**
-
-1. **Lead capture only.** The widget collects a question and a contact address and creates
-   a task for a human. It answers nothing itself. Cost: it is a contact form with a chat
-   interface. Benefit: no exposure of any kind, and it is the only option with no way to be
-   wrong.
-2. **Public knowledge only.** A specific, small, explicitly published set of content is
-   granted to anonymous callers: opening hours, service descriptions, published pricing. The
-   agent may answer from that and nothing else. Cost: somebody has to decide, per client,
-   what is public, and be right. The risk is not the answer, it is the *retrieval*: a
-   question is a probe, and an answer that says "I cannot find that" for one product and
-   answers for another has told a competitor which products exist.
-3. **Identify first, then answer.** The widget asks who they are and verifies it, typically
-   by emailing a link. After that they are an ordinary principal with ordinary entitlements
-   and nothing here is special. Cost: friction on a marketing site, which is where friction
-   costs the most.
-
-**My recommendation: 1 for the first client, with 2 available per client afterwards.** The
-reason is not caution for its own sake. Option 2 needs a person to correctly classify a body
-of content as public, on a page where being wrong is visible to everybody including
-competitors, and the first client is the worst place to learn what that classification
-process needs to be. Option 3 is a real product and belongs in a later wave.
-
-**What I need:** which of the three, and for option 2, who at the client decides what is
-public.
-
-**What is being built meanwhile:** the session minting and its abuse guard (M10.5.5,
-M23.1.4), which are needed under all three options. A widget on a public site is an
-unauthenticated endpoint that mints credentials, so it is rate-limited per origin and capped
-on live sessions per origin, and an anonymous session expires much sooner than a signed-in
-one.
-
----
-
-## 24. When a source is down, should the answer name it? - DECIDED: keep it as built
-
-**Decided 2026-09-06: go with the recommendation. No code changes.** The answer names a
-source only when that person could already see it in their own tool list; everyone else is
-told part of the answer is unavailable, and the full list goes to the operator's log.
-
-The reasoning is kept below because the cost is real and somebody will meet it: a
-narrowly-permissioned person gets a vaguer message and has to ask. When that happens, the
-person they ask can read the log, and that is the intended path rather than a workaround.
-
----
-
-**Nothing is blocked. I have built the safe reading and this is a question about whether to
-loosen it.**
-
-The plan says that when the Brain cannot reach one of your systems, the answer should say
-which one. That is obviously good service: "I could not reach Xero" is a better answer than
-"something went wrong", because you know whether to wait or to ask somebody.
-
-**The problem is who else is asking.** The same sentence, sent to somebody who has no access
-to Xero at all, tells them Xero exists and that you connect to it. Ask about invoices and
-learn there is an accounting system; ask about tickets and learn there is a helpdesk. A
-person with no permissions anywhere could map every system you run, one question at a time,
-without ever seeing a single record.
-
-That is the same rule the rest of the system already follows: an answer never says "I looked
-in the finance ledger and found nothing", because the sentence gives away the ledger.
-
-**What I have built.** The answer names a source only when that person could already see it
-in their own tool list. Everything else becomes "part of this answer is unavailable", and
-the full list of what failed goes to the operator's log, where you and whoever is on support
-can read it.
-
-| | Names every failed source | Names only what they can already see |
-|---|---|---|
-| A person with full access | Sees exactly what is down | Sees exactly what is down |
-| A person with narrow access | Learns which systems exist | Told part of the answer is unavailable |
-| Somebody probing | Can map your whole estate | Learns nothing |
-| Your support team | Reads it in the answer | Reads it in the log |
-
-**My recommendation: keep it as built.** The cost is that a narrowly-permissioned person
-gets a vaguer message and has to ask, and the person they ask can see the log. The cost the
-other way is a map of your systems available to anybody who can type a question.
-
-This only becomes a real difference once there are people using it with narrow permissions,
-which is wave 4. Worth deciding before then rather than during.
-
----
-
----
-
 ## 25. The full feature set does not fit on the current server
 
 **Measured, not estimated. Nothing is blocked today, and this needs deciding before
@@ -294,7 +78,7 @@ It is an argument for the second server being about resilience as well as capaci
 by step, so a wrong answer can be explained afterwards. It is genuinely useful and it is
 genuinely large.
 
-## You asked for options that cost nothing. There are four, and together they are enough.
+### You asked for options that cost nothing. There are four, and together they are enough.
 
 **Answered 2026-09-06. You said you did not like any of the paid options and asked whether
 there are free ones. There are, and I should have led with them.**
@@ -391,6 +175,225 @@ undersized a component on purpose in September".
 ---
 
 # Answered
+
+## 28. Production restarts every few minutes - DONE, and it was a leftover timer of mine
+
+**Fixed and verified on 2026-09-06.** You told me to run the command, I ran it, and the
+recreates stopped.
+
+**The evidence, before and after.** In the ninety minutes before the fix, `brain-deploy`
+ran 21 times and deployed on all 21, recreating the container every time. No new images were
+being published in that window, so every one of those was pointless and every one dropped
+whatever was in flight. The last was at 02:41:22. `sudo systemctl disable --now
+brain-deploy.timer` ran at 02:57, and there has not been another since. `brain-autodeploy`
+is untouched and still deploying real changes.
+
+Still worth doing when convenient, and not urgent: delete `/usr/local/bin/brain-deploy`, so
+that the next person reading that directory does not find two scripts that look
+interchangeable and re-enable the wrong one.
+
+The diagnosis below is kept because it was wrong first, and the way it was wrong is the
+useful part.
+
+---
+
+**Corrected on 2026-09-06. The earlier diagnosis on this page was wrong, and it was wrong
+because I checked one of two things that could have caused it.** What follows replaces it.
+
+**Nothing is broken and nothing is lost.** The app is healthy and serving the right commit,
+and every recreate passes its health check within about eight seconds. But it is being
+recreated every three minutes and is briefly unreachable each time, which drops in-flight
+requests.
+
+**The cause: there are two deploy timers on your server, and the old one redeploys
+unconditionally.**
+
+| Timer | Interval | Behaviour |
+|---|---|---|
+| `brain-autodeploy.timer` | 2 min | Correct. Compares the pulled image against the running one and does nothing when they match. |
+| `brain-deploy.timer` | 3 min | **The problem.** Pulls and recreates the container every single run, whether or not anything changed. |
+
+`brain-deploy` is the older script, the one with the redeploy-loop bug. I rewrote it as
+`brain-autodeploy` and installed that. **I never disabled the old timer,** so both have been
+running side by side ever since, and the old one has been recreating production every three
+minutes.
+
+**How I know, rather than inferring it.** The recreate is logged by the process that did it.
+At 08:28:39 `brain-deploy.service` started; at 08:28:42 it logged `pulling` and `deploying`;
+at 08:28:42 to 08:28:44 it logged `Recreate`, `Recreated`, `Starting`, `Started` against the
+app container; Docker's own event stream shows the matching create/kill/die/destroy/start
+burst at 08:28:43. Across the same window `brain-autodeploy` ran twice, at 08:27:07 and
+08:29:17, and deployed nothing both times.
+
+**Why the previous answer was wrong.** It blamed Coolify healing an exited one-shot `migrate`
+container, and its evidence line said "my own deploy timer logged no deploys across the same
+window, so it is not me". That check was real, and it looked at `brain-autodeploy`. It never
+occurred to me to ask whether there was a second timer. There was, it was also mine, and it
+was the one doing it. The `migrate` service is not involved: the current compose has no
+`migrate` service at all.
+
+**The fix is one command, and it is reversible.**
+
+```
+sudo systemctl disable --now brain-deploy.timer
+```
+
+`brain-autodeploy.timer` already does the job properly and is unaffected. It deployed
+tonight's work correctly seven times, most recently `db2a227`, healthy in eight seconds. If
+anything goes wrong, `sudo systemctl enable --now brain-deploy.timer` puts the old one back.
+
+**Why I have not run it.** Changing systemd units on your production host is outside what I
+am permitted to do unattended, and the guard that stopped me is the right guard. It is one
+command and the diagnosis above is measured, so it should take you a minute.
+
+**Worth doing afterwards, and not urgent:** remove `/usr/local/bin/brain-deploy` as well, so
+the next person reading `/usr/local/bin` does not find two scripts that look
+interchangeable and re-enable the wrong one.
+
+---
+
+
+## 26. The chat widget on a client's marketing site - DECIDED: public knowledge only, no login
+
+**Decided 2026-09-06.** In your words: public users get public knowledge only, a Super Admin
+or Department Admin decides what counts as public knowledge, and there is no login for a
+visitor to chat with the widget.
+
+**What that means in this system, and it fits the existing model rather than bending it.**
+An anonymous widget session holds exactly one grant, over knowledge explicitly marked
+public, and nothing else. Entitlements here are additive only, so a stranger still holds
+nothing by default: the difference is that one narrow grant now exists to be held, instead
+of none.
+
+Three consequences worth reading before this is built, because they are the parts that go
+wrong quietly:
+
+**Marking something public is a one-way door in practice.** Once an answer has been given to
+the internet it has been given, and un-marking the source afterwards does not retrieve it.
+So the marking action is going to be audited, and it is going to name the person who did it,
+in the same way a grant does.
+
+**Public is a property of the knowledge, never of the question.** The widget cannot be
+allowed to reach a general search that then filters for public items, because the filter
+becomes the only thing standing between a stranger and everything else. The reach is
+computed the same way it is for staff, and a public grant simply resolves to a narrow scope.
+That is the whole reason this fits: it is the same code path, with a smaller set.
+
+**A department admin can only publish their own department's knowledge.** Their role already
+requires a scope, and this is exactly what that scope is for. A Super Admin has no such
+limit, which is the distinction between the two roles here.
+
+**Rate limiting and abuse become load-bearing rather than hygiene**, because the widget is
+now a service anybody on the internet can call. M23 already carries the widget session
+minting and abuse guard, and it stops being an optional refinement the moment this ships.
+
+Not yet built: the public marking itself, the audit row for it, and the anonymous grant.
+Those are wave 3 and 4 work and they now have a decision to be built against.
+
+---
+
+**Nothing is blocked.** The plumbing is being built either way, and it is safe by default
+today: an anonymous visitor currently holds nothing, so the widget can mint a session and
+that session can ask nothing. Your answer decides what, if anything, that session is allowed
+to reach.
+
+**The situation.** The plan has a chat widget embedded on a client's public website. Whoever
+loads that page is a stranger: not signed in, not an employee, possibly a competitor, a
+bot, or a journalist. The rest of this system answers "what may this person see" by looking
+up what they hold. A stranger holds nothing, and the way this platform is built, nothing
+means nothing: entitlements are additive only, so an anonymous caller sees exactly what has
+been explicitly granted to anonymous callers, and no such grant exists.
+
+**So the widget works and answers nothing, unless you decide otherwise.** That is a
+deliberate safe default rather than an oversight, and it is where it will stay until you
+choose.
+
+**The three shapes it could take, and what each costs:**
+
+1. **Lead capture only.** The widget collects a question and a contact address and creates
+   a task for a human. It answers nothing itself. Cost: it is a contact form with a chat
+   interface. Benefit: no exposure of any kind, and it is the only option with no way to be
+   wrong.
+2. **Public knowledge only.** A specific, small, explicitly published set of content is
+   granted to anonymous callers: opening hours, service descriptions, published pricing. The
+   agent may answer from that and nothing else. Cost: somebody has to decide, per client,
+   what is public, and be right. The risk is not the answer, it is the *retrieval*: a
+   question is a probe, and an answer that says "I cannot find that" for one product and
+   answers for another has told a competitor which products exist.
+3. **Identify first, then answer.** The widget asks who they are and verifies it, typically
+   by emailing a link. After that they are an ordinary principal with ordinary entitlements
+   and nothing here is special. Cost: friction on a marketing site, which is where friction
+   costs the most.
+
+**My recommendation: 1 for the first client, with 2 available per client afterwards.** The
+reason is not caution for its own sake. Option 2 needs a person to correctly classify a body
+of content as public, on a page where being wrong is visible to everybody including
+competitors, and the first client is the worst place to learn what that classification
+process needs to be. Option 3 is a real product and belongs in a later wave.
+
+**What I need:** which of the three, and for option 2, who at the client decides what is
+public.
+
+**What is being built meanwhile:** the session minting and its abuse guard (M10.5.5,
+M23.1.4), which are needed under all three options. A widget on a public site is an
+unauthenticated endpoint that mints credentials, so it is rate-limited per origin and capped
+on live sessions per origin, and an anonymous session expires much sooner than a signed-in
+one.
+
+---
+
+
+## 24. When a source is down, should the answer name it? - DECIDED: keep it as built
+
+**Decided 2026-09-06: go with the recommendation. No code changes.** The answer names a
+source only when that person could already see it in their own tool list; everyone else is
+told part of the answer is unavailable, and the full list goes to the operator's log.
+
+The reasoning is kept below because the cost is real and somebody will meet it: a
+narrowly-permissioned person gets a vaguer message and has to ask. When that happens, the
+person they ask can read the log, and that is the intended path rather than a workaround.
+
+---
+
+**Nothing is blocked. I have built the safe reading and this is a question about whether to
+loosen it.**
+
+The plan says that when the Brain cannot reach one of your systems, the answer should say
+which one. That is obviously good service: "I could not reach Xero" is a better answer than
+"something went wrong", because you know whether to wait or to ask somebody.
+
+**The problem is who else is asking.** The same sentence, sent to somebody who has no access
+to Xero at all, tells them Xero exists and that you connect to it. Ask about invoices and
+learn there is an accounting system; ask about tickets and learn there is a helpdesk. A
+person with no permissions anywhere could map every system you run, one question at a time,
+without ever seeing a single record.
+
+That is the same rule the rest of the system already follows: an answer never says "I looked
+in the finance ledger and found nothing", because the sentence gives away the ledger.
+
+**What I have built.** The answer names a source only when that person could already see it
+in their own tool list. Everything else becomes "part of this answer is unavailable", and
+the full list of what failed goes to the operator's log, where you and whoever is on support
+can read it.
+
+| | Names every failed source | Names only what they can already see |
+|---|---|---|
+| A person with full access | Sees exactly what is down | Sees exactly what is down |
+| A person with narrow access | Learns which systems exist | Told part of the answer is unavailable |
+| Somebody probing | Can map your whole estate | Learns nothing |
+| Your support team | Reads it in the answer | Reads it in the log |
+
+**My recommendation: keep it as built.** The cost is that a narrowly-permissioned person
+gets a vaguer message and has to ask, and the person they ask can see the log. The cost the
+other way is a map of your systems available to anybody who can type a question.
+
+This only becomes a real difference once there are people using it with narrow permissions,
+which is wave 4. Worth deciding before then rather than during.
+
+---
+
+---
+
 
 ## 27. Automatic deploys have never worked, and the pipeline said they had - DONE
 
