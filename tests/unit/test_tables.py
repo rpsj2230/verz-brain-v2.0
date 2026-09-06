@@ -82,6 +82,7 @@ MIGRATION_SEARCH = VERSIONS / "0009_search.py"
 MIGRATION_AGENT = VERSIONS / "0014_agent.py"
 MIGRATION_TEMPLATE = VERSIONS / "0016_template.py"
 MIGRATION_DECLINE = VERSIONS / "0017_upgrade_decline.py"
+MIGRATION_MEMORY = VERSIONS / "0018_memory_stores.py"
 
 #: The seven tables 0002 built, in the order it builds them. Written out here rather than
 #: read from `brain.tables.TABLES_IN_DEPENDENCY_ORDER`, which covers every table in the
@@ -150,6 +151,12 @@ TEMPLATE_TABLES: tuple[str, ...] = ("agent.template_version", "agent.template_in
 #: version rather than the template is in its key, are in `tests/unit/test_upgrade_tables.py`.
 DECLINE_TABLES: tuple[str, ...] = ("agent.upgrade_decline",)
 
+#: And the two 0018 adds: what somebody stated and what the system inferred. Two tables
+#: rather than one with a kind column, because a persistent memory has no confidence and an
+#: adaptive one decays, and a shared table would carry a nullable figure that is meaningless
+#: on half its rows. `brain.tables.memory` argues it.
+MEMORY_TABLES: tuple[str, ...] = ("mem.persistent", "mem.adaptive")
+
 ALL_TABLES = (
     CORE_TABLES
     + RESOLVER_TABLES
@@ -161,6 +168,7 @@ ALL_TABLES = (
     + AGENT_TABLES
     + TEMPLATE_TABLES
     + DECLINE_TABLES
+    + MEMORY_TABLES
 )
 
 
@@ -849,6 +857,7 @@ def test_the_migration_creates_exactly_the_tables_the_models_declare() -> None:
     agent = migration_module(MIGRATION_AGENT)
     template = migration_module(MIGRATION_TEMPLATE)
     decline = migration_module(MIGRATION_DECLINE)
+    memory = migration_module(MIGRATION_MEMORY)
     assert core.TABLES == CORE_TABLES
     assert resolver.TABLES == RESOLVER_TABLES
     assert registry.TABLES == REGISTRY_TABLES
@@ -859,6 +868,7 @@ def test_the_migration_creates_exactly_the_tables_the_models_declare() -> None:
     assert agent.TABLES == AGENT_TABLES
     assert template.TABLES == TEMPLATE_TABLES
     assert decline.TABLES == DECLINE_TABLES
+    assert memory.TABLES == MEMORY_TABLES
     # The package tuple is the migrations end to end. Stated as an equality rather than as a
     # set comparison, because the order is what a downgrade depends on.
     end_to_end = (
@@ -872,6 +882,7 @@ def test_the_migration_creates_exactly_the_tables_the_models_declare() -> None:
         + tuple(agent.TABLES)
         + tuple(template.TABLES)
         + tuple(decline.TABLES)
+        + tuple(memory.TABLES)
     )
     assert end_to_end == tables.TABLES_IN_DEPENDENCY_ORDER
     # Every table has a migration and every migration has a model. The union is the check
@@ -887,6 +898,7 @@ def test_the_migration_creates_exactly_the_tables_the_models_declare() -> None:
         set(agent.TABLES),
         set(template.TABLES),
         set(decline.TABLES),
+        set(memory.TABLES),
     )
     assert set().union(*every) == set(metadata.tables)
     assert sum(len(s) for s in every) == len(set().union(*every)), "a table is created twice"

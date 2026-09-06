@@ -69,6 +69,7 @@ from brain.tables.identity import (
     SessionRow,
     one_of,
 )
+from brain.tables.memory import AdaptiveMemoryRow, PersistentMemoryRow
 from brain.tables.projection import ProjectedRecordRow
 from brain.tables.routing import ModelAttemptRow, RoutingRungRow, RoutingTierRow
 from brain.tables.template import TemplateInstanceRow, TemplateVersionRow
@@ -124,10 +125,17 @@ TABLES_IN_DEPENDENCY_ORDER: tuple[str, ...] = (
     # 0017_upgrade_decline. Last, because it points at both of 0016's: a decline belongs to
     # an install that exists and names a version that was published.
     "agent.upgrade_decline",
+    # 0018_memory_stores. No foreign key into either, and that is deliberate rather than an
+    # omission: a memory names the principal it was formed for, and a key into auth.principal
+    # would mean deleting a person deletes the record of what the system learnt while acting
+    # for them, which is the audit trail. The principal id is carried as a value.
+    "mem.persistent",
+    "mem.adaptive",
 )
 
 __all__ = [
     "TABLES_IN_DEPENDENCY_ORDER",
+    "AdaptiveMemoryRow",
     "AgentRow",
     "AuditEntryRow",
     "CapabilityGrantRow",
@@ -142,6 +150,7 @@ __all__ = [
     "MessageRole",
     "MessageRow",
     "ModelAttemptRow",
+    "PersistentMemoryRow",
     "PolicyEpochRow",
     "PrincipalIdentityRow",
     "PrincipalRow",
