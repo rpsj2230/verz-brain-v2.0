@@ -6,12 +6,14 @@ Task ids: M7.3.5
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 
 import pytest
 
 from brain.knowledge.embedding import (
     DEFAULT_BATCH_SIZE,
     EMBEDDING_FIELD,
+    EXIT_INCOMPLETE,
     MODEL_IDENTITY_CHARS,
     REBUILD_COMMAND,
     EmbeddedVector,
@@ -23,9 +25,11 @@ from brain.knowledge.embedding import (
     RebuildPlan,
     _bounded,
     assert_comparable,
+    completion_gaps,
     corpus_identity,
     main,
     next_batch,
+    progress_note,
     vector_leg_is_available,
 )
 from brain.knowledge.search import (
@@ -298,6 +302,131 @@ def test_a_rebuild_that_has_not_started_offers_no_position_to_resume_from() -> N
     assert "--after" not in RebuildCursor(model=MODEL).resume_hint()
 
 
+# ------------------------------------------------- progress and completion (M7.3.5)
+def test_the_resume_hint_carries_the_counters_as_well_as_the_position() -> None:
+    """The position alone is enough to finish the work and not enough to say the work was
+    finished. A hint without the counters resumes correctly and starts the totals at zero, so
+    every interrupted rebuild reports the size of its last segment as its total and passes a
+    completion check it should fail.
+
+    Delete this and the counters can be dropped from the hint as noise, which quietly turns
+    `completion_gaps` into a check that only ever sees runs that were never interrupted."""
+    cursor = RebuildCursor(model=NEWER, after_chunk_id="c_0200", batches=1, chunks=200)
+    hint = cursor.resume_hint()
+
+    assert "--chunks 200" in hint
+    assert "--batches 1" in hint
+    assert main(hint.removeprefix(REBUILD_COMMAND).split()) == 0
+
+
+def test_a_finished_rebuild_that_wrote_fewer_chunks_than_the_corpus_is_refused() -> None:
+    """The only evidence a rebuild that skipped rows ever leaves. A scan run through a narrowed
+    reach, an offset cursor, or a resumed run given a retyped position all report success and
+    all leave chunks on the old model indexed beside the new ones. None of the three raises.
+
+    Delete this and a rebuild can report finished having covered a fraction of the corpus, and
+    the vector leg is switched back on over a corpus holding two models."""
+    cursor = RebuildCursor(model=NEWER, after_chunk_id="c_0400", batches=2, chunks=400)
+    findings = completion_gaps(cursor=replace(cursor, exhausted=True), corpus_chunks=12_000)
+
+    assert any("400 of 12000" in finding for finding in findings), findings
+
+
+def test_a_rebuild_that_wrote_more_chunks_than_the_corpus_holds_is_refused() -> None:
+    """The count is the whole of the evidence, so a count that cannot be right has to be said
+    out loud rather than rounded into a pass. Something embedded twice means the total no
+    longer says anything about coverage, and the run may still have missed rows.
+
+    Delete this and the check becomes a one-sided comparison, which is satisfied by any run
+    that overshoots for any reason."""
+    cursor = RebuildCursor(model=NEWER, after_chunk_id="c_9", batches=9, chunks=90, exhausted=True)
+    findings = completion_gaps(cursor=cursor, corpus_chunks=50)
+
+    assert any("more than once" in finding for finding in findings), findings
+
+
+def test_a_cursor_exhausted_before_it_ran_a_batch_is_refused() -> None:
+    """A cursor that says finished having run no batches claims a corpus nobody embedded, and
+    an empty corpus and a rebuild that never started are the two states this tells apart.
+
+    Delete this and a cursor persisted with the wrong flag reports a completed rebuild that did
+    not happen, which is worse than a failed one because nobody runs it again."""
+    findings = completion_gaps(cursor=RebuildCursor(model=NEWER, exhausted=True), corpus_chunks=0)
+
+    assert any("having run no batches" in finding for finding in findings), findings
+
+
+def test_a_rebuild_still_in_progress_makes_no_claim_to_check() -> None:
+    """An unfinished rebuild is an ordinary state and not a fault, so it produces no findings.
+    Reporting one would train whoever reads the output to skim it, which is exactly the habit
+    the finished-and-incomplete case depends on them not having.
+
+    Delete this and the two states collapse, and the message that matters arrives beside one
+    that arrives on every batch."""
+    cursor = RebuildCursor(model=NEWER, after_chunk_id="c_0400", batches=2, chunks=400)
+
+    assert completion_gaps(cursor=cursor, corpus_chunks=12_000) == ()
+
+
+def test_a_rebuild_that_reached_every_chunk_is_complete() -> None:
+    """The positive sibling. A completion check tested only by its refusals is satisfied by one
+    that refuses every rebuild, and a rebuild that can never be declared finished is a vector
+    leg that is never switched back on."""
+    cursor = RebuildCursor(
+        model=NEWER, after_chunk_id="c_9999", batches=60, chunks=12_000, exhausted=True
+    )
+
+    assert completion_gaps(cursor=cursor, corpus_chunks=12_000) == ()
+
+
+def test_the_progress_note_reports_the_position_the_counters_and_the_vector_leg() -> None:
+    """Partial progress has to be readable, because this job runs over everything the company
+    has uploaded and will be interrupted. The whole of the state is one value, so what an
+    operator needs during an interruption is one line rather than three things reassembled out
+    of a log at the point they are least able to.
+
+    Delete this and the note can lose the position, which is the one field a resumption needs
+    and the only one nothing else prints."""
+    cursor = RebuildCursor(model=NEWER, after_chunk_id="c_0400", batches=2, chunks=400)
+    note = progress_note(cursor, corpus_chunks=12_000)
+
+    assert "400 of 12000" in note
+    assert "c_0400" in note
+    assert "in progress" in note
+    assert "vector leg available: False" in note
+
+
+def test_a_short_rebuild_claiming_to_be_finished_does_not_reopen_the_vector_leg() -> None:
+    """The failure this module is written against, arriving through the line that reports it. A
+    cursor that says finished having covered a fraction of the corpus would otherwise be read
+    as sound, and the leg would be switched back on over a corpus holding two models, where
+    every distance is a number rather than a distance.
+
+    Delete this and the note contradicts the refusal printed beside it, and a reader has to
+    decide which half to believe."""
+    short = RebuildCursor(
+        model=NEWER, after_chunk_id="c_0400", batches=2, chunks=400, exhausted=True
+    )
+
+    assert "vector leg available: False" in progress_note(short, corpus_chunks=12_000)
+    assert "vector leg available: True" in progress_note(short, corpus_chunks=400)
+
+
+def test_an_unstated_corpus_count_is_not_read_as_an_empty_corpus() -> None:
+    """Zero is "nobody said", and a denominator we do not have must not be invented. Passing it
+    through as a real count would report every finished run as having embedded more chunks than
+    the corpus holds, which is a refusal that fires for every correct rebuild.
+
+    Delete this and the default turns the completion check into noise, and noise is switched
+    off rather than fixed."""
+    finished = RebuildCursor(
+        model=NEWER, after_chunk_id="c_9", batches=1, chunks=400, exhausted=True
+    )
+
+    assert "400 chunk(s)" in progress_note(finished)
+    assert "of" not in progress_note(finished).split("chunk(s)")[0].split("batch(es),")[1]
+
+
 # ------------------------------------------------------------------ the command
 def test_the_command_plans_a_rebuild_and_says_how_to_resume_it(
     capsys: pytest.CaptureFixture[str],
@@ -341,3 +470,70 @@ def test_the_command_refuses_a_model_with_no_revision(capsys: pytest.CaptureFixt
     code = main(["--to-model", "qwen3-embedding", "--revision", "", "--dimensions", "1536"])
     assert code == 2
     assert "names no revision" in capsys.readouterr().err
+
+
+def _finished(*extra: str) -> list[str]:
+    return [
+        "--to-model",
+        NEWER.name,
+        "--revision",
+        NEWER.revision,
+        "--dimensions",
+        str(EMBEDDING_DIMENSIONS),
+        "--after",
+        "c_0400",
+        "--chunks",
+        "400",
+        "--batches",
+        "2",
+        "--finished",
+        *extra,
+    ]
+
+
+def test_the_command_refuses_a_finished_rebuild_that_did_not_reach_every_chunk(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`completion_gaps` is a mechanism and this is its call site. The most common defect in
+    this repository is a correct, tested check that nothing invokes, and it arrives exactly this
+    way: the check is written with the values it reasons about and the wiring is left for later.
+
+    The exit code is its own rather than the refusal's, because the two need different actions:
+    a refusal is a command retyped, and this is a corpus that has to be rebuilt from the start.
+
+    Delete this and the call can be removed from `main` with every check above still green."""
+    code = main(_finished("--corpus-chunks", "12000"))
+    captured = capsys.readouterr()
+
+    assert code == EXIT_INCOMPLETE
+    assert "11600 are still on whatever model produced them" in captured.err
+    assert "the vector leg is sound again" not in captured.out
+
+
+def test_the_command_says_when_a_claim_to_have_finished_was_compared_with_nothing(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An unchecked claim, said out loud. Without a count nothing was compared, and the
+    difference between that and a checked completion is the whole of what stands between a
+    rebuild that skipped rows and a corpus permanently holding two models.
+
+    Delete this and a finished run with no count reads exactly like a verified one, which is
+    the reading that leads to the vector leg being switched back on."""
+    code = main(_finished())
+
+    assert code == 0
+    assert "unchecked" in capsys.readouterr().out
+
+
+def test_the_command_accepts_a_rebuild_that_reached_every_chunk(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The positive sibling of the refusal above. A command tested only by what it rejects is
+    satisfied by one that rejects every rebuild, and a rebuild that can never be declared
+    finished leaves the vector leg off for ever."""
+    code = main(_finished("--corpus-chunks", "400"))
+    captured = capsys.readouterr()
+
+    assert code == 0
+    assert "the vector leg is sound again" in captured.out
+    assert captured.err == ""

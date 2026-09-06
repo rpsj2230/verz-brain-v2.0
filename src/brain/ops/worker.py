@@ -37,12 +37,20 @@ checks the slot arithmetic cannot make. Reading it from the environment rather t
 inferring it from the slot allocation is deliberate: a wrong allocation is the thing being
 checked, and a limit inferred from it would make every allocation fit.
 
-That is also the one import in this file that runs from `brain.ops` into `brain.knowledge`,
-and it is the right way round: what a parse may cost is a property of the knowledge door and
-of the container's limit, and this module is the only thing that knows which container it is
-in. The alternative considered was a second entry point in the knowledge layer with its own
-`--ready` and its own heartbeat, which is a copy of this file for one constant's worth of
-difference, and the copy is the one that goes stale.
+That is also one of the two imports in this file that run from `brain.ops` into
+`brain.knowledge`, and both are the right way round: what a parse may cost is a property of the
+knowledge door and of the container's limit, and this module is the only thing that knows which
+container it is in. The alternative considered was a second entry point in the knowledge layer
+with its own `--ready` and its own heartbeat, which is a copy of this file for one constant's
+worth of difference, and the copy is the one that goes stale.
+
+**The embedding batch is checked for every container and the parse budget for one, and the
+asymmetry is the point.** A parse is sized against a container, because only one container is
+sized for a file somebody outside this company chose. A batch is sized against a slot:
+`queue_name_for` derives a queue from the traffic class and refuses per-task queues, embedding
+work is `TrafficClass.SYSTEM` like the rest of the housekeeping, and both workers drain
+`system`. So either of them can be handed an embedding batch, and `embed_batch_gaps` is asked
+unconditionally rather than behind a component name.
 
 **It exits rather than loops.** There is no queue driver installed, so the run mode prints
 `NO_DRIVER_IS_INSTALLED` and exits. A worker that started anyway would poll an empty queue
@@ -81,6 +89,7 @@ from pathlib import Path
 from typing import Final
 
 from brain.gate.context import TrafficClass
+from brain.knowledge.embed_queue import embed_batch_gaps
 from brain.knowledge.parse_budget import (
     PARSE_WORKER_COMPONENT,
     parse_budget_note,
@@ -303,6 +312,13 @@ def preflight(env: Mapping[str, str]) -> tuple[str, ...]:
         return tuple(findings)
 
     findings.extend(concurrency_gaps(allocation, worker_component=worker_component))
+    # Every container, not only one of them, and that is the difference between this check and
+    # the parse worker's below. A parse budget is a property of a container, because only one
+    # container is sized for a document somebody else chose. A batch budget is a property of a
+    # slot: `queue_name_for` derives the queue from the traffic class, embedding work is
+    # `SYSTEM` like every other piece of housekeeping, and both workers drain `system`, so
+    # either of them may be handed an embedding batch and both have to be able to hold one.
+    findings.extend(embed_batch_gaps())
     if worker_component == PARSE_WORKER_COMPONENT:
         # Only the parse worker, because only the parse worker is sized for a parse. Asked
         # about `brain-worker` these checks refuse, correctly: 48 MiB of slot cannot hold the

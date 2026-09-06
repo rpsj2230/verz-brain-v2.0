@@ -42,13 +42,23 @@ tell a real advance from a loop, so reusing the value would mean either lying ab
 connector field or widening a type that a connector backfill depends on. Sharing the shape is
 what was worth having; sharing the class was not.
 
+**A rebuild is interrupted, so its state has to survive being written down.** The cursor is the
+whole of that state and it is a value, which is what lets `resume_hint` print a command line
+somebody pastes back. The counters ride in it as well as the position, and that is the half
+that is easy to leave out: a hint carrying only the position resumes the work correctly and
+loses the one number that can be compared against the corpus afterwards. See
+`A_RESUMED_REBUILD_CARRIES_ITS_COUNTERS_OR_IT_CANNOT_BE_CHECKED`, and
+`A_REBUILD_THAT_REPORTS_DONE_HAS_TO_HAVE_REACHED_EVERY_CHUNK` for what the comparison is for.
+
 **What is not claimed here.** The command below plans a rebuild, refuses one that cannot run,
-and prints what an operator has to hand back to resume it. It does not execute one, because
-executing means embedding text and rewriting rows, and neither the embedding client (M7.3.3)
-nor a chunk repository exists in this repository yet. `EMBEDDING_MODEL_FIELD` names the column
-the identity has to be stored in and there is no such column on
-`brain.knowledge.search.CHUNK`, so adding it is a migration this change does not write. Until
-both exist, what is real is the value contract, the refusals, and the plan.
+reports where one has got to, and refuses the claim that one finished when the arithmetic says
+otherwise. It does not execute one, because executing means embedding text and rewriting rows:
+the embedding service is a seam nothing implements (M7.3.3, and see
+`brain.knowledge.embed_queue`), there is no queue driver to fetch a batch with, and no chunk
+repository to read from or write to. The column the identity is stored in does now exist;
+migration 0010 added `know.chunk.embedding_model` and `vector_query` conjoins it, so a query
+cannot span a model change even when a caller never consults `corpus_identity`. What remains
+missing is everything that would move a row.
 
 Scope: domain logic. Nothing here opens a connection, loads a model or reads a clock.
 
@@ -98,6 +108,29 @@ A_MIXED_CORPUS_HAS_NO_VECTOR_LEG: Final = (
     "the lexical leg, which is unaffected and which fusion consumes on its own without "
     "special handling, and the loss of recall is a thing an operator can see and reason "
     "about rather than a slow drift in answer quality that nobody attributes to anything."
+)
+
+#: Why a rebuild that reports itself finished is checked against the corpus.
+A_REBUILD_THAT_REPORTS_DONE_HAS_TO_HAVE_REACHED_EVERY_CHUNK: Final = (
+    "A rebuild that skipped rows reports success, and the rows it skipped are chunks left on "
+    "the old model beside the new ones with nothing anywhere recording it. Every way that "
+    "happens is silent: a scan run through a narrowed reach never saw the rows it could not "
+    "read, an offset cursor steps over rows whenever the set shifts underneath it, and a run "
+    "resumed from a position somebody retyped starts after the gap. None of the three raises. "
+    "What they have in common is arithmetic: a finished rebuild wrote as many chunks as the "
+    "corpus holds, and a count that disagrees is the only evidence any of them leaves behind. "
+    "The count has to come from the corpus, because a total derived from the run compares the "
+    "run against itself and is right whatever the run did."
+)
+
+#: Why the counters travel in the resume hint and not only the position.
+A_RESUMED_REBUILD_CARRIES_ITS_COUNTERS_OR_IT_CANNOT_BE_CHECKED: Final = (
+    "A rebuild is interrupted by definition, so the state that survives an interruption is the "
+    "whole of what is ever known about the run. If only the position came back, every resumed "
+    "run would start its counters at zero, the final total would be the size of the last "
+    "segment rather than of the corpus, and the completion check would refuse a rebuild that "
+    "was fine while passing one that had skipped the first half. The position alone is enough "
+    "to finish the work and not enough to say the work was finished."
 )
 
 #: Why the position is the last key written rather than a row offset.
@@ -431,11 +464,18 @@ class RebuildCursor:
         The whole model is repeated in it rather than just the position, because the
         interesting way to resume a rebuild wrongly is to remember where it got to and forget
         what it was going to.
+
+        **The counters are in it too**, and that is not decoration: see
+        `A_RESUMED_REBUILD_CARRIES_ITS_COUNTERS_OR_IT_CANNOT_BE_CHECKED`. A hint carrying only
+        the position resumes the work correctly and loses the only number
+        `completion_gaps` has to compare against the corpus, so every interrupted rebuild would
+        report a total the size of its last segment and pass a check it should fail.
         """
         resume = f" --after {self.after_chunk_id}" if self.after_chunk_id else ""
+        counters = f" --chunks {self.chunks} --batches {self.batches}" if self.batches else ""
         return (
             f"{REBUILD_COMMAND} --to-model {self.model.name} --revision {self.model.revision} "
-            f"--dimensions {self.model.dimensions}{resume}"
+            f"--dimensions {self.model.dimensions}{resume}{counters}"
         )
 
 
@@ -562,7 +602,91 @@ def next_batch(*, plan: RebuildPlan, cursor: RebuildCursor) -> RebuildBatch:
     )
 
 
+# ------------------------------------------------------- progress and completion (M7.3.5)
+
+
+def completion_gaps(*, cursor: RebuildCursor, corpus_chunks: int) -> tuple[str, ...]:
+    """Every reason this rebuild's claim to have finished is not true.
+
+    See `A_REBUILD_THAT_REPORTS_DONE_HAS_TO_HAVE_REACHED_EVERY_CHUNK`. A cursor that has not
+    reached the end makes no claim, so it produces nothing here. That is why this is separate
+    from `progress_note` rather than folded into it: an unfinished rebuild is an ordinary state
+    and a finished one that did not reach every chunk is a corpus permanently holding two
+    models, and a single function returning both would report the second in the voice of the
+    first.
+
+    Returns all of them rather than the first, matching `brain.ops.worker.preflight`. A run that
+    both wrote nothing and claims a corpus is wrong twice, and hearing about one of the two
+    invites a second run that is wrong in the way nobody was told about.
+    """
+    if corpus_chunks < 0:
+        msg = f"{corpus_chunks} is not a number of chunks"
+        raise EmbeddingError(msg)
+    if not cursor.exhausted:
+        return ()
+    findings: list[str] = []
+    if cursor.batches == 0:
+        findings.append(
+            f"the rebuild to {cursor.model.identity} reports finished having run no batches; a "
+            "cursor exhausted before it started claims a corpus that nobody embedded"
+        )
+    if cursor.chunks < corpus_chunks:
+        findings.append(
+            f"the rebuild wrote {cursor.chunks} of {corpus_chunks} chunk(s), so "
+            f"{corpus_chunks - cursor.chunks} are still on whatever model produced them, "
+            "indexed beside the new ones with nothing else recording which is which"
+        )
+    if cursor.chunks > corpus_chunks:
+        findings.append(
+            f"the rebuild wrote {cursor.chunks} chunk(s) and the corpus holds {corpus_chunks}; "
+            "something has been embedded more than once, so this count cannot be used to say "
+            "the corpus was covered"
+        )
+    return tuple(findings)
+
+
+def progress_note(cursor: RebuildCursor, *, corpus_chunks: int = 0) -> str:
+    """Where a rebuild has got to, in the line an operator reads before deciding what to do.
+
+    **Partial progress has to be readable**, because this job runs over everything the company
+    has ever uploaded and will be interrupted. What makes it readable is that the whole of the
+    state is one value: the position, the counters and the model are one object rather than
+    three things somebody reassembles out of a log at the point they are least able to.
+
+    `corpus_chunks` is optional and zero is "nobody said", not "the corpus is empty". Reporting
+    a denominator we do not have would be inventing one, and an operator reading "800 of 800"
+    for a run that has covered an eighth of the corpus is worse off than one reading "800".
+    `completion_gaps` takes the same number without a default, because a claim to have finished
+    is checked against a count or it is not checked.
+
+    The vector leg's availability is on the line rather than left to be worked out, because it
+    is the question anybody watching a rebuild is really asking: retrieval is on the lexical leg
+    alone until this finishes, and somebody may have to explain to a person why their answers
+    are thinner today. It is the cursor's own answer narrowed by the count when there is one: a
+    cursor that says it is finished having covered a fraction of the corpus would otherwise turn
+    the leg back on over a corpus holding two models, which is the failure this whole module is
+    written against arriving through the line that reports it.
+    """
+    covered = not corpus_chunks or not completion_gaps(cursor=cursor, corpus_chunks=corpus_chunks)
+    reached = f"{cursor.chunks} of {corpus_chunks}" if corpus_chunks else str(cursor.chunks)
+    return (
+        f"rebuild to {cursor.model.identity}: "
+        f"{'finished' if cursor.exhausted else 'in progress'}, {cursor.batches} batch(es), "
+        f"{reached} chunk(s), position {cursor.after_chunk_id or 'the beginning'}, "
+        f"vector leg available: {vector_leg_is_available(cursor=cursor) and covered}"
+    )
+
+
 # ------------------------------------------------------------------ the command
+
+#: The command's refusal: a plan or a cursor that cannot do what it says.
+EXIT_REFUSED: Final = 2
+
+#: A rebuild that reports itself finished and did not reach every chunk. A code of its own
+#: rather than sharing the refusal's, for the reason `brain.ops.worker` gives about 78 and 69:
+#: the two need different actions from different people. A refusal is a command retyped; this
+#: one is a corpus that has to be rebuilt again from the beginning.
+EXIT_INCOMPLETE: Final = 3
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -580,18 +704,40 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--batch-size", default=DEFAULT_BATCH_SIZE, type=int)
     parser.add_argument("--after", default="", help="resume strictly after this chunk id")
+    # The counters a resumed run carries. Without them a resumed rebuild reports the size of
+    # its last segment as its total; see `A_RESUMED_REBUILD_CARRIES_ITS_COUNTERS_OR_IT_CANNOT
+    # _BE_CHECKED`. `resume_hint` prints them, so an operator pastes rather than retypes.
+    parser.add_argument("--chunks", default=0, type=int, help="chunks written before this run")
+    parser.add_argument("--batches", default=0, type=int, help="batches run before this run")
+    parser.add_argument(
+        "--finished",
+        action="store_true",
+        help="the run reported that it had reached the end; check that claim",
+    )
+    parser.add_argument(
+        "--corpus-chunks",
+        default=0,
+        type=int,
+        help="how many chunks the corpus holds, from a count over it; 0 for unstated",
+    )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Plan a rebuild and print it, or refuse and say why.
+    """Plan a rebuild, report where one has got to, and check a claim that one has finished.
 
-    It deliberately does not run one: see the module docstring on what is not claimed. What it
-    does is the half that has to happen before any embedding does, which is turning a model
-    swap from a configuration change into something an operator has to state, and refusing the
-    two forms of it that cannot work. A model swapped underneath the corpus with nothing run
-    at all is the failure this leaf is about, and a command that refuses loudly at the top of
-    the afternoon is worth more than one that fails at the first write four hours in.
+    It deliberately does not embed anything: see the module docstring on what is not claimed.
+    What it does is everything around the embedding that has to be right for the embedding to
+    be worth running. It turns a model swap from a configuration change into something an
+    operator has to state and refuses the two forms of it that cannot work. It reads back a
+    cursor as a state anybody can act on, which is what makes an interrupted run resumable
+    rather than merely restartable. And, given a count over the corpus, it refuses the claim
+    that a run finished when the arithmetic says it did not, which is the only evidence a
+    rebuild that skipped rows ever leaves.
+
+    Three exit codes rather than two. A refusal is a command retyped; an incomplete rebuild is
+    a corpus that has to be done again from the beginning, and sending both to the same code
+    sends the wrong person to look.
     """
     args = _parser().parse_args(argv if argv is not None else sys.argv[1:])
     try:
@@ -601,17 +747,58 @@ def main(argv: list[str] | None = None) -> int:
         plan = RebuildPlan(
             to_model=model, from_identity=args.from_identity, batch_size=args.batch_size
         )
-        cursor = replace(plan.start(), after_chunk_id=args.after)
+        cursor = replace(
+            plan.start(),
+            after_chunk_id=args.after,
+            chunks=args.chunks,
+            batches=args.batches,
+            exhausted=args.finished,
+        )
         batch = next_batch(plan=plan, cursor=cursor)
+        # Only when a count was given. Zero is "nobody said", and passing it through would read
+        # as a corpus of no chunks, so every finished run would be reported as having embedded
+        # more than the corpus holds.
+        incomplete = (
+            completion_gaps(cursor=cursor, corpus_chunks=args.corpus_chunks)
+            if args.corpus_chunks
+            else ()
+        )
     except EmbeddingError as exc:
         print(f"refused: {exc}", file=sys.stderr)
-        return 2
+        return EXIT_REFUSED
     position = cursor.after_chunk_id or "the beginning"
     print(f"rebuild to {model.identity}")
-    print(f"  {batch.reason}")
-    print(f"  next: chunks after {position}, {batch.size} at once")
-    print(f"  vector leg available: {vector_leg_is_available(cursor=cursor)}")
+    if not incomplete:
+        # `next_batch`'s finishing sentence says the vector leg is sound again, and it is
+        # entitled to: it knows the cursor and nothing else. When the corpus count says the
+        # run did not reach every chunk, that sentence is false, and printing it beside the
+        # findings that contradict it would leave a reader to decide which half to believe.
+        print(f"  {batch.reason}")
+    if not batch.is_finished:
+        # Only when there is one. A finished rebuild printing "0 at once" reads as a window of
+        # nothing rather than as an ending, and the difference matters to whoever is deciding
+        # whether to run the command again.
+        print(f"  next: chunks after {position}, {batch.size} at once")
+    print(f"  {progress_note(cursor, corpus_chunks=args.corpus_chunks)}")
     print(f"  resume with: {cursor.resume_hint()}")
+    if cursor.exhausted and not args.corpus_chunks:
+        # An unchecked claim, said out loud. A run that reports itself finished and offers no
+        # count has not been compared with anything, and the difference between that and a
+        # checked completion is the whole of what stands between a rebuild that skipped rows
+        # and a corpus permanently holding two models.
+        print(
+            "  unchecked: nothing was compared against the corpus, so 'finished' here is the "
+            "run's own word. Pass --corpus-chunks from a count over know.chunk"
+        )
+    if incomplete:
+        print(
+            "this rebuild reports finished and did not reach every chunk, so the corpus holds "
+            "two models and the vector leg must stay off:",
+            file=sys.stderr,
+        )
+        for finding in incomplete:
+            print(f"  - {finding}", file=sys.stderr)
+        return EXIT_INCOMPLETE
     return 0
 
 
