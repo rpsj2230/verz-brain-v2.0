@@ -358,3 +358,68 @@ def test_no_message_from_this_module_distinguishes_the_three_failures() -> None:
     }
 
     assert raised == {"ApiKeyError"}
+
+
+# ------------------------------------------- the half of M10.5.7 that does not exist yet
+def test_no_rest_api_is_served_and_the_module_says_so() -> None:
+    """**M10.5.7 reads "REST API with key management" and only the key management exists.**
+
+    The application serves `/health/live`, `/health/ready` and the build pages. No route
+    invokes a tool, answers a question or accepts an API key, so nothing in `api_keys` has
+    ever been asked to authenticate anybody.
+
+    That is worth a test rather than a comment because the leaf is marked done on a tracker a
+    client reads. The counters that normally catch a gap cannot see this one:
+    `sweep_traceability` checks a claim has a test and this one does, and nothing anywhere
+    checks that a claim covers the whole of what its leaf says.
+
+    So the absence is asserted directly. **When somebody adds the API this test fails**, and
+    failing is the point: it forces the paragraph in `api_keys`'s docstring to be rewritten
+    at the moment it stops being true, which is the only mechanism available for keeping a
+    claim honest about its own scope.
+
+    Delete this and the tracker keeps saying a REST API was delivered."""
+    from brain.app import Settings, create_app
+
+    app = create_app(Settings(env="development", run_migrations=False))
+    served = {path for route in app.routes if (path := getattr(route, "path", None)) is not None}
+
+    # Everything the application actually answers today. Documentation, health, and the
+    # build pages the client reads; nothing behind the gate.
+    expected_prefixes = (
+        "/health",
+        "/build",
+        "/api/status.json",
+        "/docs",
+        "/redoc",
+        "/openapi",
+        "/admin",
+        "/me",
+    )
+    unexpected = sorted(p for p in served if not p.startswith(expected_prefixes))
+
+    assert not unexpected, (
+        f"a route appeared that is not health, docs or a build page: {unexpected}. If this is "
+        "the REST API, M10.5.7 is finally whole and the docstring in brain.channels.api_keys "
+        "saying it does not exist must be rewritten"
+    )
+
+
+def test_the_module_discloses_that_the_api_half_is_missing() -> None:
+    """The guard on the disclosure itself. The test above asserts the absence; this asserts
+    somebody reading the module is told about it.
+
+    An accurate absence that nobody documents is how the next person builds against a claim
+    the tracker made and the code never met."""
+    import inspect
+
+    from brain.channels import api_keys
+
+    # Whitespace collapsed before matching. The sentence wraps in the source, so a literal
+    # search finds "There is no REST\nAPI" and fails on a docstring that says exactly the
+    # right thing. Asserting on prose is usually the wrong move; here the prose is the
+    # artefact under test, because the disclosure is the deliverable.
+    doc = " ".join((inspect.getdoc(api_keys) or "").split())
+
+    assert "There is no REST API" in doc
+    assert "HALF OF M10.5.7 DOES NOT EXIST" in doc
