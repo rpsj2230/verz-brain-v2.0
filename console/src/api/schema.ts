@@ -18,10 +18,15 @@
  * in exactly one place. When the generator changes shape, or somebody swaps it for a
  * different one, this is the file that changes and no call site does.
  *
- * **What is in here today.** Nothing useful, and that is a fact about the API rather than
- * about this console: no route is mounted under `/api/v1` yet, so the document describes
- * the health checks and the build documentation pages. The wiring is real; there is simply
- * nothing behind it to be typed against. The export script says so when it runs.
+ * **What is in here today.** `CallerView` and `RecordPage`, from `GET /api/v1/me` and
+ * `GET /api/v1/records/{entity}`, alongside the health and build-documentation shapes, and
+ * `ErrorBody` on every failing response from both. This paragraph used to say there was
+ * nothing under `/api/v1` at all, which was true until those routes landed.
+ *
+ * `RecordPage.total` is typed as nullable and the API never populates it. That is not an
+ * omission waiting to be filled in: a count computed behind a permission predicate tells the
+ * reader how many rows were removed, so the console must not render one even if a future
+ * response carries it.
  */
 
 // Only the two every consumer needs. The generator also emits `operations`, `webhooks` and

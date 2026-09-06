@@ -108,6 +108,12 @@ class TokenRefusal(enum.StrEnum):
     SESSION_EXPIRED = "session_expired"
     SESSION_MISMATCH = "session_mismatch"
     PRINCIPAL_INACTIVE = "principal_inactive"
+    #: A perfectly valid token whose subject `principal_for` answered `UnmappedSubject` for:
+    #: either nobody has onboarded them, or the principal on file has expired. Its own value
+    #: rather than reusing PRINCIPAL_INACTIVE, which would assert the narrower of the two.
+    #: `principal_for` collapses them on purpose, so nothing downstream can tell them apart
+    #: and a log line claiming to is recording a guess.
+    NO_PRINCIPAL = "no_principal"
     NOT_A_SERVICE_ACCOUNT = "not_a_service_account"
     UNKNOWN_SERVICE_ACCOUNT = "unknown_service_account"
     SERVICE_ACCOUNT_EXPIRED = "service_account_expired"

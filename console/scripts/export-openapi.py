@@ -75,9 +75,11 @@ LOCK_TEXT_HAS_ONE_SOURCE = (
     "two are compared, and a difference is an error rather than a warning."
 )
 
-#: Every route in the application is either public or under the versioned prefix. Nothing
-#: is under the prefix yet, and a generated client with no operations in it looks exactly
-#: like a broken generator, so it is called out rather than left for someone to notice.
+#: Every route in the application is either public or under the versioned prefix. The
+#: versioned ones are listed after a run and the empty case is called out, because a
+#: generated client with no operations in it looks exactly like a broken generator. That
+#: branch was the whole output until the first routes landed on 2026-09-06; it is kept
+#: because unmounting a router is a one-line change and this is where it would show.
 API_PREFIX = "/api/v1"
 
 

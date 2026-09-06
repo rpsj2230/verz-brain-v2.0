@@ -69,7 +69,7 @@ from __future__ import annotations
 
 from typing import Final
 
-from brain.knowledge.columns import PRICE_LIST
+from brain.knowledge.columns import PRICE_LIST, TableClassification
 from brain.knowledge.rows import RowSource, RowTool
 from brain.tools.registry import ResultContract, ToolRegistry
 
@@ -90,6 +90,22 @@ ROW_TOOL_DESCRIPTIONS: Final[dict[str, str]] = {
 #: it. One entry today. A second is one line here and no change anywhere else, which is the
 #: shape a registry is supposed to have.
 BUILT_IN_ROW_ENTITIES: Final = (PRICE_LIST,)
+
+
+def classification_for(entity: str) -> TableClassification | None:
+    """The column classification governing this entity, or None if nothing classifies it.
+
+    Here rather than in whatever needs it, because the list above is the one place that
+    decides which entities this application ships a row tool for, and a second index built
+    from it elsewhere is a second answer to the same question the first time somebody adds an
+    entity to only one of them.
+
+    None rather than a refusal, and the caller decides what an unclassified entity means. For
+    `brain.api_routes` it means the same 404 an ungranted entity gets, which is the record
+    rule applied one level up: a caller who could tell "there is no such entity here" from
+    "you may not reach it" could map the installation by asking.
+    """
+    return next((c for c in BUILT_IN_ROW_ENTITIES if c.entity == entity), None)
 
 
 def build_registry(*, source: str, records: RowSource | None = None) -> ToolRegistry:

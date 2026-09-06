@@ -28,8 +28,11 @@ from pydantic import AliasChoices, BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from brain.api import ErrorBody, TimeoutMiddleware
+from brain.api_routes import router as api_router
 from brain.core.errors import BrainError, Outcome, to_public
 from brain.docs_routes import router as docs_router
+from brain.identity.bearer import log_refusal, refusal_headers
+from brain.identity.oidc import SIGN_IN_PROMPT, TokenRefusedError
 from brain.migrate import run_migrations
 from brain.ops.wiring import DEFAULT_PROFILE
 from brain.session import (
@@ -239,6 +242,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = settings
     app.state.ready = {}
+    # Set to None rather than left unset, so "this process has no gate wiring" is a value a
+    # route reads rather than an AttributeError it recovers from. Nothing constructs one
+    # today: `brain.identity.oidc.SignatureVerifier` is an injected callback because the
+    # standard library cannot verify RS256 and this repository has added no cryptography
+    # dependency, so there is no verifier to put in a `TokenAuthority` and no
+    # `EntitlementStore` implementation to put beside it. Every route under `API_PREFIX`
+    # therefore refuses, which is what a missing authenticator has to mean.
+    app.state.gate = None
 
     # Registered first, which makes it innermost: Starlette inserts each new middleware at
     # the front of the stack, so the last one registered runs outermost. Inside `trace`
@@ -328,7 +339,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         return JSONResponse(status_code=status, content=body.model_dump())
 
+    @app.exception_handler(TokenRefusedError)
+    async def handle_token_refused(request: Request, exc: TokenRefusedError) -> JSONResponse:
+        """A credential that was not acceptable, in one sentence, whatever was wrong with it.
+
+        Beside `handle_brain_error` rather than inside it, because the two answer different
+        questions. That one maps an outcome of a question that was asked; this fires before
+        any question exists, so there is no outcome to map and nothing about what exists to
+        give away. Both return `api.ErrorBody`, so a client parses one shape.
+
+        The reason is a closed enumeration and it goes to the log only. Telling the presenter
+        that the key was unknown rather than the signature bad tells somebody forging a token
+        which part to fix next, one attempt at a time. See
+        `brain.identity.bearer.EVERY_REFUSAL_SAYS_THE_SAME_SENTENCE`.
+        """
+        log_refusal(exc, path=request.url.path)
+        bound = structlog.contextvars.get_contextvars()
+        body = ErrorBody(message=SIGN_IN_PROMPT, trace_id=str(bound.get("trace_id", "")))
+        return JSONResponse(
+            status_code=401, content=body.model_dump(), headers=dict(refusal_headers())
+        )
+
     app.include_router(docs_router)
+    # Mounted here and nowhere else. An unmounted router is the failure this repository keeps
+    # finding, and the timeout middleware three paragraphs up is the most recent one.
+    app.include_router(api_router)
 
     @app.get("/health/live", response_model=Health, tags=["health"])
     async def live() -> Health:

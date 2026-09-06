@@ -177,7 +177,19 @@ class TimeoutMiddleware:
 #:
 #: `test_a_route_under_the_api_prefix_declares_the_common_error_shape` fails the day the
 #: first route appears without it, rather than passing quietly over an empty list.
+#:
+#: **401 is here and it is not a hole in the taxonomy.** Every other entry describes an
+#: answer to a question that was asked; a 401 says the credential was not acceptable, so no
+#: question was ever put. It therefore cannot distinguish a refusal from an absence, because
+#: it is decided before anything has been looked up and says nothing about what exists. What
+#: it must not do is explain itself, and it does not: the body is the one sentence
+#: `brain.identity.oidc.SIGN_IN_PROMPT` holds, whether the token was forged, expired,
+#: minted for another audience, or belongs to somebody nobody has onboarded.
 COMMON_RESPONSES: dict[int | str, dict[str, Any]] = {
+    401: {
+        "model": ErrorBody,
+        "description": "No acceptable credential. The reason is never given.",
+    },
     404: {
         "model": ErrorBody,
         "description": "Absent, or present and not yours. Deliberately the same.",

@@ -232,5 +232,8 @@ def test_the_reasons_are_written_down_beside_the_code() -> None:
     assert "decided per request" in SCOPES_ARE_NOT_ENUMERATED
     assert "one route behind the codebase" in PUBLIC_BY_TAG_PRIVATE_BY_DEFAULT
     # Said out loud rather than implied, because a document describing a check nothing
-    # performs is worth less than one that admits the gap.
-    assert "No authentication middleware is mounted yet" in DOCUMENTED_BEFORE_IT_IS_ENFORCED
+    # performs is worth less than one that admits the gap. The gap moved on 2026-09-06: the
+    # token is now checked on every route under the prefix, and what is still missing is the
+    # signature verifier, so the sentence has to name that rather than the old, wider hole.
+    assert "enforced rather than described" in DOCUMENTED_BEFORE_IT_IS_ENFORCED
+    assert "signature verifier" in DOCUMENTED_BEFORE_IT_IS_ENFORCED

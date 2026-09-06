@@ -97,16 +97,23 @@ deliberately just the already-unauthenticated routes with its component schemas 
 generating a client from it would produce a typed client for the health check, for ever,
 and the omission would look like an empty API rather than the wrong audience.
 
-### There is nothing to be typed against yet
+### What there is to be typed against
 
-The application mounts the two health endpoints and the build-documentation router. **No
-route is mounted under `/api/v1` at all.** The generated types therefore describe the
-health checks and the documentation pages, and nothing else. The export script says so when
-it runs.
+Two operations, both under `/api/v1` and both behind the gate:
 
-This is worth stating plainly because it looks like a broken generator. The wiring is real
-and will produce a useful client the day the first endpoint lands. Today it produces an
-honest description of an API that has no operations.
+- `GET /api/v1/me`, which answers who the bearer token belongs to, at what assurance, on
+  which channel ceiling, and the digest of the reach the request was computed at. It
+  deliberately publishes no list of capabilities: see `brain.api_routes.CallerView`.
+- `GET /api/v1/records/{entity}`, which answers a page of records already through the
+  redactor. `RecordPage` is `Page` plus the payload's own fields, and it never carries a
+  total, because a count behind a permission predicate tells the reader how many rows they
+  were not shown.
+
+**This section used to say there was nothing at all**, and that was true until the routes
+landed on 2026-09-06. It is worth knowing what is still missing rather than assuming the
+surface is finished: the deployed application has no signature verifier and no entitlement
+store wired, so it refuses every credential, and it registers no row tool, so every entity
+answers 404. Both refusals are the correct fail-closed behaviour and neither is useful yet.
 
 ### Types, not a generated runtime client
 
@@ -353,8 +360,8 @@ screen.
 - **No display of who is signed in.** The header says nothing about the person, because the
   only way to know without asking the API is to read the token. When an endpoint exists that
   says who the caller is, that is where the name comes from.
-- **No `/api/v1` calls anywhere.** `src/api/client.ts` is wired and unused, because there is
-  nothing mounted to call.
+- **No `/api/v1` calls anywhere.** `src/api/client.ts` is wired and unused. Two operations
+  are now mounted and typed, so this is a gap in the console rather than in the API.
 - **No error reporting, no analytics, no telemetry.**
 - **`vite.config.ts` is not typechecked**, deliberately: including it would mean adding
   `@types/node` and a second tsconfig. A mistake in it surfaces when the build fails rather

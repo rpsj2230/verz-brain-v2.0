@@ -184,32 +184,69 @@ def test_the_deadline_sits_inside_the_tracing_middleware() -> None:
 
 
 def test_a_route_under_the_api_prefix_declares_the_common_error_shape() -> None:
-    """**A forcing function, written while there is nothing to force.** `COMMON_RESPONSES`
-    described itself as "attached to every route" and was attached to none, because there are
-    no routes under `API_PREFIX` yet. The sentence was true vacuously and read as a
-    description of the deployed application.
+    """**A forcing function, written while there was nothing to force, that would not have
+    fired.** The first routes under `API_PREFIX` landed on 2026-09-06 and this test stayed
+    green through it, for a reason worth recording: the previous version walked `app.routes`,
+    and FastAPI 0.141 keeps an included router in that list as a single `_IncludedRouter`
+    object rather than flattening its routes into it. So the list of paths starting with the
+    prefix was empty, the early-return branch ran, and the assertion inside it passed because
+    the literal string `/api/v1` is not itself a route path.
 
-    A test that walks an empty list and passes is the shape this repository keeps finding, so
-    the emptiness is asserted rather than assumed. The day somebody mounts the first API
-    route, the first assertion fails and they have to come here, which is the point: the
-    generated OpenAPI is what the console's typed client is built from, and a route that
-    documents no error shape gives the console nothing to handle failures against.
+    That is the shape this repository keeps finding, arriving through a framework upgrade
+    rather than through an author: a check that walks a collection which silently stopped
+    containing what it used to.
 
-    Delete this and the first route lands with FastAPI's default per-route guess, which
-    describes a validation error and not this system's taxonomy, and the console's error
-    handling is typed against a shape the server never sends."""
+    So it asserts over the generated document instead, which is the thing the test was
+    always about. The console's typed client is built from that document, and a route
+    documenting no error shape gives the console nothing to handle failures against; the
+    document is also produced by one function, `FastAPI.openapi`, rather than by a traversal
+    of an internal structure the framework may reorganise.
+
+    Delete this and a route lands with FastAPI's default per-route guess, which describes a
+    validation error and not this system's taxonomy, and the console's error handling is
+    typed against a shape the server never sends."""
     app: FastAPI = create_app(Settings(env="development"))
-    api_routes = [r for r in app.routes if str(getattr(r, "path", "")).startswith(API_PREFIX)]
+    paths = app.openapi()["paths"]
+    versioned = {path: item for path, item in paths.items() if path.startswith(API_PREFIX)}
 
-    if not api_routes:
-        assert API_PREFIX not in {getattr(r, "path", "") for r in app.routes}, (
-            "a route now exists under the API prefix; give it COMMON_RESPONSES and rewrite "
-            "this test to assert over the real routes"
-        )
-        return
+    assert versioned, (
+        "no operation is documented under the API prefix; either the routes were unmounted "
+        "or the document no longer describes them, and both are the failure this catches"
+    )
 
-    for route in api_routes:
-        declared = getattr(route, "responses", {})
-        missing = sorted(set(COMMON_RESPONSES) - set(declared))
-        where = getattr(route, "path", route)
-        assert not missing, f"{where} documents no shape for {missing}"
+    for path, item in sorted(versioned.items()):
+        for method, operation in sorted(item.items()):
+            declared = {int(code) for code in operation.get("responses", {}) if code.isdigit()}
+            missing = sorted(set(COMMON_RESPONSES) - declared)
+            assert not missing, f"{method.upper()} {path} documents no shape for {missing}"
+
+
+def test_the_documented_error_shape_is_the_one_the_application_returns() -> None:
+    """The guard on the test above, and the reason `COMMON_RESPONSES` is worth having at all.
+
+    That one proves each status is *documented*. This proves the schema it is documented with
+    is `ErrorBody` rather than FastAPI's `HTTPValidationError`, which is what a route gets by
+    default and which carries a `detail` array describing which field was wrong. A console
+    typed against that would render a validation report where a refusal belongs.
+
+    Read out of the document rather than off the constant, because the constant is what the
+    author wrote and the document is what the generator made of it, and the two have been
+    different before: a `model` key that FastAPI did not recognise would produce an empty
+    response object here and the test above would still pass.
+
+    Delete this and 404 can be documented as any shape at all as long as it is documented."""
+    app: FastAPI = create_app(Settings(env="development"))
+    doc = app.openapi()
+    ref = "#/components/schemas/ErrorBody"
+
+    checked = 0
+    for path, item in doc["paths"].items():
+        if not path.startswith(API_PREFIX):
+            continue
+        for operation in item.values():
+            for code in ("401", "404", "409", "503"):
+                schema = operation["responses"][code]["content"]["application/json"]["schema"]
+                assert schema.get("$ref") == ref, f"{path} documents {code} as {schema}"
+                checked += 1
+
+    assert checked >= 8, f"only {checked} responses were checked; the loop found no operations"
