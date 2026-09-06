@@ -7,7 +7,8 @@ the secret store must fail readiness, because a half-connected instance does not
 it answers from whatever it can still reach, which is how a permission-aware system
 quietly starts returning wrong answers.
 
-Task ids: M31.1.1, M31.1.2, M31.1.3
+Task ids: M31.1.1.1, M31.1.1.2, M31.1.1.4, M31.1.1.5, M31.1.3.1, M31.1.3.2,
+M31.1.3.3, M31.1.3.4, M31.1.3.5
 """
 
 from __future__ import annotations

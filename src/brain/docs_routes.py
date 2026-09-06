@@ -7,7 +7,7 @@ merged commits rather than from anyone's browser.
 These routes are public-by-deployment but carry no company data — they describe the build,
 not the client's records. Nothing here touches the gate.
 
-Task ids: M38.3.5, M38.3.6
+Task ids: M38.3.2.1, M38.3.2.2, M38.3.2.3, M38.3.2.4, M38.3.2.5
 """
 
 from __future__ import annotations

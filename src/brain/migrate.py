@@ -18,7 +18,7 @@ is the behaviour we want — the alternative is answering questions from a half-
 database — but it does mean a bad migration takes the app down rather than just failing a
 job. The invariant suite and the CI stack test exist to catch that before it deploys.
 
-Task ids: M0.3.2, M31.1.1
+Task ids: M0.3.2, M31.1.1.2
 """
 
 from __future__ import annotations

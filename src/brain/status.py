@@ -12,7 +12,7 @@ The deliberate consequence is that forgetting to write an id means the work does
 count. That is a nuisance exactly once and then never again, and it fails in the safe
 direction.
 
-Task ids: M38.3.1, M38.3.2, M38.3.3, M38.3.4
+Task ids: M38.3.1.1, M38.3.1.2, M38.3.1.3, M38.3.1.4
 """
 
 from __future__ import annotations
