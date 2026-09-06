@@ -33,6 +33,25 @@ if [ -z "$UV" ]; then
   exit 1
 fi
 
+# Every gate below reads the working tree. That is the right thing to check most of the
+# time and it is not what is being pushed, and the difference has now shipped four broken
+# commits: a fixed file left unstaged passes every check here and fails in CI, because CI
+# reads the commit. So the tree being pushed is checked first, in a throwaway worktree at
+# HEAD, and only the cheap structural checks run there: the full suite would double every
+# push, and what these four failures had in common was a missing file rather than a subtle
+# behaviour, which mypy and the sweeps catch in seconds.
+#
+# Skipped rather than failed if the worktree cannot be made, because a hook that blocks a
+# push for want of disk space is a hook people pass --no-verify to.
+echo "pre-push: the commit, not the working tree"
+HEADCHECK="$(mktemp -d 2>/dev/null || echo "")"
+if [ -n "$HEADCHECK" ] && git worktree add --detach --quiet "$HEADCHECK" HEAD 2>/dev/null; then
+  ( cd "$HEADCHECK" && "$UV" run mypy && "$UV" run python -m brain.ops.sweeps traceability )     || { git worktree remove --force "$HEADCHECK" 2>/dev/null; exit 1; }
+  git worktree remove --force "$HEADCHECK" 2>/dev/null
+else
+  echo "  skipped: could not create a worktree at HEAD"
+fi
+
 echo "pre-push: format"
 "$UV" run ruff format --check src tests
 
