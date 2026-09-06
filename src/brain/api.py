@@ -40,14 +40,41 @@ log = structlog.get_logger()
 API_PREFIX = "/api/v1"
 
 
+#: Why the error shape carries no outcome, and why removing the field was not a tidy-up.
+#:
+#: This model used to carry `outcome: str` described as "denied, absent, unresolved,
+#: degraded, failed". `brain.app.handle_brain_error` maps DENIED and ABSENT to the same
+#: status and the same body on purpose, because a caller who can tell "you may not see this"
+#: from "this does not exist" can map what exists by asking, which is the whole leak the
+#: taxonomy is built to prevent. Populating that field would have made the two
+#: distinguishable in the one place a client actually reads.
+#:
+#: It never leaked, and the reason is worth stating rather than being relieved about: the
+#: handler has never returned this model. A documented error shape that nothing returns was
+#: what kept the field harmless, which is a poor kind of safety, and the fix is to return the
+#: model and delete the field rather than to keep both apart and hope.
+A_REFUSAL_AND_AN_ABSENCE_LOOK_THE_SAME_TO_A_CLIENT = (
+    "The status and the body are identical for DENIED and ABSENT. Anything that varies "
+    "between them is a side channel, whatever it is called and however useful it would be "
+    "in a log: a client that can tell a refusal from an absence can enumerate what exists "
+    "by asking for things at random and reading which answer comes back. The trace id is "
+    "safe to carry because it is minted per request and says nothing about what was asked "
+    "for or who asked; the outcome is not, and is deliberately absent from this model."
+)
+
+
 class ErrorBody(BaseModel):
-    """The only error shape. Documented once and returned by everything."""
+    """The only error shape. Documented once and returned by everything.
+
+    Two fields, and the second one is the reason a person can get help: the trace id is what
+    somebody quotes so a run can be found in the ledger, and without it in the body a caller
+    has to know to read a response header before they can be told anything useful.
+
+    There is no `outcome`. See `A_REFUSAL_AND_AN_ABSENCE_LOOK_THE_SAME_TO_A_CLIENT`.
+    """
 
     message: str = Field(description="Safe to show a person. Never explains a refusal.")
     trace_id: str = Field(default="", description="Quote this and the run can be found.")
-    outcome: str = Field(
-        default="failed", description="denied, absent, unresolved, degraded, failed"
-    )
 
 
 class Page[T](BaseModel):
@@ -91,6 +118,20 @@ class TimeoutMiddleware:
 
     Returns 503 DEGRADED rather than 504: the caller's request did not time out, one of
     our dependencies did, and the taxonomy already has a word for that.
+
+    **This existed, was tested, and was mounted by nothing until today.** `create_app`
+    installed CORS, tracing and security headers and never this, so every request the
+    deployed application has ever served ran without a deadline, while `M31.1.2.4` was
+    closed and `Settings.request_timeout_seconds` sat at 30.0 read by nobody. The test that
+    covered it constructed an application and attached the middleware itself, which is the
+    shape that makes an unmounted mechanism look tested. `brain.app.create_app` now attaches
+    it from the setting, and a test asserts the deployed stack contains it rather than
+    asserting that it works when somebody adds it.
+
+    It is attached innermost, inside the trace middleware, for two reasons. The trace id is
+    bound by then, so a timed-out response carries the same id as the log line that recorded
+    it; and the deadline covers the route rather than the response headers being written
+    after it, which would count our own work against the caller's budget.
     """
 
     def __init__(self, seconds: float) -> None:
@@ -107,10 +148,17 @@ class TimeoutMiddleware:
             log.warning("request deadline exceeded", path=request.url.path, seconds=elapsed)
             return JSONResponse(
                 status_code=503,
+                # The bound id first, the caller's header as a fallback. Attached inside
+                # the trace middleware, so a minted id is available here and the body
+                # matches the `x-trace-id` header the caller gets back. Reading only the
+                # request header would have answered "" for every caller who did not send
+                # one, which is most of them.
                 content=ErrorBody(
                     message="That took too long to answer. Nothing was changed.",
-                    trace_id=request.headers.get("x-trace-id", ""),
-                    outcome="degraded",
+                    trace_id=str(
+                        structlog.contextvars.get_contextvars().get("trace_id")
+                        or request.headers.get("x-trace-id", "")
+                    ),
                 ).model_dump(),
             )
 

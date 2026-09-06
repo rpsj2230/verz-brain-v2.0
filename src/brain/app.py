@@ -27,6 +27,7 @@ from fastapi.responses import JSONResponse
 from pydantic import AliasChoices, BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from brain.api import ErrorBody, TimeoutMiddleware
 from brain.core.errors import BrainError, Outcome, to_public
 from brain.docs_routes import router as docs_router
 from brain.migrate import run_migrations
@@ -239,6 +240,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = settings
     app.state.ready = {}
 
+    # Registered first, which makes it innermost: Starlette inserts each new middleware at
+    # the front of the stack, so the last one registered runs outermost. Inside `trace`
+    # means the trace id is bound when a deadline fires, so the body of a timed-out response
+    # carries the same id as the log line that recorded it.
+    #
+    # **Attached at all, which it was not until today.** `api.TimeoutMiddleware` existed,
+    # was tested, and was mounted by nothing, so every request this application has ever
+    # served ran without a deadline while M31.1.2.4 was closed and `request_timeout_seconds`
+    # sat at 30.0 read by nobody. Behind a pooler with a fixed number of client slots, enough
+    # held connections is an outage, which is the failure it was written to prevent.
+    app.middleware("http")(TimeoutMiddleware(seconds=settings.request_timeout_seconds))
+
     if settings.cors_origins:
         app.add_middleware(
             CORSMiddleware,
@@ -285,6 +298,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         DENIED and ABSENT both leave here as 404 with the same body. A 403 on a hidden
         record would confirm the record exists, which is the leak the taxonomy exists to
         prevent.
+
+        **The body is `api.ErrorBody`, and it used not to be.** That model calls itself "the
+        only error shape, documented once and returned by everything" and this handler
+        returned a bare dict, so the documented shape and the real one had never met. Two
+        costs, and neither was hypothetical: the trace id was reachable only by a caller who
+        knew to read a response header, so "quote this and the run can be found" was untrue
+        of the thing a person is actually shown; and no endpoint declared the model, so the
+        generated OpenAPI described no error shape at all and the console's typed client was
+        typed against nothing.
+
+        The trace id comes from the contextvar the `trace` middleware binds before anything
+        else runs, which is the same value that middleware puts in `x-trace-id`. Read rather
+        than minted here, so the body and the header cannot disagree, and defaulted to empty
+        rather than invented if the middleware has not run.
         """
         status = {
             Outcome.DENIED: 404,
@@ -294,7 +321,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             Outcome.FAILED: 500,
         }[exc.outcome]
         log.warning("request failed", outcome=exc.outcome, detail=exc.detail)
-        return JSONResponse(status_code=status, content={"message": to_public(exc)})
+        bound = structlog.contextvars.get_contextvars()
+        body = ErrorBody(
+            message=to_public(exc),
+            trace_id=str(bound.get("trace_id", "")),
+        )
+        return JSONResponse(status_code=status, content=body.model_dump())
 
     app.include_router(docs_router)
 

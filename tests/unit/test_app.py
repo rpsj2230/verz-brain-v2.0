@@ -164,7 +164,25 @@ def test_the_taxonomy_maps_to_status_codes(app: FastAPI, error: type, status: in
 
 def test_denied_and_absent_are_indistinguishable_over_http(app: FastAPI) -> None:
     """The taxonomy's whole point, enforced at the boundary. A 403 on a hidden record
-    would confirm the record exists."""
+    would confirm the record exists.
+
+    **This used to assert the two bodies were equal, and that stopped being the right
+    question when the body gained a trace id.** A trace id is minted per request, so two
+    calls differ whatever they are, and equality would have failed for a reason that
+    discloses nothing.
+
+    The property is not "the two responses are identical". It is "nothing in a response
+    varies with the outcome", and that is asserted three ways rather than one, so relaxing
+    the equality does not weaken the guard:
+
+    the key sets match, so a field cannot appear on one outcome and not the other;
+    every value except the trace id matches, so no content varies with the outcome; and
+    two requests with the *same* outcome get different trace ids, which is what proves the
+    id is per-request noise rather than something derived from the refusal. An id computed
+    from the outcome would satisfy the first two and be a channel.
+
+    Delete this and a refusal can start differing from an absence in the one place a client
+    reads, which is the whole system defeated at the last inch."""
 
     @app.get("/denied")
     async def denied() -> None:
@@ -176,8 +194,19 @@ def test_denied_and_absent_are_indistinguishable_over_http(app: FastAPI) -> None
 
     with TestClient(app, raise_server_exceptions=False) as c:
         a, b = c.get("/denied"), c.get("/absent")
-        assert a.status_code == b.status_code == 404
-        assert a.json() == b.json()
+        again = c.get("/denied")
+
+    assert a.status_code == b.status_code == 404
+    first, second, repeat = a.json(), b.json(), again.json()
+
+    assert first.keys() == second.keys()
+    assert {k: v for k, v in first.items() if k != "trace_id"} == {
+        k: v for k, v in second.items() if k != "trace_id"
+    }
+    assert first["trace_id"] != repeat["trace_id"], (
+        "two refusals share a trace id, so it is derived from something about the request "
+        "rather than minted per call, and anything derived is a channel"
+    )
 
 
 def test_internal_detail_never_reaches_the_response_body(app: FastAPI) -> None:
@@ -421,3 +450,64 @@ def test_the_gap_between_a_valid_catalogue_and_a_useful_one_is_written_down() ->
 
     assert "does not say there is anything in it" in source
     assert "restart loop rather than a signal" in source
+
+
+def test_the_error_body_carries_no_field_that_varies_with_the_outcome() -> None:
+    """**`api.ErrorBody` used to declare `outcome: str`, described as "denied, absent,
+    unresolved, degraded, failed".** Populating it would have made a refusal and an absence
+    distinguishable in the one place a client reads, which is the leak the whole taxonomy
+    exists to prevent.
+
+    It never leaked, and the reason is not reassuring: the handler had never returned this
+    model at all. A documented error shape that nothing returns is what kept the field
+    harmless. So the field is gone and the model is now actually returned, rather than the
+    two being kept apart and hoped about.
+
+    Asserted over the model's fields rather than over one response, because a response only
+    shows what today's handler chose to populate, and the risk is somebody adding the field
+    back to the schema and a later handler filling it in.
+
+    `trace_id` is the deliberate exception and it is safe for a stated reason: it is minted
+    per request by the middleware and says nothing about what was asked for, who asked, or
+    how it was refused.
+
+    Delete this and `outcome` can return to the schema as an obviously useful debugging
+    field, which is exactly how it got there the first time."""
+    from brain.api import ErrorBody
+
+    assert set(ErrorBody.model_fields) == {"message", "trace_id"}
+
+    for banned in ("outcome", "reason", "capability", "denied", "status", "code"):
+        assert banned not in ErrorBody.model_fields, (
+            f"{banned!r} varies with why a request failed, and a client that can read it "
+            "can tell a refusal from an absence"
+        )
+
+
+def test_the_handler_returns_the_shape_the_schema_documents() -> None:
+    """The guard on the test above. That one pins what the model may declare; this pins that
+    the model is what a caller actually receives, because the two drifted for as long as both
+    existed and nothing noticed.
+
+    `ErrorBody` calls itself "the only error shape, documented once and returned by
+    everything", and `handle_brain_error` returned a bare dict with one key. The trace id was
+    therefore reachable only by a caller who knew to read a response header, so "quote this
+    and the run can be found" was not true of what a person is shown.
+
+    Delete this and the handler can go back to a hand-built dict, and the schema goes back to
+    describing something nobody returns."""
+    from brain.api import ErrorBody
+
+    app = create_app(Settings(env="development", commit_sha="abc1234"))
+
+    @app.get("/boom")
+    async def boom() -> None:
+        raise Denied("internal detail")
+
+    with TestClient(app, raise_server_exceptions=False) as c:
+        body = c.get("/boom").json()
+        header_id = c.get("/boom").headers.get("x-trace-id", "")
+
+    assert body.keys() == set(ErrorBody.model_fields)
+    assert body["trace_id"], "the body carries no trace id, so nobody can quote one"
+    assert header_id, "the middleware stopped setting the header the body copies"

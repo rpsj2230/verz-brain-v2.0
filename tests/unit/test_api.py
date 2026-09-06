@@ -29,8 +29,11 @@ def test_the_version_is_in_the_path_not_a_header() -> None:
 # ------------------------------------------------------------------ errors
 def test_the_error_body_carries_the_trace_id() -> None:
     """The only field that makes a support conversation short."""
-    e = ErrorBody(message="I could not find that.", trace_id="abc123", outcome="absent")
+    e = ErrorBody(message="I could not find that.", trace_id="abc123")
     assert e.trace_id == "abc123"
+    # No `outcome` here, and its absence is the point rather than an omission: see
+    # `api.A_REFUSAL_AND_AN_ABSENCE_LOOK_THE_SAME_TO_A_CLIENT`. The field used to exist and
+    # this test used to pass it.
 
 
 def test_denied_and_absent_share_a_documented_status() -> None:
@@ -81,10 +84,7 @@ def test_a_slow_request_returns_degraded_not_gateway_timeout() -> None:
     taxonomy already has a word for that."""
     import asyncio
 
-    from brain.api import TimeoutMiddleware
-
-    app: FastAPI = create_app(Settings(env="development"))
-    app.middleware("http")(TimeoutMiddleware(seconds=0.05))
+    app: FastAPI = create_app(Settings(env="development", request_timeout_seconds=0.05))
 
     @app.get("/slow")
     async def slow() -> dict[str, str]:
@@ -93,9 +93,19 @@ def test_a_slow_request_returns_degraded_not_gateway_timeout() -> None:
 
     with TestClient(app) as c:
         r = c.get("/slow")
-        assert r.status_code == 503
-        assert r.json()["outcome"] == "degraded"
-        assert "Nothing was changed" in r.json()["message"]
+
+    # 503 is what says "degraded" now. The body used to carry an `outcome` field and no
+    # longer does: `handle_brain_error` maps DENIED and ABSENT to one status and one body on
+    # purpose, and a field naming the outcome would have made those two distinguishable in
+    # the one place a client reads. See `api.A_REFUSAL_AND_AN_ABSENCE_LOOK_THE_SAME_TO_A_CLIENT`.
+    assert r.status_code == 503
+    assert "Nothing was changed" in r.json()["message"]
+    assert "outcome" not in r.json()
+
+    # And the deadline came from the setting rather than from this test attaching the
+    # middleware by hand, which is what the previous version did and is exactly how an
+    # unmounted mechanism looks tested.
+    assert r.json()["trace_id"], "a timed-out response carries no trace id to quote"
 
 
 def test_a_fast_request_is_untouched() -> None:
@@ -105,3 +115,69 @@ def test_a_fast_request_is_untouched() -> None:
     app.middleware("http")(TimeoutMiddleware(seconds=5))
     with TestClient(app) as c:
         assert c.get("/health/live").status_code == 200
+
+
+def test_the_deployed_application_actually_has_a_request_deadline() -> None:
+    """**`TimeoutMiddleware` existed, was tested, and was mounted by nothing.** `create_app`
+    installed CORS, tracing and security headers and never this one, so every request the
+    deployed application has ever served ran without a deadline, while M31.1.2.4 was closed
+    and `Settings.request_timeout_seconds` sat at 30.0 read by nobody.
+
+    The test beside this one did not notice, because it built an application and attached the
+    middleware itself. That is the shape that makes an unmounted mechanism look covered: it
+    proves the middleware works when somebody adds it, and says nothing about whether anybody
+    does.
+
+    So this asserts over the stack `create_app` actually returns. Behind a pooler with a fixed
+    number of client slots, enough held connections is an outage, which is the failure the
+    middleware was written to prevent and the one it was not preventing.
+
+    Delete this and the middleware can be unmounted again with every other test in this file
+    still green, which is precisely what happened.
+
+    Task ids: M31.1.2.4"""
+    from brain.api import TimeoutMiddleware
+
+    app: FastAPI = create_app(Settings(env="development"))
+
+    dispatchers = [m.kwargs.get("dispatch") for m in app.user_middleware if "dispatch" in m.kwargs]
+    timeouts = [d for d in dispatchers if isinstance(d, TimeoutMiddleware)]
+
+    assert timeouts, "create_app returns an application with no request deadline on it"
+    assert timeouts[0].seconds == Settings().request_timeout_seconds, (
+        "the deadline is a number typed in create_app rather than the configured setting"
+    )
+
+
+def test_the_deadline_sits_inside_the_tracing_middleware() -> None:
+    """Order, and it is not cosmetic. Starlette inserts each new middleware at the front, so
+    the last registered runs outermost. The deadline is registered first and therefore sits
+    innermost, inside `trace`.
+
+    That is what lets a timed-out response carry a trace id: the id is bound by the tracing
+    middleware on the way in, so the body of the 503 and the `x-trace-id` header the caller
+    gets back name the same run. Registered last instead, the deadline would fire outside the
+    binding and answer with an empty id for every caller who did not send one, which is most
+    of them.
+
+    Delete this and the two can be reordered by somebody tidying `create_app`, and the only
+    symptom is support tickets nobody can trace.
+
+    Task ids: M31.1.2.4"""
+    from brain.api import TimeoutMiddleware
+
+    app: FastAPI = create_app(Settings(env="development"))
+    names = [
+        type(m.kwargs["dispatch"]).__name__
+        if not callable(m.kwargs.get("dispatch"))
+        else getattr(m.kwargs["dispatch"], "__name__", type(m.kwargs["dispatch"]).__name__)
+        for m in app.user_middleware
+        if "dispatch" in m.kwargs
+    ]
+    positions = {n: i for i, n in enumerate(names)}
+
+    assert "trace" in positions, f"the tracing middleware is gone; stack is {names}"
+    assert TimeoutMiddleware.__name__ in positions, f"the deadline is gone; stack is {names}"
+    assert positions["trace"] < positions[TimeoutMiddleware.__name__], (
+        f"the deadline is outside tracing, so a timed-out response has no id: {names}"
+    )
