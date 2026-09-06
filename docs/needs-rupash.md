@@ -2,10 +2,16 @@
 
 Decisions and access I cannot resolve alone. Served at `/build/needs-rupash`.
 
-**1 item is open: 25, and it is now waiting on you rather than on me.** You asked for options
-that cost nothing and there are four; 25 sets them out with the measurements behind each.
-Two of them I can carry out as soon as you say so, and one of those protects your other
-production system rather than this one.
+**3 items are open: 25, 29 and 30.** All three are waiting on you rather than on me.
+
+25 is the server capacity question. You asked for options that cost nothing and there are
+four; 25 sets them out with the measurements behind each. Two of them I can carry out as
+soon as you say so, and one of those protects your other production system rather than this
+one.
+
+29 and 30 are both new on 2026-09-06 and both are small. 29 needs one address from you
+before anybody can sign in to the console at all. 30 is a choice between two ways of letting
+the automation canvas reach the system, and they have different security properties.
 
 **24, 26 and 28 were all answered on 2026-09-06.** 24 stays as built: an answer names a
 failed source only to somebody who could already see that source. 26 is decided: public
@@ -20,6 +26,72 @@ in.
 ---
 
 # Open
+
+## 29. Nobody can sign in to the console until you give me one web address
+
+**Small, and it blocks everything visual.** One line from you and it is done.
+
+The admin console now exists and builds. It signs in through Keycloak, which is the thing
+that decides who your staff are and what they may see.
+
+Keycloak will only send somebody back to an address that was registered in advance. That is
+the right behaviour: without it, anybody could point a fake login page at your Keycloak and
+collect real sessions. The address is registered in `ops/keycloak/realm-export.json`, and
+today it reads `https://console.invalid`, which is a deliberate placeholder meaning "nobody
+filled this in yet". `.invalid` is reserved and can never be a real address.
+
+So right now sign-in cannot complete from anywhere, including from a laptop.
+
+**What I need from you: the web address the console will live at.** For example
+`https://console.yourdomain.com`, or a subdirectory of a domain you already own. If you do
+not have one yet, say so and I will register `http://localhost:5173` only, which lets
+development proceed and lets nothing else in.
+
+While I was checking this I found a real bug in the same file and fixed it, so it is worth
+knowing it was there. The setting that stamps "this token is for the Brain's API" onto a
+login was attached to the wrong half of the configuration: it sat on a component that never
+issues logins, so it could never have run. Every sign-in would have appeared to succeed and
+then been refused by the system a moment later, which reads to a user as "login is broken"
+and would have been very hard to trace. It is fixed and there is now a test that fails if
+anybody moves it back. It is **not** verified against a running Keycloak, because there
+isn't one I can reach from here; the first real sign-in is what settles it.
+
+---
+
+## 30. How should the automation canvas reach the Brain? Two options, different risk
+
+**Not urgent, and it decides a piece of the design rather than a setting.**
+
+The automation canvas is the drag-and-drop tool where somebody builds "when a ticket is
+tagged urgent, look up the client and post to the channel". It runs in a locked box: it has
+no route to the internet except through a proxy that only allows named addresses, so a step
+somebody adds cannot quietly send your data somewhere.
+
+The custom step that lets an automation ask the Brain a question is now built, and it is
+built the right way round: the step names a *tool*, never an address, so the permission
+check still runs and an automation can never see more than the person it runs as. That is
+the part that mattered and it is done and tested.
+
+**What is not decided is how the locked box talks to the Brain at all.** Today it cannot,
+which is safe and useless. There are two ways:
+
+**Option A: give the canvas a private line to the Brain and nothing else.** A second internal
+network carrying only those two. Nothing else on your server can see it, and the canvas still
+has no route to the internet. More configuration, and it is the option I would choose.
+
+**Option B: put the Brain's public web address on the canvas's allowed list.** One line of
+configuration. The cost is that the canvas's traffic to the Brain then goes out and back in
+through the public internet, and the allowed list becomes the only thing standing between an
+automation and that address.
+
+**My recommendation is A**, because the whole argument for the locked box is that a step
+somebody adds cannot reach out, and B spends a little of that to save a little configuration.
+
+Either way nothing is exposed to the public that is not already, and neither option changes
+what an automation is allowed to see. That is decided by the permission check, which is
+built and does not depend on this.
+
+---
 
 ## 25. The full feature set does not fit on the current server
 
