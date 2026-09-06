@@ -121,6 +121,25 @@ TYPE_LIMITS: Final[dict[MediaType, TypeLimit]] = {
     MediaType.JPEG: TypeLimit(Container.JPEG, 10 * 1024 * 1024),
 }
 
+
+def ceiling_for(media_type: MediaType) -> int:
+    """The most this type may weigh, taking whichever of the two ceilings is lower.
+
+    Both, because they answer different questions and the per-type table is the one somebody
+    edits. `ABSOLUTE_MAX_BYTES` exists so that a mistake in a row cannot admit a file the
+    storage tier cannot hold, and taking the minimum is what makes that true rather than
+    aspirational.
+
+    It lives beside the two constants it reads rather than in `brain.knowledge.uploads`,
+    where it was written. The door is not the only thing that needs the door's answer:
+    `brain.knowledge.parse_budget` asks what the largest admissible file is in order to size
+    the container that parses it, and reaching `uploads` from there would close a cycle,
+    because `uploads` imports `scanning` and `scanning` imports the budget. A second copy of
+    a two-line rule was the alternative and it is the copy that would have drifted.
+    """
+    return min(TYPE_LIMITS[media_type].max_bytes, ABSOLUTE_MAX_BYTES)
+
+
 #: Leading-byte signatures, longest first so that a longer signature is never shadowed by a
 #: shorter one that happens to be a prefix of it.
 _SIGNATURES: Final[tuple[tuple[bytes, Container], ...]] = (

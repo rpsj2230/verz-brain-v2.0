@@ -1,0 +1,109 @@
+# The parse worker: the same image and the same command as `docker-compose.worker.yml`, in a
+# container sized for one job whose size somebody outside this company chose.
+#
+# **Why this is a second container rather than a slot in the first one, which is arithmetic
+# and not taste.** `brain-worker` is budgeted 384 MiB across seven slots, so a job gets about
+# 48 MiB. The knowledge door admits a 50 MiB PDF. A parse in that container cannot hold its
+# own input, never mind what reading it costs, so the two choices were to shrink the door's
+# ceilings or to size a container for the parse. Shrinking the door was rejected: 50 MiB of
+# PDF is an ordinary scanned book, and refusing it would move a memory problem onto somebody
+# with a document. `brain.knowledge.parse_budget.parse_worker_gaps` is what holds the two
+# ends together, and asked about `brain-worker` it refuses.
+#
+# **Capped twice, and the second cap is admission because CPython has no heap ceiling.**
+# `docker-compose.langfuse.yml` pairs each cgroup limit with a ceiling in the runtime's own
+# units, `GOMEMLIMIT` for Go and `--max-old-space-size` for Node. Python has no equivalent:
+# `RLIMIT_AS` bounds address space rather than heap, and address space is reserved by every
+# shared library the interpreter maps, so a process given 448 MiB of it fails on an import
+# rather than on a leak. So the second cap is a decision taken before the work.
+#
+# | cap | value | enforced by | what it does not cover |
+# | --- | --- | --- | --- |
+# | cgroup limit | 512M | the kernel, by killing the container | nothing; it is the backstop |
+# | parse budget | 448 MiB, one parse at a time | `parse_scanned`, before the file is opened | a file under the budget that expands past it |
+#
+# 448 sits strictly below 512 for the reason every pair in the trace ledger does: what is
+# being capped is not the whole of what the cgroup counts. `PARSE_WORKER_RESERVE_MIB` is the
+# interpreter, the imports, the database connection and the copy of the file itself that the
+# scanned-content value is holding while the parser reads from it. And the budget is honest
+# about what it misses: a parser that starts inside the bound and allocates past it anyway is
+# an OOM kill, because the allocation that trips the cgroup is usually inside a C extension
+# and the kernel's answer is SIGKILL. Containing that means a subprocess with its own rlimit,
+# and there is no subprocess here.
+#
+# **One parse at a time, and it falls out of the budget rather than being chosen beside it.**
+# The budget is the whole of what is left after the reserve, so two concurrent parses would
+# each be allowed all of it. `SYSTEM` is the class ingestion arrives on, which is why it is
+# the only class with a slot; the other three are set to zero rather than omitted, because an
+# omitted class is reported as one whose jobs are never fetched and the two must not look
+# alike in a file somebody reads during an incident.
+#
+# **Nothing routes a parse to this container yet, and that is the part of M7.2.6 that is not
+# built.** `brain.ops.queue.queue_name_for` derives a queue from the traffic class and refuses
+# per-task queues on purpose, so a parse job sits on the `system` queue alongside every other
+# piece of housekeeping and either worker could fetch it. Closing that needs a change to the
+# queue's own rule about who may choose a queue, not a line in this file.
+#
+# **It has never been started**, for the same reason `docker-compose.worker.yml` has not:
+# `brain.ops.worker` exits 69 saying no queue driver is installed. There is also no parser,
+# because Docling is not a dependency of this project. A compose file that has never run is a
+# design, and this one is a design with a number in it that has been checked against the door.
+#
+# Task ids: none. M7.2.6 is claimed by `brain.knowledge.parse_budget` for the bound and this
+# file for the sizing; the routing above is what stops it being claimed whole.
+
+services:
+  brain-parse-worker:
+    # The same image as the application, for the reason the general worker gives: a worker is
+    # the same code with a different command, and a second image is a second build that can
+    # be one commit behind the one whose jobs it runs.
+    image: ${APP_IMAGE:-ghcr.io/rpsj2230/verz-brain-v2.0:latest}
+    restart: unless-stopped
+    # The profiles `brain.ops.wiring` gives the `brain-parse-worker` component. Held equal by
+    # test, in both directions.
+    profiles: ["standard", "full"]
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["python", "-m", "brain.ops.worker"]
+    environment:
+      # Which component this container is. Every memory figure the preflight checks is
+      # against this component's limit, and without it this process would size itself as the
+      # general worker: seven slots inside 384 MiB, which is not what is deployed here.
+      BRAIN_WORKER_COMPONENT: brain-parse-worker
+      # Straight to Postgres, not through pgbouncer, and deliberately not the same string as
+      # DATABASE_URL: `brain.ops.queue.queue_url_refusals` runs against these two values
+      # before this container starts. A LISTEN behind a transaction pooler stops delivering
+      # and raises nothing.
+      QUEUE_URL: postgresql+psycopg://brain:${POSTGRES_PASSWORD}@db:5432/brain
+      # The application's connection, through the pooler like everything else. A parse worker
+      # makes ordinary queries on it, and it is read here so the two can be compared.
+      DATABASE_URL: postgresql+psycopg://brain:${POSTGRES_PASSWORD}@pgbouncer:5432/brain
+      # One parse at a time on the class ingestion arrives on. The three zeroes are a decision
+      # rather than an omission; see the header.
+      BRAIN_WORKER_SLOTS_HUMAN_INTERACTIVE: "0"
+      BRAIN_WORKER_SLOTS_HUMAN_ASYNC: "0"
+      BRAIN_WORKER_SLOTS_AUTOMATION: "0"
+      BRAIN_WORKER_SLOTS_SYSTEM: "1"
+      # glibc gives a threaded process up to eight arenas per core and never returns them, so
+      # resident memory climbs to a plateau set by the host's core count rather than by the
+      # container's limit. It matters more here than on the general worker, because a parser
+      # allocates and frees in large blocks and that is exactly the pattern arenas retain.
+      MALLOC_ARENA_MAX: "2"
+      PYTHONUNBUFFERED: "1"
+    deploy:
+      resources:
+        limits:
+          # Matches the `brain-parse-worker` component in `brain.ops.wiring`, which is where
+          # the budget is decided and what every profile's arithmetic is computed from.
+          memory: 512M
+    healthcheck:
+      # Readiness, not liveness. `brain.ops.wiring` says what it means for this component:
+      # the queue driver has fetched at least once and the object store returns an original
+      # by key. Nothing writes the heartbeat yet, so this reports not-ready, which is the
+      # correct answer for a container that is not draining a queue.
+      test: ["CMD", "python", "-m", "brain.ops.worker", "--ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 30s

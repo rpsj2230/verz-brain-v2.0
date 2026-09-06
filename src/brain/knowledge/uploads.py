@@ -58,8 +58,6 @@ from urllib.parse import urlsplit
 from brain.core.lane import Lane
 from brain.gate.context import TrafficClass
 from brain.knowledge.ingest import (
-    ABSOLUTE_MAX_BYTES,
-    TYPE_LIMITS,
     AdmittedUpload,
     IngestRefused,
     MediaType,
@@ -67,6 +65,12 @@ from brain.knowledge.ingest import (
     QueueLimits,
     admit_to_queue,
     admit_upload,
+    # Imported rather than defined here. It moved next to the two constants it reads when
+    # `brain.knowledge.parse_budget` needed the same answer in order to size the container
+    # that parses; see its docstring for why reaching this module from there would close an
+    # import cycle. Not re-exported: mypy runs without implicit re-export, so a caller has to
+    # name `brain.knowledge.ingest` and the function has one home rather than two.
+    ceiling_for,
 )
 from brain.knowledge.scanning import ScannedContent
 from brain.ops.admission import (
@@ -165,17 +169,6 @@ def accepted_type(declared_type: str) -> MediaType:
     except ValueError as exc:
         msg = f"{declared_type!r} is not a type the knowledge layer accepts"
         raise IngestRefused(msg) from exc
-
-
-def ceiling_for(media_type: MediaType) -> int:
-    """The most this type may weigh, taking whichever of the two ceilings is lower.
-
-    Both, because they answer different questions and the per-type table is the one somebody
-    edits. `ABSOLUTE_MAX_BYTES` exists so that a mistake in a row cannot admit a file the
-    storage tier cannot hold, and taking the minimum is what makes that true rather than
-    aspirational.
-    """
-    return min(TYPE_LIMITS[media_type].max_bytes, ABSOLUTE_MAX_BYTES)
 
 
 def assert_safe_filename(filename: str) -> None:

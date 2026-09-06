@@ -30,6 +30,14 @@ looks exactly like a queue with nothing in it. `Wiring` is therefore a declarati
 component must make, and `pooler_misuse` refuses the combination rather than trusting that
 whoever writes the compose entry will remember.
 
+**Two of these components run the same image and the same command, and the second one is
+here because of arithmetic.** `brain-worker` is 384 MiB across seven slots, so a job gets
+about 48 MiB, and the knowledge door admits a 50 MiB PDF. A parse in that container cannot
+hold its own input, never mind read it, and parsing is the one workload whose size is chosen
+by somebody outside the company. `brain-parse-worker` is sized for the largest file the door
+will admit; `brain.knowledge.parse_budget.parse_worker_gaps` is what compares the two ends
+and refuses when they disagree, and asked about `brain-worker` it refuses today.
+
 **A profile is a set of components, not a flag on each one.** Ask a per-component boolean
 what lite runs and the answer is assembled by the caller, which means two callers assemble
 it differently and one of them ships. `components_for` is the only answer to that question.
@@ -192,6 +200,24 @@ COMPONENTS: Final[tuple[Component, ...]] = (
         wiring=Wiring.DIRECT,
         needs_session_state=True,
         ready_when="the queue driver has fetched at least once and the database is reachable",
+    ),
+    Component(
+        # Separate from `brain-worker` because of arithmetic rather than tidiness. The
+        # general worker is 384 MiB across seven slots, which is 48 MiB of slot for a job,
+        # and the knowledge door admits a 50 MiB PDF: a parse there cannot hold its own
+        # input. The size below is what the door's largest admissible file costs once
+        # expanded, plus the reserve the cgroup counts and a parse budget does not.
+        # `brain.knowledge.parse_budget.parse_worker_gaps` holds the two ends together and
+        # says no when asked about `brain-worker`.
+        name="brain-parse-worker",
+        memory_mib=512,
+        profiles=frozenset({"standard", "full"}),
+        wiring=Wiring.DIRECT,
+        needs_session_state=True,
+        ready_when=(
+            "the queue driver has fetched at least once and the object store returns an "
+            "original by key"
+        ),
     ),
     Component(
         name="seaweedfs",

@@ -27,6 +27,23 @@ bounds the ordinary failure, which is slots sized for a machine we do not have. 
 bound a single job that leaks, and that one is still an OOM kill; the compose file says so
 where an operator will read it.
 
+**One image and one command run two differently sized containers, and the difference is a
+file somebody else chose.** Everything the general worker does is bounded by something we
+wrote; a parse is bounded by whoever made the document, and 48 MiB of slot cannot hold the
+50 MiB PDF the knowledge door admits. So `BRAIN_WORKER_COMPONENT` says which component this
+container is, every figure above is checked against that component's limit rather than
+against `brain-worker`'s, and on the parse worker `brain.knowledge.parse_budget` adds the
+checks the slot arithmetic cannot make. Reading it from the environment rather than
+inferring it from the slot allocation is deliberate: a wrong allocation is the thing being
+checked, and a limit inferred from it would make every allocation fit.
+
+That is also the one import in this file that runs from `brain.ops` into `brain.knowledge`,
+and it is the right way round: what a parse may cost is a property of the knowledge door and
+of the container's limit, and this module is the only thing that knows which container it is
+in. The alternative considered was a second entry point in the knowledge layer with its own
+`--ready` and its own heartbeat, which is a copy of this file for one constant's worth of
+difference, and the copy is the one that goes stale.
+
 **It exits rather than loops.** There is no queue driver installed, so the run mode prints
 `NO_DRIVER_IS_INSTALLED` and exits. A worker that started anyway would poll an empty queue
 and report itself healthy, and an empty queue and an absent queue look identical from every
@@ -64,6 +81,11 @@ from pathlib import Path
 from typing import Final
 
 from brain.gate.context import TrafficClass
+from brain.knowledge.parse_budget import (
+    PARSE_WORKER_COMPONENT,
+    parse_budget_note,
+    parse_worker_gaps,
+)
 from brain.ops.checkpoints import connection_refusals
 from brain.ops.queue import (
     DRIVER_SCHEMA,
@@ -77,7 +99,7 @@ from brain.ops.queue import (
     stale_after,
     worker_shards,
 )
-from brain.ops.wiring import component
+from brain.ops.wiring import WiringError, component
 
 # ------------------------------------------------------------------------ the environment
 #: Where the worker looks for its queue. A name of its own rather than `DATABASE_URL`,
@@ -95,6 +117,19 @@ CHECKPOINTER_URL_ENV: Final = "BRAIN_CHECKPOINTER_URL"
 #: The file a running worker touches. In the container's own filesystem rather than shared,
 #: so it says something about this process rather than about the fleet.
 HEARTBEAT_PATH_ENV: Final = "BRAIN_WORKER_HEARTBEAT"
+
+#: Which `brain.ops.wiring` component this container is. One image and one command run two
+#: differently sized containers, and every piece of arithmetic below is against a limit that
+#: belongs to one of them: slots against the cgroup limit, and a parse against what is left
+#: of it. Read from the environment rather than inferred from the slot allocation, because a
+#: container that has been given the wrong allocation is exactly the case being checked, and
+#: inferring the limit from the mistake would make every allocation fit.
+WORKER_COMPONENT_ENV: Final = "BRAIN_WORKER_COMPONENT"
+
+#: What an unset `WORKER_COMPONENT_ENV` means. The general worker, because that is the
+#: deployment that existed first and a variable added later must not change what a container
+#: already running does.
+DEFAULT_WORKER_COMPONENT: Final = "brain-worker"
 
 #: The directory the heartbeat lives in, under whatever the platform calls temporary.
 HEARTBEAT_DIRECTORY: Final = "brain-worker"
@@ -209,6 +244,16 @@ def plan_for(
     )
 
 
+def declared_component(env: Mapping[str, str]) -> str:
+    """Which component this container is, as its environment says.
+
+    A string rather than a `Component`, because the name has to be reportable when it is not
+    one: `component()` refuses an unknown name, and a preflight that let that exception out
+    would print a traceback where every other misconfiguration prints a sentence.
+    """
+    return (env.get(WORKER_COMPONENT_ENV) or "").strip() or DEFAULT_WORKER_COMPONENT
+
+
 def preflight(env: Mapping[str, str]) -> tuple[str, ...]:
     """Every reason this worker must not start, in words that name the fix.
 
@@ -220,6 +265,11 @@ def preflight(env: Mapping[str, str]) -> tuple[str, ...]:
     All of them, never the first. A worker pointed at the pooler with a slot allocation that
     does not fit has two problems, and fixing one produces a configuration that is still
     wrong in a way that raises nothing.
+
+    The one exception to that is a component name nobody declared, which is returned on its
+    own. Every remaining check is arithmetic against a memory limit, and an unknown component
+    has none: continuing against the default would report figures for a container this one is
+    not, which is worse than reporting nothing, because it looks like an answer.
     """
     queue_url = (env.get(QUEUE_URL_ENV) or "").strip()
     app_url = (env.get(APP_URL_ENV) or "").strip()
@@ -240,7 +290,25 @@ def preflight(env: Mapping[str, str]) -> tuple[str, ...]:
 
     allocation, unreadable = declared_slots(env)
     findings.extend(unreadable)
-    findings.extend(concurrency_gaps(allocation))
+
+    worker_component = declared_component(env)
+    try:
+        component(worker_component)
+    except WiringError as exc:
+        findings.append(
+            f"{WORKER_COMPONENT_ENV}={worker_component!r} is not a component "
+            f"brain.ops.wiring budgets, so nothing says how much memory this container has "
+            f"and no slot or parse arithmetic below can be done: {exc}"
+        )
+        return tuple(findings)
+
+    findings.extend(concurrency_gaps(allocation, worker_component=worker_component))
+    if worker_component == PARSE_WORKER_COMPONENT:
+        # Only the parse worker, because only the parse worker is sized for a parse. Asked
+        # about `brain-worker` these checks refuse, correctly: 48 MiB of slot cannot hold the
+        # 50 MiB PDF the door admits. Running them there would stop the general worker over a
+        # job it is not meant to be given, which is the wrong end to fix the routing at.
+        findings.extend(parse_worker_gaps(allocation, worker_component=worker_component))
     return tuple(findings)
 
 
@@ -320,7 +388,14 @@ def main(argv: Sequence[str] | None = None, env: Mapping[str, str] | None = None
         return EXIT_MISCONFIGURED
 
     allocation, _ = declared_slots(environment)
-    print(plan_for(allocation).describe())
+    worker_component = declared_component(environment)
+    print(plan_for(allocation, worker_component=worker_component).describe())
+    if worker_component == PARSE_WORKER_COMPONENT:
+        # The plan's own numbers understate this container by an order of magnitude: it says
+        # one slot at `MIB_PER_SLOT` of a 512 MiB limit, and an operator reading that would
+        # reasonably shrink the container. What one parse may actually cost is a different
+        # figure and it is printed beside it rather than left in a source file.
+        print(parse_budget_note(worker_component=worker_component))
     if "--check" in arguments:
         return 0
 

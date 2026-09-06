@@ -37,6 +37,14 @@ console row and a log line, and those three go further than the document's own s
 `ingest._DETAIL_RE` bounds a detail to 120 characters of ordinary punctuation, and a line of a
 quotation fits inside that comfortably; a closed vocabulary of stage names does not.
 
+**The memory bound is enforced here for the same reason the scan is: this is the only place
+`Parser.parse` is called.** A bound that lived in a worker loop would be a bound the second
+worker forgets, and parsing is the one place in this system where the size of the work is
+chosen by somebody outside it. `parse_scanned` refuses an input whose declared cost is over
+the budget before the parser is reached, which is the only moment a memory limit can be
+enforced without having already spent the memory. `brain.knowledge.parse_budget` holds the
+figures, the argument and, importantly, the list of what this does not contain.
+
 **A refusal is not a parse failure, and they arrive by different routes on purpose.** Refused,
 corrupt and unsupported have three different remedies. A refusal raises, a parse failure is
 returned, and the wording an uploader reads comes from `CAUSE_TEXT` rather than from whatever
@@ -54,7 +62,7 @@ scanner on this machine and acquiring a dependency to get one is not this module
 make; and because the two cases worth testing, an infected verdict and a scanner that reaches
 no conclusion, are not reachable against a real one.
 
-Task ids: M7.1.3, M7.2.5
+Task ids: M7.1.3, M7.2.5, M7.2.6
 """
 
 from __future__ import annotations
@@ -75,6 +83,7 @@ from brain.knowledge.ingest import (
     ScanVerdict,
     assert_clean,
 )
+from brain.knowledge.parse_budget import fits_parse_budget
 
 # ------------------------------------------------------------------ written-down reasons
 #: Why the ordering is a type rather than a rule about which function to call first.
@@ -237,6 +246,13 @@ class ParseStage(enum.StrEnum):
     about our own code rather than anything about their file.
     """
 
+    #: Before the container is opened at all: the file's declared cost against what one
+    #: parse may spend. The only member reached without the parser having been called, and
+    #: it is here rather than as a fourth kind of outcome because the operator question is
+    #: the same one every other member answers: which part of the pipeline to look at when
+    #: the same cause keeps arriving. For this member the answer is the door's ceilings and
+    #: the parse worker's limit, which are two numbers in two files.
+    ADMIT = "admit"
     #: Opening the container at all. A password, a truncated header, not the format claimed.
     OPEN = "open"
     #: Working out the reading order and where the regions are.
@@ -326,10 +342,28 @@ def _failure(content: ScannedContent, *, cause: ParseCause, stage: ParseStage) -
     )
 
 
-def parse_scanned(content: ScannedContent, *, parser: Parser) -> ParsedDocument | ParseFailure:
-    """Parse cleared bytes, naming the cause when nothing comes out (M7.2.5).
+def parse_scanned(
+    content: ScannedContent, *, parser: Parser, budget_bytes: int | None = None
+) -> ParsedDocument | ParseFailure:
+    """Parse cleared bytes within a bound, naming the cause when nothing comes out (M7.2.5, M7.2.6).
 
-    Two things happen here that a parser cannot be trusted to do for itself.
+    Three things happen here that a parser cannot be trusted to do for itself.
+
+    **The memory bound is checked before the parser is called, and this function is where it
+    has to live** because this function is the only place `Parser.parse` is invoked. A bound
+    enforced anywhere else is a convention, and a convention is enforced by whoever writes
+    the fourth caller in a hurry, which is the argument the whole module opens with. A bound
+    checked *during* the parse would be worse than that: by the time resident memory can be
+    observed climbing past a limit, the pages are allocated, and if it climbed fast enough
+    the kernel has already chosen a process to kill. So the question is asked of the file.
+    `brain.knowledge.parse_budget` says what the answer can and cannot know, and what it
+    still does not contain.
+
+    `budget_bytes` is a parameter defaulting to the deployed figure rather than read inside,
+    for the reason `concurrency_gaps` gives about its own allocation: a check that can only
+    be run against the constant beside it cannot be shown to fail. It is also how a caller
+    running in a container smaller than the parse worker states that, rather than being given
+    a budget its cgroup will not honour.
 
     A refusal is re-rendered, so the cause is the parser's and the wording is not. A parser
     that reported its own message would eventually report one containing the document.
@@ -340,6 +374,12 @@ def parse_scanned(content: ScannedContent, *, parser: Parser) -> ParsedDocument 
     accepted type that can legitimately produce no text produces it for the same reason, which
     is that there is no text layer to read, and that cause names the only remedy there is.
     """
+    if not fits_parse_budget(content.upload, budget_bytes=budget_bytes):
+        # `OUT_OF_MEMORY` from the existing taxonomy rather than a word of this module's own.
+        # Its `CAUSE_TEXT` says the file is too large to hold and to split it up, which is a
+        # fact about the uploader's own document. Nothing here says how busy the machine is:
+        # see `parse_budget.A_REFUSAL_NAMES_THE_FILE_AND_NEVER_THE_QUEUE`.
+        return _failure(content, cause=ParseCause.OUT_OF_MEMORY, stage=ParseStage.ADMIT)
     outcome = parser.parse(content)
     if isinstance(outcome, ParseRefusal):
         return _failure(content, cause=outcome.cause, stage=outcome.stage)
