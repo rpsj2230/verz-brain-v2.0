@@ -227,6 +227,37 @@ COMPONENTS: Final[tuple[Component, ...]] = (
         ready_when="the S3 gateway lists a known bucket",
     ),
     Component(
+        # The identity provider. Sized from measurement rather than from a guess: a
+        # throwaway Keycloak 26.0.8 on this host was OOM-killed at a 512 MiB cgroup
+        # (exit 137) and ran at 477 MiB steady, 62%, under 768.
+        #
+        # Not in `lite`, and that is a statement about today rather than about importance.
+        # `lite` is what production actually runs and production has no Keycloak, so
+        # putting it there would make the profile describe something that is not deployed.
+        # Deploying it means production moves to `standard`, which is a decision with a
+        # memory cost rather than a word in a frozenset.
+        #
+        # `Wiring.NONE` is the load-bearing part. Keycloak has its own Postgres on its own
+        # internal network and no connection string to this system's database, so it cannot
+        # be pointed at one by a misconfiguration. Sharing would put the credential store
+        # and the company records it protects in one blast radius.
+        name="keycloak",
+        memory_mib=768,
+        profiles=frozenset({"standard", "full"}),
+        wiring=Wiring.NONE,
+        ready_when="/health/ready answers UP, which is true only once the realm is imported",
+    ),
+    Component(
+        # Keycloak's own database. Counted separately because it is a separate container
+        # with a separate limit, and a budget that folded it into the figure above would be
+        # a budget that does not match `docker stats`.
+        name="keycloak-db",
+        memory_mib=256,
+        profiles=frozenset({"standard", "full"}),
+        wiring=Wiring.NONE,
+        ready_when="pg_isready answers for the keycloak database",
+    ),
+    Component(
         name="presidio-analyzer",
         memory_mib=512,
         profiles=frozenset({"standard", "full"}),

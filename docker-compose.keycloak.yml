@@ -1,0 +1,184 @@
+# Keycloak: the identity provider the whole system's permission model rests on.
+#
+# **This did not exist, and its absence was the real reason nobody could sign in.**
+# `ops/keycloak/realm-export.json` is a carefully argued realm with seventeen tests holding
+# it to its claims, `ops/keycloak/setup.sh` is a reviewed import procedure, and neither had
+# anywhere to run: there was no Keycloak in any compose file and none on the server. The
+# console was built, typed and tested against a provider that has never existed.
+#
+# Registering the console's redirect URIs was necessary and not sufficient. This is the rest.
+#
+# ---------------------------------------------------------------------------------------
+# Two caps, as everywhere else here, and the second one is the JVM's.
+#
+# | service        | cgroup | process-side          | why the gap |
+# |----------------|--------|-----------------------|-------------|
+# | keycloak       | 768M   | MaxRAMPercentage 70   | metaspace, code cache, GC structures, threads |
+# | keycloak-db    | 256M   | shared_buffers 64MB   | work_mem per sort, WAL buffers, the backends |
+#
+# A cgroup limit is enforced by the kernel killing the process, so it protects the
+# neighbours and does nothing for this container. The JVM must additionally be told its own
+# ceiling or it sizes the heap from the *host's* memory: a JVM on an 11.7 GiB machine
+# defaults to a heap around a quarter of that, is happy, and is killed by a 768M cgroup
+# while collecting. `MaxRAMPercentage` reads the cgroup limit rather than the host, which is
+# why it is a percentage here and a fixed number in the Node services.
+#
+# 70 rather than 100 because the heap is not the process. Metaspace, the code cache, thread
+# stacks and the GC's own structures live outside it, and on a small Keycloak they are
+# comfortably 150 MiB. A heap sized at the whole cgroup is a container that dies under load
+# with a perfectly healthy heap.
+#
+# ---------------------------------------------------------------------------------------
+# Its own database, and that is deliberate rather than lazy.
+#
+# Keycloak could share the Brain's Postgres. It must not. The Brain's database holds company
+# records under row-level security; Keycloak's holds credentials and sessions. One
+# connection string that reaches both is one compromised component away from a system where
+# the identity provider and the data it protects share a blast radius. `brain.ops.wiring`
+# records it as `Wiring.NONE` for that reason: it has no connection string to this system's
+# Postgres, so it cannot be misconfigured onto it.
+#
+# ---------------------------------------------------------------------------------------
+# `start` and not `start-dev`. Development mode disables HTTPS requirements and enables an
+# in-memory database, and a realm imported into one of those is a realm that vanishes on
+# restart. The import is `--import-realm` against the mounted file, so what is configured
+# and what is in the repository cannot drift: the file is the reviewed version and this is
+# the only supported way to put it somewhere.
+#
+# Task ids: none
+services:
+  keycloak-db:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?set KEYCLOAK_DB_PASSWORD}
+      # Below the cgroup limit. Postgres sizes nothing from the host, but shared_buffers is
+      # the one figure that is reserved rather than used on demand, and the backends,
+      # work_mem and the WAL buffers all sit on top of it.
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    command:
+      - postgres
+      - -c
+      - shared_buffers=64MB
+      - -c
+      - max_connections=30
+    volumes:
+      - keycloak-db:/var/lib/postgresql/data
+    networks:
+      - identity
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keycloak -d keycloak"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  keycloak-realm:
+    # **The reviewed realm does not import, and this is what makes it importable.**
+    # Measured on 2026-09-06 against Keycloak 26.0.8: `--import-realm` refused the file with
+    # "Unrecognized field _comment (class RealmRepresentation), not marked as ignorable", and
+    # the same realm with its comments stripped imported on the next run.
+    #
+    # It runs the application's own image so the transform is `brain.ops.realm_import`, which
+    # has tests, rather than a shell one-liner in a compose file that nobody can test and
+    # which would take the two legitimate comments inside `config` maps along with the rest.
+    #
+    # `service_completed_successfully` above rather than a healthcheck: this exits when it is
+    # done, and Keycloak must not start before the file exists or it starts with no realm and
+    # every sign-in fails with no cause visible near the login page.
+    image: ${BRAIN_IMAGE:-ghcr.io/rpsj2230/verz-brain-v2.0:latest}
+    restart: "no"
+    command:
+      - python
+      - -c
+      - |
+        from pathlib import Path
+        from brain.ops.realm_import import importable_realm
+        out = Path("/out/realm-export.json")
+        out.write_text(importable_realm(Path("/in/realm-export.json")), encoding="utf-8")
+        print(f"wrote {out} for --import-realm")
+    volumes:
+      - ./ops/keycloak/realm-export.json:/in/realm-export.json:ro
+      - realm-import:/out
+    networks:
+      - identity
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    restart: unless-stopped
+    depends_on:
+      keycloak-db:
+        condition: service_healthy
+      keycloak-realm:
+        condition: service_completed_successfully
+    # `start`, never `start-dev`. See the header.
+    command: ["start", "--optimized", "--import-realm"]
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://keycloak-db:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?set KEYCLOAK_DB_PASSWORD}
+      # The bootstrap administrator, used once to create a real one and then removed. It is
+      # required rather than defaulted, because a Keycloak that comes up with a known
+      # password is an identity provider anybody can take over.
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN:?set KEYCLOAK_ADMIN}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?set KEYCLOAK_ADMIN_PASSWORD}
+      # Behind the Coolify proxy, which terminates TLS. Without this Keycloak builds its
+      # issuer and redirect URLs from the internal address and every one of them is wrong in
+      # a way that only shows up in the browser.
+      KC_PROXY_HEADERS: xforwarded
+      KC_HTTP_ENABLED: "true"
+      KC_HOSTNAME: ${KEYCLOAK_HOSTNAME:?set KEYCLOAK_HOSTNAME}
+      KC_HOSTNAME_STRICT: "true"
+      KC_HEALTH_ENABLED: "true"
+      # The process-side cap. Reads the cgroup limit rather than the host; see the header
+      # for why it is 70 and not 100.
+      JAVA_OPTS_APPEND: "-XX:MaxRAMPercentage=70 -XX:InitialRAMPercentage=40"
+    volumes:
+      # The stripped copy, written by `keycloak-realm` above, never the reviewed file.
+      # Read-only: a container that could write here would let a change made by clicking
+      # survive a restart, which is the drift `ops/keycloak/setup.sh` exists to prevent.
+      - realm-import:/opt/keycloak/data/import:ro
+    networks:
+      - identity
+      - proxy
+    expose:
+      - "8080"
+    healthcheck:
+      # Readiness, not liveness. `/health/ready` answers only once the realm is imported and
+      # the database is reachable, which is the state a sign-in needs; `/health/live` answers
+      # as soon as the JVM is up and would let the proxy send traffic to a Keycloak with no
+      # realm in it.
+      test:
+        - CMD-SHELL
+        - "exec 3<>/dev/tcp/127.0.0.1/9000 && echo -e 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q '\"status\": \"UP\"' <&3"
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 90s
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+
+networks:
+  identity:
+    # Keycloak and its database only. Nothing else on this host can reach the credential
+    # store, which is the point of it being a separate network rather than the default one.
+    internal: true
+  proxy:
+    external: true
+    name: coolify
+
+volumes:
+  keycloak-db:
+  realm-import:

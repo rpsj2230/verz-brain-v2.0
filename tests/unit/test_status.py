@@ -455,9 +455,25 @@ def test_the_real_document_reports_what_its_own_first_paragraph_says() -> None:
     # day arrived: the sentence read "1 item is open" and the test reported that the
     # document no longer stated a count at all. A guard that fails on the correct wording
     # teaches whoever meets it to edit the prose to suit the regex.
-    stated = re.search(r"\*\*(\d+) items? (?:are|is) open", text)
-    assert stated, "the document no longer states how many items are open"
-    assert int(stated.group(1)) == _needs_count()
+    # And the zero case, which arrived on 2026-09-06 when the last four were answered in one
+    # message. The pattern required a digit, so "Nothing is open" read to it as a document
+    # that states no count at all, and the only way to satisfy it was to write "**0 items are
+    # open**", which nobody would write. That is the same failure the paragraph above records
+    # for the singular, arriving from the other end of the range: a guard that rejects the
+    # natural wording is a guard that gets satisfied by making the prose worse.
+    counted = _needs_count()
+    numeric = re.search(r"\*\*(\d+) items? (?:are|is) open", text)
+    none_left = re.search(r"\*\*Nothing is open", text)
+
+    assert numeric or none_left, "the document no longer states how many items are open"
+    if numeric:
+        assert int(numeric.group(1)) == counted
+        assert counted > 0, "the document states a count while nothing is open"
+    else:
+        assert counted == 0, (
+            f"the document says nothing is open and {counted} item(s) are still under "
+            f"the Open heading"
+        )
 
 
 # ------------------------------- the two pages that show progress must agree

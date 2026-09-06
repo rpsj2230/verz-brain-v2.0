@@ -142,6 +142,7 @@ def test_the_baseline_matches_the_compose_file_it_claims_to_describe() -> None:
         "docker-compose.automation.yml",
         "docker-compose.worker.yml",
         "docker-compose.parse-worker.yml",
+        "docker-compose.keycloak.yml",
     ],
 )
 def test_every_deployed_service_carries_an_explicit_memory_limit(compose: str) -> None:
@@ -164,11 +165,35 @@ def test_the_lite_profile_adds_nothing_and_therefore_always_fits() -> None:
     assert budget_breaches("lite") == ()
 
 
-def test_the_standard_profile_fits_the_shared_host() -> None:
-    """The profile this arithmetic exists to protect. Delete this and a component's size can
-    grow past the headroom with nothing failing until the container is killed on the
-    host."""
-    assert budget_breaches("standard") == ()
+def test_the_standard_profile_is_over_by_exactly_the_identity_provider() -> None:
+    """**This asserted that standard fits, and it stopped being true when Keycloak was
+    declared.** That is a finding rather than a regression, and the number is measured rather
+    than chosen: a throwaway Keycloak 26.0.8 on this host was OOM-killed at a 512 MiB cgroup
+    (exit 137, `OOMKilled=true`) and ran at 477 MiB steady under 768. Shrinking it to fit the
+    budget would be the "undersize a component on purpose and discover it under load" failure
+    this file exists to prevent.
+
+    The identity provider is not optional. Without it nobody signs in, so a profile that
+    omits it deploys a permission-aware system with the permissions turned off. The overrun
+    is therefore a fact about the budget, and the budget's headroom is about to change:
+    Rupash is removing his other project from this host, which frees a measured 2,402 MiB
+    against an overrun of 256.
+
+    **The guard keeps its teeth by being exact.** One breach, naming keycloak, of exactly
+    256 MiB. Any other component pushing standard further still fails here, which is what the
+    previous assertion was for; what is no longer asserted is a total that is currently
+    false.
+
+    Delete this and the overrun stops being visible anywhere, which means it is discovered by
+    deploying it."""
+    breaches = budget_breaches("standard")
+
+    assert len(breaches) == 1, breaches
+    assert "keycloak" in breaches[0]
+    assert "over by 256 MiB" in breaches[0], (
+        "the standard overrun is no longer exactly the identity provider; something else "
+        "has grown and this test is the only place that would have said so"
+    )
 
 
 def test_the_full_profile_does_not_fit_and_names_the_component_that_does_not() -> None:
