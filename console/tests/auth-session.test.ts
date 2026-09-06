@@ -10,6 +10,8 @@
  * Each test loads a fresh copy of the modules. `session.ts` holds the tokens, the session
  * state, the memoised callback promise and the in-flight refresh at module level, which is
  * correct for a page that signs in once and cannot be undone from outside.
+ *
+ * Task ids: M32.5.1.3
  */
 
 import { createHash } from "node:crypto";

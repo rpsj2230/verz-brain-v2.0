@@ -9,6 +9,8 @@
  * callback is where a session comes from, so guarding it is a loop; the signed-out page
  * exists precisely because there is no session, so guarding it would sign the person
  * straight back in and undo what they just did.
+ *
+ * Task ids: M32.5.1.2
  */
 
 import { RouterProvider, createMemoryRouter } from "react-router-dom";

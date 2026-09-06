@@ -12,6 +12,8 @@
  * this suite can observe. What it can do is read the stylesheet's real rules and ask the
  * browser's own selector engine which of them a given root element matches, which is the
  * part of the cascade that the `:not([data-theme="light"])` guard decides.
+ *
+ * Task ids: M32.5.1.4
  */
 
 import { describe, expect, test, vi } from "vitest";

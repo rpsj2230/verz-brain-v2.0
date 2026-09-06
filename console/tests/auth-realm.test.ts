@@ -12,6 +12,8 @@
  * client id, or letting a registered path drift by one character, produces a Keycloak
  * error page that names none of the settings involved, after a redirect that looked like
  * it was working.
+ *
+ * Task ids: M32.5.1.3
  */
 
 import { describe, expect, test } from "vitest";

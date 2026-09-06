@@ -27,6 +27,27 @@ from brain.db import libpq_url
 REPO = Path(__file__).resolve().parents[3]
 SRC = REPO / "src" / "brain"
 TESTS = REPO / "tests"
+#: The console's own suite, which is TypeScript and lives outside `tests/`.
+#:
+#: Added because three leaves were closed by a commit, tested by 109 tests, and reported by
+#: this sweep as having no test at all: it read `tests/*.py` and nothing else. An advisory
+#: that reports a problem which is not one is spent as fast as one that misses a problem
+#: which is, and this repository has now had both.
+#:
+#: Read for `Task ids:` lines exactly like the Python suite, so one mechanism checks every
+#: claim in the repository rather than Python claims being checkable and console claims
+#: resting on somebody's word.
+CONSOLE_TESTS = REPO / "console" / "tests"
+
+
+def _test_sources() -> list[Path]:
+    """Every file that can prove a claim, whatever language it is written in."""
+    return [
+        *TESTS.rglob("*.py"),
+        *CONSOLE_TESTS.rglob("*.ts"),
+        *CONSOLE_TESTS.rglob("*.tsx"),
+    ]
+
 
 #: Imported, not restated. This was the loosest of three copies of the tool-name grammar
 #: and it admitted `client.read`, which the registry refuses; CI therefore passed a name
@@ -304,7 +325,7 @@ def sweep_traceability() -> None:
                 claimed.setdefault(tid, str(path.relative_to(REPO)))
 
     proven: set[str] = set()
-    for path in TESTS.rglob("*.py"):
+    for path in _test_sources():
         proven.update(TASK_ID_RE.findall(path.read_text(encoding="utf-8")))
     # a test file per module counts too: tests named for the module they cover
     covered_modules = {p.stem.removeprefix("test_") for p in TESTS.rglob("test_*.py")}
@@ -514,7 +535,7 @@ def _commit_claims_without_tests() -> int:
             leaf for m in load_wbs(REPO / "docs" / "wbs.json")["modules"] for leaf in m["leaf_ids"]
         }
         named: set[str] = set()
-        for path in TESTS.rglob("*.py"):
+        for path in _test_sources():
             named.update(TASK_ID_RE.findall(path.read_text(encoding="utf-8")))
     except Exception:
         return 0

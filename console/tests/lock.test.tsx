@@ -6,6 +6,8 @@
  * lock that varied would make its own shape a side channel: two people comparing screens
  * could read the difference and learn which of them was refused, and for what. `Lock` is
  * the console's half of that rule, and these are the tests that hold it there.
+ *
+ * Task ids: M32.5.1.1
  */
 
 import { createElement } from "react";

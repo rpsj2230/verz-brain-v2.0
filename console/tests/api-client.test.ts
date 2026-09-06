@@ -10,6 +10,8 @@
  * The tests below are therefore mostly about what happens rather than about what is
  * prevented: the token is attached, cookies are not sent, a refusal comes back as a value,
  * and a 401 forgets the session so the guard can start again.
+ *
+ * Task ids: M32.5.1.1
  */
 
 import { describe, expect, test } from "vitest";

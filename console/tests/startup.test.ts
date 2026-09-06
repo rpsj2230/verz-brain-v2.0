@@ -4,6 +4,8 @@
  * `src/main.tsx` is two lines of wiring and one contract with `index.html`, and neither is
  * exercised by any other test in this suite, because everything else mounts a component or
  * a route table directly. That makes it exactly the file where a deletion goes unnoticed.
+ *
+ * Task ids: M32.5.1.4
  */
 
 import { afterEach, describe, expect, test, vi } from "vitest";

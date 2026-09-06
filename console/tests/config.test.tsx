@@ -12,6 +12,8 @@
  * `https://idp.example.com.attacker.net/` gets accepted. A console configured with a
  * trailing slash therefore signs somebody in successfully and then has every token refused
  * by the API, for a reason no browser error mentions.
+ *
+ * Task ids: M32.5.1.3
  */
 
 import { render } from "@testing-library/react";

@@ -226,6 +226,36 @@ def test_a_malformed_task_line_actually_fails_the_sweep() -> None:
     assert "a deliberate finding" in raised.value.findings
 
 
+def test_a_leaf_proved_by_the_consoles_own_suite_counts_as_proved() -> None:
+    """**The sweep read `tests/*.py` and nothing else, so 109 TypeScript tests were invisible
+    to it.** Three leaves were closed by a commit, covered by those tests, and reported here
+    as having no test at all.
+
+    An advisory that reports a problem which is not one is spent as fast as one that misses a
+    problem which is, and this file has now had both: `sweep_traceability` once passed
+    unconditionally, and this reported three false findings the day the console got a suite.
+
+    Asserted through `_test_sources` rather than by reading a count, because the count is what
+    was wrong. What matters is that a `Task ids:` line in a `.ts` or `.tsx` file under the
+    console is read the same way one in a `.py` file is, so a claim is checkable by one
+    mechanism wherever it is proved.
+
+    Delete this and the console's suite silently stops counting, which looks like three leaves
+    regressing rather than like a scanner that stopped scanning."""
+    sources = sweeps._test_sources()
+    suffixes = {p.suffix for p in sources}
+
+    assert {".py", ".ts", ".tsx"} <= suffixes, f"the sweep reads only {suffixes}"
+
+    console = [p for p in sources if sweeps.CONSOLE_TESTS in p.parents]
+    assert console, "no console test file is read at all"
+
+    claimed_there: set[str] = set()
+    for path in console:
+        claimed_there.update(sweeps.TASK_ID_RE.findall(path.read_text(encoding="utf-8")))
+    assert claimed_there, "the console suite names no leaf, so scanning it proves nothing"
+
+
 # ------------------------------------------------------------- dispatcher
 def test_main_rejects_an_unknown_sweep() -> None:
     assert sweeps.main(["not_a_sweep"]) == 2
