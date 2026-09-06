@@ -50,6 +50,7 @@ from brain.tables.agent import AgentRow
 from brain.tables.audit import AuditEntryRow
 from brain.tables.chat import ConversationRow, MessageRole, MessageRow
 from brain.tables.config import SettingRow, SettingType
+from brain.tables.fast_lane import FastPathRuleRow
 from brain.tables.gate import (
     CapabilityGrantRow,
     CapabilityPackAssignmentRow,
@@ -131,6 +132,11 @@ TABLES_IN_DEPENDENCY_ORDER: tuple[str, ...] = (
     # for them, which is the audit trail. The principal id is carried as a value.
     "mem.persistent",
     "mem.adaptive",
+    # 0019_fast_path_rule. Points at nothing, deliberately: a rule names a source, an entity
+    # and two projected fields as strings, and a foreign key into `proj.record` would make a
+    # question shape depend on a record having been fetched, which is backwards. A rule for a
+    # source nothing has projected yet is a rule that matches and answers nothing.
+    "gate.fast_path_rule",
 )
 
 __all__ = [
@@ -145,6 +151,7 @@ __all__ = [
     "ConversationRow",
     "DepartmentRow",
     "DirectoryRoleGrantRow",
+    "FastPathRuleRow",
     "FieldPolicyRow",
     "GrantsVersionRow",
     "MessageRole",

@@ -140,7 +140,14 @@ QUALIFIER_WORDS: frozenset[str] = frozenset(
 MAX_SLOT_WORDS = 6
 
 
-def _is_a_name_not_a_phrase(value: str) -> bool:
+def is_a_name_not_a_phrase(value: str) -> bool:
+    """Whether a slot value is a name rather than a name with a condition stuck to it.
+
+    Public because `brain.gate.fast_lane` matches data-driven rules against the same shapes
+    and has to apply the same rule. A second copy would be a second answer to "is this a
+    name", and the copy that drifts is the one that lets a qualifier through in the lane
+    where no model is reading.
+    """
     words = value.split()
     if not words or len(words) > MAX_SLOT_WORDS:
         return False
@@ -160,7 +167,7 @@ def match_intent(question: str) -> IntentMatch | None:
             continue
         # And a slot that matched a whole phrase is the other near-miss, which anchoring
         # does not catch because the phrase is inside the slot rather than outside it.
-        if not all(_is_a_name_not_a_phrase(slots[slot]) for slot in intent.required_slots):
+        if not all(is_a_name_not_a_phrase(slots[slot]) for slot in intent.required_slots):
             continue
         return IntentMatch(intent=intent.name, slots=slots)
     return None

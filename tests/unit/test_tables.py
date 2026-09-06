@@ -83,6 +83,7 @@ MIGRATION_AGENT = VERSIONS / "0014_agent.py"
 MIGRATION_TEMPLATE = VERSIONS / "0016_template.py"
 MIGRATION_DECLINE = VERSIONS / "0017_upgrade_decline.py"
 MIGRATION_MEMORY = VERSIONS / "0018_memory_stores.py"
+MIGRATION_FAST_PATH = VERSIONS / "0019_fast_path_rule.py"
 
 #: The seven tables 0002 built, in the order it builds them. Written out here rather than
 #: read from `brain.tables.TABLES_IN_DEPENDENCY_ORDER`, which covers every table in the
@@ -157,6 +158,14 @@ DECLINE_TABLES: tuple[str, ...] = ("agent.upgrade_decline",)
 #: on half its rows. `brain.tables.memory` argues it.
 MEMORY_TABLES: tuple[str, ...] = ("mem.persistent", "mem.adaptive")
 
+#: And the one 0019 adds: a fast-lane question shape, so that the fifth one is an insert
+#: rather than a deployment. It points at nothing, deliberately: a rule names a source, an
+#: entity and two projected fields as strings, and a key into `proj.record` would make a
+#: question shape depend on a record having been fetched. Its own properties, including the
+#: five checks that keep a template from becoming a pattern, are in
+#: `tests/unit/test_fast_lane.py`.
+FAST_PATH_TABLES: tuple[str, ...] = ("gate.fast_path_rule",)
+
 ALL_TABLES = (
     CORE_TABLES
     + RESOLVER_TABLES
@@ -169,6 +178,7 @@ ALL_TABLES = (
     + TEMPLATE_TABLES
     + DECLINE_TABLES
     + MEMORY_TABLES
+    + FAST_PATH_TABLES
 )
 
 
@@ -858,6 +868,7 @@ def test_the_migration_creates_exactly_the_tables_the_models_declare() -> None:
     template = migration_module(MIGRATION_TEMPLATE)
     decline = migration_module(MIGRATION_DECLINE)
     memory = migration_module(MIGRATION_MEMORY)
+    fast_path = migration_module(MIGRATION_FAST_PATH)
     assert core.TABLES == CORE_TABLES
     assert resolver.TABLES == RESOLVER_TABLES
     assert registry.TABLES == REGISTRY_TABLES
@@ -869,6 +880,7 @@ def test_the_migration_creates_exactly_the_tables_the_models_declare() -> None:
     assert template.TABLES == TEMPLATE_TABLES
     assert decline.TABLES == DECLINE_TABLES
     assert memory.TABLES == MEMORY_TABLES
+    assert fast_path.TABLES == FAST_PATH_TABLES
     # The package tuple is the migrations end to end. Stated as an equality rather than as a
     # set comparison, because the order is what a downgrade depends on.
     end_to_end = (
@@ -883,6 +895,7 @@ def test_the_migration_creates_exactly_the_tables_the_models_declare() -> None:
         + tuple(template.TABLES)
         + tuple(decline.TABLES)
         + tuple(memory.TABLES)
+        + tuple(fast_path.TABLES)
     )
     assert end_to_end == tables.TABLES_IN_DEPENDENCY_ORDER
     # Every table has a migration and every migration has a model. The union is the check
@@ -899,6 +912,7 @@ def test_the_migration_creates_exactly_the_tables_the_models_declare() -> None:
         set(template.TABLES),
         set(decline.TABLES),
         set(memory.TABLES),
+        set(fast_path.TABLES),
     )
     assert set().union(*every) == set(metadata.tables)
     assert sum(len(s) for s in every) == len(set().union(*every)), "a table is created twice"

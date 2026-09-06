@@ -18,7 +18,16 @@ one-way the moment they are combined.
 
 These are checked mechanically rather than by asking a reviewer to remember them.
 
-Task ids: M31.2.2.2, M31.2.2.3, M31.2.2.4, M31.2.2.5
+**And one rule that is not about autogeneration at all.** `brain_fastlane` is the role the
+fast lane reads under, and M6.1.3 is the property that it reaches projected tables and
+nothing else. That property is a fact about every migration ever written rather than about
+any one of them: 0001 created the role, 0008 handed it `SELECT` on `proj.record`, and the
+way it would be lost is a migration written next year adding `GRANT SELECT ON know.chunk TO
+brain_fastlane` because a fast answer needed a document. The check lives here because this
+is the one function every migration is already put through, so the rule applies to files
+nobody has written yet. See `THE_FAST_LANE_REACHES_PROJECTED_TABLES_AND_NOTHING_ELSE`.
+
+Task ids: M6.1.3, M31.2.2.2, M31.2.2.3, M31.2.2.4, M31.2.2.5
 """
 
 from __future__ import annotations
@@ -44,6 +53,46 @@ NOT_NULL = re.compile(r"nullable\s*=\s*False", re.IGNORECASE)
 HAS_DEFAULT = re.compile(r"server_default\s*=", re.IGNORECASE)
 DML = re.compile(r"\b(INSERT\s+INTO|UPDATE\s+\w+\s+SET|DELETE\s+FROM)\b", re.IGNORECASE)
 NOT_IMPLEMENTED = re.compile(r"raise\s+NotImplementedError")
+
+#: The role the fast lane reads under, and the schema it may read in.
+FAST_LANE_ROLE = "brain_fastlane"
+PROJECTED_SCHEMA = "proj"
+
+#: Why a migration may not widen what the fast lane reaches (M6.1.3).
+THE_FAST_LANE_REACHES_PROJECTED_TABLES_AND_NOTHING_ELSE = (
+    "The fast lane answers with no model in the loop, so nothing downstream reads what it "
+    "returns and nothing can notice it returned the wrong thing. What keeps that safe is "
+    "how little it can reach: one role, NOBYPASSRLS, holding USAGE on proj and SELECT on "
+    "the projected tables. Every later migration is an opportunity to widen that by one "
+    "table, each time for a good reason, and the widening is invisible in a diff about "
+    "something else. So a grant or a policy naming this role is checked against a closed "
+    "list of shapes, and anything not on it is a finding rather than a judgement call."
+)
+
+#: A privilege statement mentioning the role. Bounded at the statement separator so one
+#: statement in a multi-statement literal cannot absorb the next.
+_FAST_LANE_GRANT = re.compile(r"\bGRANT\b[^;]*?\bbrain_fastlane\b[^;]*", re.IGNORECASE)
+_FAST_LANE_POLICY = re.compile(r"\bCREATE\s+POLICY\b[^;]*?\bbrain_fastlane\b[^;]*", re.IGNORECASE)
+
+#: The only shapes allowed. Deny by default: a statement matching none of these is a
+#: finding, which is the right direction for a check that is not a SQL parser and must not
+#: become one. What it costs is a legitimate new shape needing a line added here, in a
+#: module whose docstring says why, which is the review this rule exists to force.
+_FAST_LANE_ALLOWED: tuple[re.Pattern[str], ...] = (
+    # The role handed to somebody else. This widens whoever receives it, not the fast lane,
+    # and `GRANT brain_fastlane TO brain_app` in 0001 is how the application can assume it.
+    re.compile(r"GRANT\s+brain_fastlane\s+TO\s+[\w?]+$", re.IGNORECASE),
+    # Reaching into the projected schema at all.
+    re.compile(r"GRANT\s+USAGE\s+ON\s+SCHEMA\s+proj\s+TO\s+brain_fastlane$", re.IGNORECASE),
+    # Reading one projected table. SELECT alone: no INSERT, no UPDATE, no DELETE, no ALL.
+    re.compile(r"GRANT\s+SELECT\s+ON\s+proj\.\w+\s+TO\s+brain_fastlane$", re.IGNORECASE),
+    # And the policy without which the grant returns an empty table under row-level
+    # security, which is indistinguishable from an empty database.
+    re.compile(
+        r"CREATE\s+POLICY\s+\w+\s+ON\s+proj\.\w+\s+FOR\s+SELECT\s+TO\s+brain_fastlane\b.*",
+        re.IGNORECASE,
+    ),
+)
 
 
 @dataclass(frozen=True)
@@ -117,6 +166,84 @@ def _downgrade_state(text: str) -> str:
             return "empty"
         return "present"
     return "missing"
+
+
+def _sql_literals(text: str) -> list[str]:
+    """Every string a migration could execute, with whitespace collapsed.
+
+    Read from the parse tree rather than from the file's text, and that is the whole reason
+    this helper exists. Half the migrations in this repository argue about `brain_fastlane`
+    in their docstrings, and 0008's says the words "granted SELECT" in a sentence explaining
+    why it is the only grant there is. A text search would report the explanation as the
+    violation, which is the failure mode that gets a check switched off.
+
+    Docstrings and bare string expressions are dropped: neither can be executed. An f-string
+    is rendered with `?` where each substituted value goes, because the values in these
+    files are role-name constants and the shape of the statement is what is being checked.
+    Its literal fragments are dropped separately, or `f"GRANT x TO {ROLE}"` would also be
+    read as the truncated statement `GRANT x TO`.
+
+    Sound and incomplete, and the incompleteness is worth naming: a statement assembled from
+    a variable at run time is invisible here. Every migration in this repository writes its
+    statements as literals, and a future one that does not would need a reviewer rather than
+    this function.
+    """
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return []
+
+    skip: set[int] = set()
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, ast.Expr) and isinstance(child.value, ast.Constant):
+                skip.add(id(child.value))
+        if isinstance(node, ast.JoinedStr):
+            skip.update(id(part) for part in node.values)
+
+    out: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.JoinedStr):
+            rendered = "".join(
+                part.value
+                if isinstance(part, ast.Constant) and isinstance(part.value, str)
+                else "?"
+                for part in node.values
+            )
+            out.append(" ".join(rendered.split()))
+        elif (
+            isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in skip
+        ):
+            out.append(" ".join(node.value.split()))
+    return out
+
+
+def _fast_lane_findings(name: str, text: str) -> list[Finding]:
+    """Grants and policies naming the fast-lane role, checked against a closed list (M6.1.3).
+
+    Both directions are read from the same literals: a grant *to* the role widens what it
+    reaches, and a grant *of* the role widens who can assume it. Only the first is what
+    M6.1.3 is about, and `GRANT brain_app TO brain_fastlane` is the shape that looks like the
+    second and is the first, which is why the allowed list matches whole statements rather
+    than looking for the role on one side of the word TO.
+    """
+    findings: list[Finding] = []
+    for literal in _sql_literals(text):
+        if FAST_LANE_ROLE not in literal.lower():
+            continue
+        for pattern in (_FAST_LANE_GRANT, _FAST_LANE_POLICY):
+            for statement in pattern.findall(literal):
+                if any(allowed.search(statement) for allowed in _FAST_LANE_ALLOWED):
+                    continue
+                findings.append(
+                    Finding(
+                        name,
+                        "fast lane reaches past the projected tables",
+                        f"{statement.strip()!r} is not one of the shapes the fast-lane role "
+                        f"may be given. {THE_FAST_LANE_REACHES_PROJECTED_TABLES_AND_NOTHING_ELSE}",
+                    )
+                )
+    return findings
 
 
 def check_file(path: Path) -> list[Finding]:
@@ -196,6 +323,8 @@ def check_file(path: Path) -> list[Finding]:
                 "them makes the whole thing one-way",
             )
         )
+
+    findings.extend(_fast_lane_findings(name, text))
 
     return findings
 
