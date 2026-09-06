@@ -1,0 +1,33 @@
+{
+  "name": "brain-console",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "The Company Brain console. Renders answers the gate has already decided. See README.md for why every version below is exact.",
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "check:boundaries": "node scripts/check-boundaries.mjs",
+    "api:schema": "uv run python scripts/export-openapi.py",
+    "api:types": "openapi-typescript src/api/generated/openapi.internal.json --output src/api/generated/schema.ts",
+    "api:generate": "npm run api:schema && npm run api:types"
+  },
+  "dependencies": {
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "react-router-dom": "6.30.0"
+  },
+  "devDependencies": {
+    "@types/react": "19.1.2",
+    "@types/react-dom": "19.1.2",
+    "@vitejs/plugin-react": "4.4.1",
+    "openapi-typescript": "7.6.1",
+    "typescript": "5.8.3",
+    "vite": "6.3.5"
+  }
+}

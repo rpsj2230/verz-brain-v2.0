@@ -1,0 +1,19 @@
+# Generated, and deliberately not committed. See README, "The typed client".
+#
+# The schema and the types derived from it are a projection of the application at one
+# commit. A committed copy is right until the day somebody changes a response model and
+# does not rerun the generator, and from then on the console compiles against an API that
+# no longer exists while every check stays green. Regenerating is one command and it needs
+# no running server, so there is no reason to keep a stale copy for convenience.
+src/api/generated/
+
+node_modules/
+dist/
+*.local
+
+# The console reads only VITE_-prefixed values, and Vite inlines every one of them into
+# the bundle in plain text. Nothing secret can live in this file, and the example beside
+# it says so. It is ignored anyway, because a per-developer host name is not shared state.
+.env
+.env.*
+!.env.example

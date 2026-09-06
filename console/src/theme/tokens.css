@@ -1,0 +1,130 @@
+/*
+ * Every colour, space and radius the console uses, and nothing that uses them.
+ *
+ * The split is the same one the Python side makes between a module that holds a rule and a
+ * module that holds a client: this file decides what the values are, `styles/app.css`
+ * decides where they go, and neither can quietly become the other. A component that
+ * reaches for a raw colour instead of a token is the beginning of a second palette, and
+ * the second palette is the one that is wrong in dark mode.
+ *
+ * THREE THEME STATES, NOT TWO. A person can choose light, choose dark, or choose nothing
+ * and follow the machine. The third is the default and it is the one that gets forgotten,
+ * because a toggle with two positions has to lie about one of them.
+ *
+ *   :root                                       light values, and everything non-colour
+ *   @media (prefers-color-scheme: dark)
+ *     :root:not([data-theme="light"])           the machine says dark, and nobody overrode
+ *   :root[data-theme="dark"]                    the person chose dark, whatever the machine
+ *
+ * The `:not([data-theme="light"])` guard is what makes an explicit light choice win on a
+ * machine set to dark. Without it the media query would still apply and the toggle would
+ * work in one direction only, which is the bug every hand-rolled theme has once.
+ *
+ * The dark values appear twice, and that is deliberate rather than lazy. Rejected:
+ * `light-dark(light, dark)`, which states each pair once and is genuinely nicer to
+ * maintain. Its support is fine by now, and its failure mode is not: a browser that does
+ * not know the function treats the whole declaration as invalid, so the page does not fall
+ * back to a wrong colour, it falls back to no colour at all and renders as unreadable
+ * text on an unpainted background. I could not open this in any browser to find out, and
+ * an untested rendering path with that failure mode is not one to take on trust. The two
+ * blocks are marked so they are edited together.
+ */
+
+:root {
+  /* ---------------------------------------------------------------- colour, light */
+  color-scheme: light;
+
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --surface-sunken: #eceef1;
+  --border: #d8dce1;
+  --border-strong: #b9c0c8;
+  --text: #16191d;
+  --text-muted: #5b6570;
+  --accent: #1a56db;
+  --accent-contrast: #ffffff;
+  --focus: #1a56db;
+
+  /*
+   * THE LOCK. One appearance, and there is no second one.
+   *
+   * `brain.core.redaction.render_lock` takes no arguments so that a withheld field cannot
+   * render differently for different people, different fields or different reasons. These
+   * three tokens are the console's half of that: there is one lock style, it carries no
+   * modifier, and nothing may vary it. A lock that looked different when the reason was
+   * "out of scope" rather than "unclassified" would let two people comparing screens read
+   * off which of them was refused for which reason, and the reason is the part that leaks:
+   * "out of scope" says the field exists on records somewhere else.
+   *
+   * These values differ between light and dark because the entire page does. They never
+   * differ between two fields on the same screen, and that is the property.
+   */
+  --lock-bg: #eceef1;
+  --lock-fg: #5b6570;
+  --lock-border: #d8dce1;
+
+  /* ---------------------------------------------------------------- everything else */
+  --font-sans:
+    system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace;
+
+  --text-sm: 0.8125rem;
+  --text-base: 0.9375rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.5rem;
+
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2.5rem;
+
+  --radius: 6px;
+  --radius-lg: 10px;
+
+  --shell-nav-width: 15rem;
+  --content-max-width: 60rem;
+}
+
+/* --- dark values, copy 1 of 2: the machine is dark and nobody chose otherwise --------- */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    --bg: #0f1216;
+    --surface: #171b21;
+    --surface-sunken: #1e242b;
+    --border: #2b333c;
+    --border-strong: #3b4652;
+    --text: #e8ecf1;
+    --text-muted: #9aa5b1;
+    --accent: #7aa2ff;
+    --accent-contrast: #0f1216;
+    --focus: #7aa2ff;
+
+    --lock-bg: #1e242b;
+    --lock-fg: #9aa5b1;
+    --lock-border: #2b333c;
+  }
+}
+
+/* --- dark values, copy 2 of 2: the person chose dark. Keep identical to copy 1. ------- */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg: #0f1216;
+  --surface: #171b21;
+  --surface-sunken: #1e242b;
+  --border: #2b333c;
+  --border-strong: #3b4652;
+  --text: #e8ecf1;
+  --text-muted: #9aa5b1;
+  --accent: #7aa2ff;
+  --accent-contrast: #0f1216;
+  --focus: #7aa2ff;
+
+  --lock-bg: #1e242b;
+  --lock-fg: #9aa5b1;
+  --lock-border: #2b333c;
+}

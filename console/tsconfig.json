@@ -1,0 +1,57 @@
+// The TypeScript half of `mypy --strict`. Every flag below that is not in the stock Vite
+// template is here because its absence is a class of bug this console cannot afford.
+//
+// `strict` is the baseline. Without it `null` is assignable to everything, and an answer
+// that came back empty renders as the string "undefined" rather than as nothing.
+//
+// `noUncheckedIndexedAccess` makes `records[0]` a `T | undefined` rather than a `T`. It
+// matters here more than in most projects: a payload from the gate can legitimately carry
+// no records at all, because a caller entitled to see nothing about a record has the
+// record dropped rather than emptied. Indexing into that without a check is the crash.
+//
+// `exactOptionalPropertyTypes` keeps "absent" and "present but undefined" apart. The
+// payload contract depends on that distinction: `source` and `fetched_at` are suppressed
+// entirely when nothing survived redaction, and a type system that conflates the two
+// invites a renderer that prints an empty label where the design says print nothing.
+//
+// `verbatimModuleSyntax` means a type-only import is written as one and erased
+// predictably. The generated schema module contains types and nothing else, so a value
+// import of it would be a runtime import of a file that emits no runtime code.
+//
+// `skipLibCheck` is on, and it is a compromise rather than a preference. React's own type
+// packages disagree with each other across versions often enough that checking them turns
+// a patch upgrade into an afternoon. It weakens nothing about this project's own code.
+//
+// `include` is `src` only, so `vite.config.ts` is deliberately not typechecked. Vite runs
+// it through esbuild without typechecking anyway, and pulling it into this project would
+// mean adding `@types/node` for `process` and a second tsconfig for the Node environment.
+// The cost is real and is written down here rather than hidden: a type error in the build
+// config is found by the build failing, not by `npm run typecheck`.
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "types": ["vite/client"],
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "resolveJsonModule": true,
+    "allowJs": false,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+
+    "noEmit": true
+  },
+  "include": ["src"]
+}

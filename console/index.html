@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en-GB">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!--
+      Never indexed. The console is behind a sign-in, but a static host can serve this
+      shell to anyone before the redirect happens, and a search result naming a client's
+      internal console is a fact about that client nobody agreed to publish.
+    -->
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Company Brain</title>
+    <!--
+      The theme is applied before the first paint, and it has to be here rather than in
+      React. A stored preference read after hydration means the page renders in the system
+      theme first and then swaps, which is the white flash every dark-mode user recognises.
+      The blocking script is the trade: a few lines run synchronously in the head.
+
+      The storage key is duplicated in src/theme/theme.ts, deliberately and unavoidably:
+      this script cannot import a module and still block paint. scripts/check-boundaries.mjs
+      asserts the two literals match, because a silent drift here shows up as the flash it
+      exists to prevent, which nobody files a bug about.
+
+      If a Content-Security-Policy is ever added, this script needs its hash in script-src.
+      Read the README section on CSP before adding one.
+    -->
+    <script>
+      (function () {
+        try {
+          var stored = window.localStorage.getItem("brain.console.theme");
+          if (stored === "light" || stored === "dark") {
+            document.documentElement.setAttribute("data-theme", stored);
+          }
+        } catch (err) {
+          // Private windows and blocked site data both throw on access rather than
+          // returning null. The correct outcome is the system theme, which is what the
+          // absence of the attribute already means.
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <noscript>
+      This console is a JavaScript application and there is no server-rendered version of
+      it. Nothing here is available without scripting.
+    </noscript>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
