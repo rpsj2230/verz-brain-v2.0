@@ -24,7 +24,7 @@ from typing import get_type_hints
 
 import pytest
 
-from brain.knowledge.ingest import TYPE_LIMITS, IngestRefused, MediaType
+from brain.knowledge.ingest import TYPE_LIMITS, IngestRefused, MediaType, ceiling_for
 from brain.knowledge.scanning import ScannedContent, scan_for_parsing
 from brain.knowledge.uploads import (
     ORIGINAL_PREFIX,
@@ -33,7 +33,6 @@ from brain.knowledge.uploads import (
     assert_declared_length,
     assert_holds_originals,
     assert_safe_filename,
-    ceiling_for,
     ingestion_request,
     link_filename,
     original_bucket,
