@@ -72,6 +72,7 @@ from brain.tables.identity import (
 from brain.tables.projection import ProjectedRecordRow
 from brain.tables.routing import ModelAttemptRow, RoutingRungRow, RoutingTierRow
 from brain.tables.template import TemplateInstanceRow, TemplateVersionRow
+from brain.tables.upgrade import UpgradeDeclineRow
 
 #: Every table, in the order a migration must create them: a table appears after everything
 #: it points at. The order is the migrations' own tuples end to end - 0002's seven, 0003's
@@ -120,6 +121,9 @@ TABLES_IN_DEPENDENCY_ORDER: tuple[str, ...] = (
     # can materialise. Neither points at `agent.agent`; see `brain.tables.template`.
     "agent.template_version",
     "agent.template_instance",
+    # 0017_upgrade_decline. Last, because it points at both of 0016's: a decline belongs to
+    # an install that exists and names a version that was published.
+    "agent.upgrade_decline",
 )
 
 __all__ = [
@@ -151,5 +155,6 @@ __all__ = [
     "TeamRow",
     "TemplateInstanceRow",
     "TemplateVersionRow",
+    "UpgradeDeclineRow",
     "one_of",
 ]

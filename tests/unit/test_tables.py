@@ -81,11 +81,15 @@ MIGRATION_PROJECTION = VERSIONS / "0008_projection.py"
 MIGRATION_SEARCH = VERSIONS / "0009_search.py"
 MIGRATION_AGENT = VERSIONS / "0014_agent.py"
 MIGRATION_TEMPLATE = VERSIONS / "0016_template.py"
+MIGRATION_DECLINE = VERSIONS / "0017_upgrade_decline.py"
 
 #: The seven tables 0002 built, in the order it builds them. Written out here rather than
-#: read from `brain.tables.TABLES_IN_DEPENDENCY_ORDER`, which now covers all eighteen: a
-#: constant compared against itself checks nothing, and the point of these three tuples is
-#: that each migration's own list has something independent to disagree with.
+#: read from `brain.tables.TABLES_IN_DEPENDENCY_ORDER`, which covers every table in the
+#: package: a constant compared against itself checks nothing, and the point of these tuples
+#: is that each migration's own list has something independent to disagree with.
+#:
+#: The count used to be written into that sentence and had been wrong since the eighteenth
+#: table, which is what a number in a comment does.
 CORE_TABLES: tuple[str, ...] = (
     "auth.principal",
     "auth.principal_identity",
@@ -141,6 +145,11 @@ AGENT_TABLES: tuple[str, ...] = ("agent.agent",)
 #: other migration - does it build what the model declares, and does it drop what it builds.
 TEMPLATE_TABLES: tuple[str, ...] = ("agent.template_version", "agent.template_instance")
 
+#: And the one 0017 adds: the upgrade somebody declined, in a row nothing can delete. Last,
+#: because it points at both of 0016's. Its own properties, and the argument for why the
+#: version rather than the template is in its key, are in `tests/unit/test_upgrade_tables.py`.
+DECLINE_TABLES: tuple[str, ...] = ("agent.upgrade_decline",)
+
 ALL_TABLES = (
     CORE_TABLES
     + RESOLVER_TABLES
@@ -151,6 +160,7 @@ ALL_TABLES = (
     + KNOWLEDGE_TABLES
     + AGENT_TABLES
     + TEMPLATE_TABLES
+    + DECLINE_TABLES
 )
 
 
@@ -838,6 +848,7 @@ def test_the_migration_creates_exactly_the_tables_the_models_declare() -> None:
     search = migration_module(MIGRATION_SEARCH)
     agent = migration_module(MIGRATION_AGENT)
     template = migration_module(MIGRATION_TEMPLATE)
+    decline = migration_module(MIGRATION_DECLINE)
     assert core.TABLES == CORE_TABLES
     assert resolver.TABLES == RESOLVER_TABLES
     assert registry.TABLES == REGISTRY_TABLES
@@ -847,6 +858,7 @@ def test_the_migration_creates_exactly_the_tables_the_models_declare() -> None:
     assert search.TABLES == KNOWLEDGE_TABLES
     assert agent.TABLES == AGENT_TABLES
     assert template.TABLES == TEMPLATE_TABLES
+    assert decline.TABLES == DECLINE_TABLES
     # The package tuple is the migrations end to end. Stated as an equality rather than as a
     # set comparison, because the order is what a downgrade depends on.
     end_to_end = (
@@ -859,6 +871,7 @@ def test_the_migration_creates_exactly_the_tables_the_models_declare() -> None:
         + tuple(search.TABLES)
         + tuple(agent.TABLES)
         + tuple(template.TABLES)
+        + tuple(decline.TABLES)
     )
     assert end_to_end == tables.TABLES_IN_DEPENDENCY_ORDER
     # Every table has a migration and every migration has a model. The union is the check
@@ -873,6 +886,7 @@ def test_the_migration_creates_exactly_the_tables_the_models_declare() -> None:
         set(search.TABLES),
         set(agent.TABLES),
         set(template.TABLES),
+        set(decline.TABLES),
     )
     assert set().union(*every) == set(metadata.tables)
     assert sum(len(s) for s in every) == len(set().union(*every)), "a table is created twice"
