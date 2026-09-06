@@ -294,9 +294,7 @@ def test_ci_runs_every_console_gate(script: str) -> None:
 
     Parametrised so each gate names itself in the failure, rather than one assertion reporting
     that something among four is missing."""
-    commands = "\n".join(
-        str(step.get("run", "")) for step in _console_job().get("steps", [])
-    )
+    commands = "\n".join(str(step.get("run", "")) for step in _console_job().get("steps", []))
 
     assert script in commands, f"CI does not run {script!r} for the console"
 
@@ -342,9 +340,7 @@ def test_the_console_installs_from_its_lockfile() -> None:
     failure reads as a broken workflow rather than a missing file.
 
     Delete this and CI stops testing the dependency set the developer tested."""
-    commands = "\n".join(
-        str(step.get("run", "")) for step in _console_job().get("steps", [])
-    )
+    commands = "\n".join(str(step.get("run", "")) for step in _console_job().get("steps", []))
 
     assert "npm ci" in commands, "the console job resolves dependencies afresh on every run"
     assert (REPO / "console" / "package-lock.json").is_file(), (
