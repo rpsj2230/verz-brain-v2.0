@@ -32,6 +32,12 @@ from brain.ops.wiring import COMPONENTS
 
 REPO = Path(__file__).resolve().parents[2]
 COMPOSE = REPO / "docker-compose.automation.yml"
+APP_COMPOSE = REPO / "docker-compose.yml"
+
+#: The network carrying the application and the canvas and nothing else. Named in both
+#: compose files, which is why it is written once here: a test that spelled it twice would
+#: pass while the two files named different networks.
+TOOL_API = "tool-api"
 EGRESS_CONF = REPO / "ops" / "automation" / "egress.conf"
 
 #: `acl <name> dstdomain <host>` with no leading dot. The absence of the dot is the point and
@@ -47,6 +53,20 @@ def _compose() -> dict[str, Any]:
 def _service(name: str) -> dict[str, Any]:
     service: dict[str, Any] = _compose()["services"][name]
     return service
+
+
+def _app_compose() -> dict[str, Any]:
+    loaded: dict[str, Any] = yaml.safe_load(APP_COMPOSE.read_text(encoding="utf-8"))
+    return loaded
+
+
+def _on(compose: dict[str, Any], network: str) -> set[str]:
+    """Every service in one compose file that joins the named network."""
+    return {
+        name
+        for name, service in compose["services"].items()
+        if network in (service.get("networks") or [])
+    }
 
 
 # --------------------------------------------------------------- the allowlist is deployed
@@ -102,11 +122,21 @@ def test_the_canvas_sits_on_an_internal_network_with_no_route_out() -> None:
     nowhere to go around to, so the proxy is the only route rather than the preferred one.
 
     Delete this and `internal: true` can be dropped to fix some unrelated connectivity
-    problem, and every remaining test here still passes."""
+    problem, and every remaining test here still passes.
+
+    **The canvas is on two networks now and neither reaches out.** `tool-api` was added on
+    2026-09-06 and it is the application's, which joins no outward network either, so the
+    proxy is still the only route to anything that is not on this host. The assertion is
+    therefore that every network the canvas sits on is one of the two known ones rather than
+    that it sits on exactly one, and the membership of `tool-api` is established by
+    `test_the_route_to_the_application_carries_the_application_and_nothing_else`."""
     compose = _compose()
 
     assert compose["networks"]["automation"]["internal"] is True
-    assert _service("activepieces")["networks"] == ["automation"]
+    assert set(_service("activepieces")["networks"]) == {"automation", TOOL_API}
+    assert "egress" not in _service("activepieces")["networks"], (
+        "the canvas is on the outward network, so the proxy is no longer the only route"
+    )
 
 
 def test_only_the_proxy_touches_a_network_that_reaches_out() -> None:
@@ -128,11 +158,74 @@ def test_the_canvas_is_not_on_the_application_stack_at_all() -> None:
     assembled flow and the database.
 
     Two defences are better than one, and the network is the one that still holds when
-    somebody adds an environment variable in a hurry."""
+    somebody adds an environment variable in a hurry.
+
+    **`tool-api` is admitted here and is not a hole in that**, which the sibling below is
+    what actually establishes. This test says the canvas is on no network of ours except
+    that one; the next says that one carries the application alone."""
     for name, service in _compose()["services"].items():
         networks = service.get("networks") or []
         assert "default" not in networks, f"{name} joins the default network"
-        assert set(networks) <= {"automation", "egress"}, f"{name} reaches {networks}"
+        assert set(networks) <= {"automation", "egress", TOOL_API}, f"{name} reaches {networks}"
+
+
+def test_the_route_to_the_application_carries_the_application_and_nothing_else() -> None:
+    """**The whole of what makes the canvas reaching us safe.**
+
+    Item 30 of `docs/needs-rupash.md` chose a shared network over the public hostname, and a
+    shared network is only as narrow as its membership: every container on one resolves every
+    other by hostname, so the property being bought is not "there is a network" but "there is
+    nothing else on it". Add `db` to it and an assembled flow can open `db:5432`, and every
+    other test in this file still passes.
+
+    Read from both compose files, because the membership is decided in two places and each
+    file alone looks correct. The application's file could put `cache` on it and the sandbox
+    would never know.
+
+    Delete this and the network stops being a boundary and becomes a name, which is exactly
+    the failure the file docstring warns about when it says being on the application's
+    network would leave credentials as the only defence."""
+    ours = _on(_app_compose(), TOOL_API)
+    theirs = _on(_compose(), TOOL_API)
+
+    assert ours == {"app"}, f"the application stack puts {sorted(ours)} on {TOOL_API}"
+    assert theirs == {"activepieces"}, f"the sandbox puts {sorted(theirs)} on {TOOL_API}"
+
+
+def test_the_application_keeps_its_own_network_while_joining_the_shared_one() -> None:
+    """Naming any network on a service stops Compose adding the default one, so listing
+    `tool-api` alone would cut the application off from its own database and cache.
+
+    That failure is loud, which is the only reason it is a test rather than a comment: it
+    would be found by the first deploy. It is here because the fix is one word and the
+    symptom is an application that cannot reach PostgreSQL, which reads like a database
+    problem and sends somebody to the wrong file.
+
+    Delete this and `default` can be tidied out of a list where it looks redundant."""
+    app = _app_compose()["services"]["app"]
+
+    assert set(app["networks"]) == {"default", TOOL_API}
+
+
+def test_the_shared_network_is_declared_once_and_joined_by_name() -> None:
+    """Two compose files describing one network is two chances to describe it differently:
+    an `internal: true` on one side and not the other, or two `name:` values, and the
+    symptom is a canvas that cannot reach the application for a reason neither file shows.
+
+    The application's file owns the declaration and the sandbox marks it external, so there
+    is one definition and one reference to it.
+
+    Delete this and the sandbox can create its own network with the same key and a different
+    name, which succeeds, and the two stacks then sit on separate networks that are both
+    called `tool-api`."""
+    app_network = _app_compose()["networks"][TOOL_API]
+    sandbox_network = _compose()["networks"][TOOL_API]
+
+    assert sandbox_network["external"] is True, "the sandbox declares its own copy"
+    assert app_network["name"] == sandbox_network["name"], (
+        f"the application calls it {app_network['name']} and the sandbox joins "
+        f"{sandbox_network['name']}; they are two networks"
+    )
 
 
 # --------------------------------------------------------------- no credentials of ours

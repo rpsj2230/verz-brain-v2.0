@@ -36,6 +36,22 @@ services:
       resources:
         limits:
           memory: 1024M
+    networks:
+      # `default` is listed because naming any network here stops Compose adding it, and
+      # dropping it would cut the application off from its own database and cache. It is
+      # the one entry in this file that looks redundant and is not.
+      - default
+      # The route the automation canvas reaches this application on, and the only route
+      # it has to anything of ours. See `docker-compose.automation.yml`, which declares
+      # this network and puts exactly one service on it.
+      #
+      # It carries this service and the canvas alone. That is what makes it different
+      # from putting the canvas on `default`: on a shared network every member resolves
+      # every other by hostname, so `default` would hand an assembled flow `db:5432` and
+      # `cache:6379`, and the absence of credentials would be the only thing left between
+      # the two. Here there is no hostname to resolve, because those services are not on
+      # it.
+      - tool-api
     healthcheck:
       # Readiness, not liveness. A container that is up but cannot reach its database
       # still answers questions, from whatever it can still reach.
@@ -134,6 +150,19 @@ services:
       interval: 10s
       timeout: 3s
       retries: 5
+
+networks:
+  # What Compose would have created anyway, named so the application can join it
+  # explicitly alongside the one below.
+  default:
+  # Declared here and created by whoever brings the stack up first, so the two compose
+  # files can be started in either order. `docker-compose.automation.yml` marks it
+  # external and joins it by this name.
+  #
+  # Nothing else in this file joins it, and that is the whole boundary: a service added
+  # to this network is a service the canvas can reach.
+  tool-api:
+    name: brain-tool-api
 
 volumes:
   brain-db:

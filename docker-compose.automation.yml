@@ -33,10 +33,25 @@
 # with a profile flag for the same reason: not composing it is unambiguous, and a client who
 # has not been asked has not agreed.
 #
-# **Not claimed: M32.6.1.3.** The custom piece that calls our tool API, so the gate still
-# runs, is TypeScript in the Activepieces plugin format and does not exist. Without it this
-# container can talk to the allowlisted sources and cannot talk to us at all, which is the
-# safe half of the arrangement and not the useful half.
+# **The canvas can now reach us, and only us.** Until 2026-09-06 this container could talk
+# to the allowlisted sources and could not talk to this application at all, which
+# `brain.ops.automation_piece` called the safe half of the arrangement and not the useful
+# half. Item 30 of `docs/needs-rupash.md` decided between the two ways of closing that: a
+# second Docker network carrying the application and the canvas alone, or the application's
+# public hostname added to the egress allowlist. The owner chose the network, and asked
+# whether it cost anything: it does not, because a Docker network is a named route between
+# containers that already exist rather than a machine.
+#
+# The `tool-api` network below is that decision. It carries the application and this
+# service, so `db` and `cache` have no name on it to resolve, and the second defence the
+# docstring above argues for is intact: this is not the application's `default` network
+# with a friendlier name.
+#
+# **Still not claimed: the TypeScript piece.** The Activepieces plugin format is a package
+# built and published by a toolchain this repository does not have, so a `.ts` file here
+# would be a seventh mechanism that nothing compiles and nothing type-checks. What it has
+# to contain is fully determined by `brain.ops.automation_piece`: a step naming a tool and
+# a bag of arguments, and no address.
 #
 # Task ids: M32.6.1.1
 
@@ -48,8 +63,21 @@ services:
       automation-db:
         condition: service_healthy
     networks:
-      # One network, internal, no default. A second entry here is how it reaches the stack.
+      # Internal, and never `default`. See the file docstring.
       - automation
+      # The route to our own tool API, added 2026-09-06 when the owner chose it over
+      # sending the traffic out to the public hostname and back in. It carries the
+      # application and this service and nothing else, so what this reaches is one HTTP
+      # API, not the stack: `db` and `cache` have no name on this network to resolve.
+      #
+      # This is not a hole in the sandbox, because of what is on the other end.
+      # `brain.ops.automation_piece` is the only thing a step can call, a `PieceStep` has
+      # no field for an address, and the reach of the call is
+      # `E(caller) intersected with the flow's ceiling` computed by `flow_reach`. So the
+      # canvas reaching us is the canvas reaching the gate, which is the arrangement the
+      # whole module was built for. The alternative, no route at all, is what
+      # `automation_piece.py` calls the safe half and not the useful half.
+      - tool-api
     environment:
       AP_ENGINE_EXECUTABLE_PATH: /usr/src/app/dist/packages/engine/main.js
       AP_ENVIRONMENT: prod
@@ -143,6 +171,16 @@ networks:
     internal: true
   # The proxy alone sits on both. This is the only service in the file that can reach out.
   egress:
+  # The application's, joined by name rather than created here, so this file cannot bring
+  # it into being with different settings if it is composed first. `docker-compose.yml`
+  # declares it and puts one service on it.
+  #
+  # `internal` is deliberately not set on our side: this network is the application's to
+  # define, and restating a property of somebody else's declaration is how two files come
+  # to disagree about one network.
+  tool-api:
+    external: true
+    name: brain-tool-api
 
 volumes:
   automation-db:
