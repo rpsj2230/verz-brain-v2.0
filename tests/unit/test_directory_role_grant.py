@@ -65,7 +65,12 @@ _DIALECT = create_engine("postgresql+psycopg://", poolclass=NullPool).dialect
 
 
 def _migration() -> ModuleType:
-    spec = importlib.util.spec_from_file_location("m0006", MIGRATION)
+    return _module(MIGRATION)
+
+
+def _module(path: Path) -> ModuleType:
+    """Any migration, loaded. Module level only: nothing here calls `upgrade`."""
+    spec = importlib.util.spec_from_file_location(f"m{path.stem}", path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -578,7 +583,18 @@ def test_no_other_table_in_any_migration_grants_delete() -> None:
     destroys the audit trail for the thing deleted.
 
     Delete this test and the next table that finds `deleted_at` inconvenient grants DELETE
-    too, with this migration cited as the reason."""
+    too, with this migration cited as the reason.
+
+    **Asked twice, of the text and of the module, because the text scan alone had a hole.**
+    It reads lines that *begin* with a quoted GRANT, which is how most migrations write their
+    tuples, and a migration whose `GRANTS` is short enough to sit on one line begins that line
+    with `GRANTS:` instead. `ruff format` produces exactly that for a single-statement tuple,
+    so it is not a style anybody chooses. 0009 and 0014 are both in that shape, and a DELETE
+    added to either passed this test until the second loop below existed. Found by mutation,
+    on 0014.
+
+    The text scan is kept rather than replaced: a statement written inline in `upgrade`, or in
+    a constant under another name, is invisible to the module scan and visible to it."""
     offenders: list[str] = []
     for path in sorted(VERSIONS.glob("*.py")):
         for line in path.read_text(encoding="utf-8").splitlines():
@@ -590,7 +606,19 @@ def test_no_other_table_in_any_migration_grants_delete() -> None:
             if "auth.directory_role_grant" in stripped:
                 continue
             offenders.append(f"{path.name}: {stripped}")
+    checked = 0
+    for path in sorted(VERSIONS.glob("*.py")):
+        grants: tuple[str, ...] = getattr(_module(path), "GRANTS", ())
+        checked += len(grants)
+        offenders.extend(
+            f"{path.name}: {statement}"
+            for statement in grants
+            if "DELETE" in statement and "auth.directory_role_grant" not in statement
+        )
     assert offenders == [], f"a second DELETE grant: {offenders}"
+    # Said out loud, because a scan that finds nothing and a scan that looks at nothing read
+    # identically from a green test, and this file's other loop has already been both.
+    assert checked > 0, "no migration exposed a GRANTS tuple, so the module scan checked nothing"
 
 
 def test_the_migration_follows_the_one_before_it() -> None:
