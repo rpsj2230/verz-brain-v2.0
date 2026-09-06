@@ -71,6 +71,7 @@ from brain.tables.identity import (
 )
 from brain.tables.projection import ProjectedRecordRow
 from brain.tables.routing import ModelAttemptRow, RoutingRungRow, RoutingTierRow
+from brain.tables.template import TemplateInstanceRow, TemplateVersionRow
 
 #: Every table, in the order a migration must create them: a table appears after everything
 #: it points at. The order is the migrations' own tuples end to end - 0002's seven, 0003's
@@ -114,6 +115,11 @@ TABLES_IN_DEPENDENCY_ORDER: tuple[str, ...] = (
     # 0014_agent. References nothing, deliberately: the steward and the creator are plain
     # columns rather than foreign keys, so an agent outlives the account that built it.
     "agent.agent",
+    # 0016_template. The instance follows the version it pins, which is the one foreign key
+    # in this pair: an instance pinned to a manifest that does not exist is an agent nobody
+    # can materialise. Neither points at `agent.agent`; see `brain.tables.template`.
+    "agent.template_version",
+    "agent.template_instance",
 )
 
 __all__ = [
@@ -143,5 +149,7 @@ __all__ = [
     "SettingRow",
     "SettingType",
     "TeamRow",
+    "TemplateInstanceRow",
+    "TemplateVersionRow",
     "one_of",
 ]

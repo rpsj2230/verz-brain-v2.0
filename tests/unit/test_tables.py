@@ -80,6 +80,7 @@ MIGRATION_DIRECTORY = VERSIONS / "0006_directory_role_grant.py"
 MIGRATION_PROJECTION = VERSIONS / "0008_projection.py"
 MIGRATION_SEARCH = VERSIONS / "0009_search.py"
 MIGRATION_AGENT = VERSIONS / "0014_agent.py"
+MIGRATION_TEMPLATE = VERSIONS / "0016_template.py"
 
 #: The seven tables 0002 built, in the order it builds them. Written out here rather than
 #: read from `brain.tables.TABLES_IN_DEPENDENCY_ORDER`, which now covers all eighteen: a
@@ -133,6 +134,13 @@ KNOWLEDGE_TABLES: tuple[str, ...] = ("know.chunk",)
 #: builds.
 AGENT_TABLES: tuple[str, ...] = ("agent.agent",)
 
+#: And the two 0016 adds: the signed manifest a template is, and the install that pins one
+#: and overlays it. In creation order, because the instance carries a foreign key into the
+#: version. The properties that matter about them, including the five sealed paths, are in
+#: `tests/unit/test_template_tables.py`; what is here is the same question asked of every
+#: other migration - does it build what the model declares, and does it drop what it builds.
+TEMPLATE_TABLES: tuple[str, ...] = ("agent.template_version", "agent.template_instance")
+
 ALL_TABLES = (
     CORE_TABLES
     + RESOLVER_TABLES
@@ -142,6 +150,7 @@ ALL_TABLES = (
     + PROJECTION_TABLES
     + KNOWLEDGE_TABLES
     + AGENT_TABLES
+    + TEMPLATE_TABLES
 )
 
 
@@ -828,6 +837,7 @@ def test_the_migration_creates_exactly_the_tables_the_models_declare() -> None:
     projection = migration_module(MIGRATION_PROJECTION)
     search = migration_module(MIGRATION_SEARCH)
     agent = migration_module(MIGRATION_AGENT)
+    template = migration_module(MIGRATION_TEMPLATE)
     assert core.TABLES == CORE_TABLES
     assert resolver.TABLES == RESOLVER_TABLES
     assert registry.TABLES == REGISTRY_TABLES
@@ -836,6 +846,7 @@ def test_the_migration_creates_exactly_the_tables_the_models_declare() -> None:
     assert projection.TABLES == PROJECTION_TABLES
     assert search.TABLES == KNOWLEDGE_TABLES
     assert agent.TABLES == AGENT_TABLES
+    assert template.TABLES == TEMPLATE_TABLES
     # The package tuple is the migrations end to end. Stated as an equality rather than as a
     # set comparison, because the order is what a downgrade depends on.
     end_to_end = (
@@ -847,6 +858,7 @@ def test_the_migration_creates_exactly_the_tables_the_models_declare() -> None:
         + tuple(projection.TABLES)
         + tuple(search.TABLES)
         + tuple(agent.TABLES)
+        + tuple(template.TABLES)
     )
     assert end_to_end == tables.TABLES_IN_DEPENDENCY_ORDER
     # Every table has a migration and every migration has a model. The union is the check
@@ -860,6 +872,7 @@ def test_the_migration_creates_exactly_the_tables_the_models_declare() -> None:
         set(projection.TABLES),
         set(search.TABLES),
         set(agent.TABLES),
+        set(template.TABLES),
     )
     assert set().union(*every) == set(metadata.tables)
     assert sum(len(s) for s in every) == len(set().union(*every)), "a table is created twice"
