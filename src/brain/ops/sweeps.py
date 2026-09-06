@@ -290,6 +290,72 @@ def sweep_traceability() -> None:
     # check, and a gate that goes red the day it arrives is a gate somebody switches off.
     print(f"note: {_source_claims_never_closed_by_a_commit()} leaf/leaves claimed in source only")
 
+    # And the fourth direction, which is the blind spot the three above share.
+    #
+    # Every one of them intersects with the WBS leaves before comparing (`claimed & leaves`,
+    # `closed & leaves`). That is correct for what each asks, and it means an id that is not
+    # a leaf at all is silently dropped by all three. Nothing anywhere reports it.
+    #
+    # Thirty-two were in that state when this was written. Most are a group id where a leaf
+    # was meant: `Closes: M31.1.1` in a module whose leaves are four parts long, or a bare
+    # `M0.1` in a subject line. `brain.ops.conventions` already argues that this shape must
+    # be refused, saying `Closes: M12` "is the natural thing to type", and the commit-msg
+    # hook that catches it is advisory and postdates most of these.
+    #
+    # The failure is quiet and in the under-reporting direction, which is why nobody noticed:
+    # a commit claims M31.1.1, no leaf has that id, and the four real leaves underneath stay
+    # open on the tracker for ever while their author believes they were credited. The
+    # tracker's own percentage stays honest, because `status.build_status` walks the declared
+    # leaves rather than counting claims, and that honesty is exactly what hides this.
+    #
+    # Six of the thirty-two are the opposite case and worth naming: M37.2.1 through M37.2.6
+    # were closed by a commit that *created* those twenty-nine tasks. Cancelling a
+    # subscription and revoking AnyGen's OAuth grants are not done because the plan to do
+    # them exists.
+    #
+    # The ids are printed rather than counted, because thirty-two is small enough to read and
+    # a bare count of invisible things is one more thing nobody can act on.
+    phantom = _claims_that_name_no_leaf()
+    print(f"note: {len(phantom)} claimed id(s) name a group, so the tracker credits nothing")
+    if phantom:
+        print(f"      {', '.join(phantom)}")
+        print("      name the leaves under each one individually, or Reopens: the claim")
+
+
+def _claims_that_name_no_leaf() -> tuple[str, ...]:
+    """Ids claimed by a commit or a source docstring that are not WBS leaves at all.
+
+    Both records of a claim are read, because the mistake is a typo and a typo does not
+    care which file it was made in. A `Closes:` trailer and a `Task ids:` line are equally
+    capable of naming a group where a leaf was meant.
+
+    **A bare module id is not reported, and nothing here excludes it.** `TASK_ID_RE` is
+    `M\\d+(?:\\.\\d+){1,4}`, which requires at least one dot, so `M24` is never extracted by
+    either path and cannot reach this set. A guard against it was written here first and a
+    mutation proved it dead: deleting it changed no test, because the regex had already
+    refused the input. It is recorded in words rather than kept as a second enforcement
+    point that looks like one and is not, following `manifest.ProjectedEntity`. The
+    `Closes: M12` case is refused by `brain.ops.conventions` at commit time, which is the
+    right place for it: there the id can be rejected before it is written down.
+
+    Empty when git or the WBS is unavailable, matching the two helpers below: an advisory
+    line must not fail a sweep for want of a repository.
+    """
+    try:
+        from brain.status import closed_task_ids, load_wbs
+
+        closed, _ = closed_task_ids(REPO)
+        leaves = {
+            leaf for m in load_wbs(REPO / "docs" / "wbs.json")["modules"] for leaf in m["leaf_ids"]
+        }
+        claimed: set[str] = set(closed)
+        for path in SRC.rglob("*.py"):
+            for line in TASK_LINE_RE.findall(path.read_text(encoding="utf-8")):
+                claimed.update(TASK_ID_RE.findall(line))
+    except Exception:
+        return ()
+    return tuple(sorted(claimed - leaves))
+
 
 def _source_claims_never_closed_by_a_commit() -> int:
     """Leaves a source docstring claims that no commit has ever closed.

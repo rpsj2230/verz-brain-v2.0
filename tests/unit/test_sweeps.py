@@ -371,6 +371,152 @@ def test_a_source_claim_that_no_commit_closed_is_counted() -> None:
     assert counted == 1, f"{open_leaf} is claimed in source and closed by no commit"
 
 
+def test_an_id_that_names_a_group_rather_than_a_leaf_is_reported() -> None:
+    """**The blind spot the other three traceability checks share.**
+
+    Every one of them intersects with the WBS leaves before comparing, which is right for
+    what each asks and means an id that is not a leaf at all is dropped by all three. Thirty
+    seven were in that state when this was written, and nothing anywhere printed one.
+
+    The failure is quiet and in the under-reporting direction, which is why it survived: a
+    commit says `Closes: M31.1.1`, no leaf has that id because M31's leaves are four parts
+    long, and the five real leaves underneath stay open on the tracker for ever while their
+    author believes they were credited. `status.build_status` walks the declared leaves
+    rather than counting claims, so the percentage stays honest, and that honesty is exactly
+    what hides this.
+
+    The group id is taken from the WBS rather than invented, so this keeps testing the real
+    shape if the numbering ever changes. Asserting the leaf case too is the positive half: a
+    check that reported every id would be satisfied by `return everything`.
+
+    Delete this and the helper can be reduced to `return ()` with every sweep still green,
+    which is precisely the history `sweep_traceability` already has."""
+    from brain.ops import sweeps
+    from brain.status import load_wbs
+
+    wbs = load_wbs(sweeps.REPO / "docs" / "wbs.json")
+    leaves = {leaf for module in wbs["modules"] for leaf in module["leaf_ids"]}
+    deep = sorted(leaf for leaf in leaves if leaf.count(".") >= 3)
+    assert deep, "no four-part leaf ids, so there is no group id to build from"
+    leaf = deep[0]
+    group = leaf.rsplit(".", 1)[0]
+    assert group not in leaves, f"{group} is itself a leaf, so it is not the shape this tests"
+
+    class _OneFile:
+        """A source tree of exactly one file, claiming whatever it is handed."""
+
+        def __init__(self, claim: str) -> None:
+            self._claim = claim
+
+        def rglob(self, pattern: str) -> list[Any]:
+            del pattern
+            return [_Claiming(self._claim)]
+
+    class _Claiming:
+        def __init__(self, claim: str) -> None:
+            self._claim = claim
+
+        def read_text(self, **kwargs: Any) -> str:
+            del kwargs
+            return f"Task ids: {self._claim}\n"
+
+    original = sweeps.SRC
+    try:
+        sweeps.SRC = _OneFile(group)  # type: ignore[assignment]
+        with_group = sweeps._claims_that_name_no_leaf()
+        sweeps.SRC = _OneFile(leaf)  # type: ignore[assignment]
+        with_leaf = sweeps._claims_that_name_no_leaf()
+    finally:
+        sweeps.SRC = original
+
+    assert group in with_group, f"{group} names no leaf and was not reported"
+    assert leaf not in with_leaf, f"{leaf} is a real leaf and must not be reported"
+
+
+def test_a_bare_module_id_is_not_reported_as_a_broken_claim() -> None:
+    """A docstring naming `M24` is discussing the module the file belongs to. That is
+    ordinary prose, it is the commonest thing on a `Task ids:` line after the leaves
+    themselves, and reporting it would bury the real findings under noise.
+
+    **The enforcement point is `TASK_ID_RE`, not anything in the helper.** The pattern
+    requires at least one dot, so a bare module id is never extracted in the first place.
+    That is worth a test anyway, and worth stating in the docstring: an explicit guard was
+    written in the helper first and a mutation proved it dead, because the regex had already
+    refused the input. Asserting the behaviour here rather than the guard means this keeps
+    testing the property whichever layer happens to hold it.
+
+    Delete this and the pattern can be loosened to accept a dotless id, which reads as a
+    generalisation, and the note line fills with module ids. That is how an advisory nobody
+    can act on gets switched off rather than worked down."""
+    from brain.ops import sweeps
+    from brain.status import load_wbs
+
+    wbs = load_wbs(sweeps.REPO / "docs" / "wbs.json")
+    module = wbs["modules"][0]["id"]
+    assert "." not in module, "this test is about the dotless shape"
+
+    class _OneFile:
+        def rglob(self, pattern: str) -> list[Any]:
+            del pattern
+            return [_Claiming()]
+
+    class _Claiming:
+        def read_text(self, **kwargs: Any) -> str:
+            del kwargs
+            return f"Task ids: {module}\n"
+
+    original = sweeps.SRC
+    try:
+        sweeps.SRC = _OneFile()  # type: ignore[assignment]
+        reported = sweeps._claims_that_name_no_leaf()
+    finally:
+        sweeps.SRC = original
+
+    assert module not in reported
+
+
+def test_a_broken_claim_in_a_commit_is_reported_and_not_only_one_in_a_docstring() -> None:
+    """**A mutation found this missing.** Every other test here stubs the source tree, so
+    replacing the commit half of the helper with an empty set left all of them green: the
+    stubbed docstring claim was still reported and nothing noticed that git had stopped
+    being read.
+
+    That is the half that matters more. A `Closes:` trailer is what `status.build_status`
+    counts, so a broken one is a leaf that stays open on the client's tracker for ever, and
+    thirty two of the thirty seven found when this was written came from commits rather than
+    from docstrings.
+
+    The expected set is recomputed here from `closed_task_ids` and the WBS rather than taken
+    from the helper, so this compares two readings of the same primary sources instead of
+    comparing the helper against itself.
+
+    Delete this and the helper can stop reading git entirely while every sweep stays green."""
+    from brain.ops import sweeps
+    from brain.status import closed_task_ids, load_wbs
+
+    closed, _ = closed_task_ids(sweeps.REPO)
+    wbs = load_wbs(sweeps.REPO / "docs" / "wbs.json")
+    leaves = {leaf for module in wbs["modules"] for leaf in module["leaf_ids"]}
+    from_commits = closed - leaves
+    assert from_commits, "no commit claims a broken id, so this test cannot drive the helper"
+
+    class _NoFiles:
+        """A source tree with nothing in it, so only the commit half can contribute."""
+
+        def rglob(self, pattern: str) -> list[Any]:
+            del pattern
+            return []
+
+    original = sweeps.SRC
+    try:
+        sweeps.SRC = _NoFiles()  # type: ignore[assignment]
+        reported = set(sweeps._claims_that_name_no_leaf())
+    finally:
+        sweeps.SRC = original
+
+    assert reported == from_commits
+
+
 def test_the_counter_reports_nothing_rather_than_failing_without_a_repository() -> None:
     """An advisory line on a sweep must not fail the sweep for want of git. `sweep_dependencies`
     and `_commit_claims_without_tests` both make this choice and this follows them.
