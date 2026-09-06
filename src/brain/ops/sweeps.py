@@ -273,6 +273,49 @@ def sweep_traceability() -> None:
     # goes to zero by being worked down rather than by being ignored.
     print(f"note: {_commit_claims_without_tests()} leaf/leaves closed by commit have no test")
 
+    # And the third direction, which neither of the two above asks about.
+    #
+    # There are two records of what has been built. A `Task ids:` line is how this
+    # repository claims a leaf; a `Closes:` trailer is what the status page counts. The
+    # checks above compare each of those against the tests, and nothing compares them
+    # against *each other*, so a leaf can be implemented, tested, claimed in a docstring and
+    # never appear as done on the page the client reads.
+    #
+    # Eight were in exactly that state when this was written, including a rebuild command
+    # with a CLI and two connector transports. The tracker was under-reporting, which is a
+    # less alarming failure than over-reporting and is still a document of record that is
+    # wrong.
+    #
+    # Advisory for the same reason as the line above: this is a backlog that predates the
+    # check, and a gate that goes red the day it arrives is a gate somebody switches off.
+    print(f"note: {_source_claims_never_closed_by_a_commit()} leaf/leaves claimed in source only")
+
+
+def _source_claims_never_closed_by_a_commit() -> int:
+    """Leaves a source docstring claims that no commit has ever closed.
+
+    Zero when git or the WBS is unavailable, matching `_commit_claims_without_tests`: an
+    advisory line must not fail a sweep for want of a repository.
+
+    Counted against the WBS leaves rather than against every id mentioned, because a
+    docstring legitimately names a parent (`M24.1`) while claiming its children, and a
+    parent is not a leaf the tracker counts.
+    """
+    try:
+        from brain.status import closed_task_ids, load_wbs
+
+        closed, _ = closed_task_ids(REPO)
+        leaves = {
+            leaf for m in load_wbs(REPO / "docs" / "wbs.json")["modules"] for leaf in m["leaf_ids"]
+        }
+        claimed: set[str] = set()
+        for path in SRC.rglob("*.py"):
+            for line in TASK_LINE_RE.findall(path.read_text(encoding="utf-8")):
+                claimed.update(TASK_ID_RE.findall(line))
+    except Exception:
+        return 0
+    return len((claimed & leaves) - closed)
+
 
 def _commit_claims_without_tests() -> int:
     """How many leaves a commit has closed that no test names.

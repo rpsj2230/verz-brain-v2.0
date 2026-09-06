@@ -304,3 +304,84 @@ def test_the_copyleft_licences_that_would_reach_a_client_are_not_allowed() -> No
 
     for refused in ("GPL-3.0-only", "GPL-2.0-only", "AGPL-3.0-only", "SSPL-1.0", "BUSL-1.1"):
         assert refused not in ALLOWED_LICENCES
+
+
+# ---------------------------------------------- the two records of what is built (M0.5.8)
+def test_a_source_claim_that_no_commit_closed_is_counted() -> None:
+    """**A counter that always returns nought is this sweep's own history.**
+
+    `sweep_traceability` carried a condition that asked whether the covered set was empty
+    rather than whether a module was in it, so it passed unconditionally and printed "all
+    traceable" while checking nothing, on every push, for as long as it existed. The note
+    lines beside it are the same shape of risk: a helper that returns 0 because it found
+    nothing and one that returns 0 because it looked at nothing read identically on the
+    console.
+
+    So this drives the helper with a claim that is genuinely in neither record and asserts
+    the number moves. Delete this and `_source_claims_never_closed_by_a_commit` can be
+    reduced to `return 0` with every sweep still green.
+
+    Eight leaves were in this state when the check was written, including a rebuild command
+    with a CLI and two connector transports: implemented, tested, claimed in a docstring,
+    and absent from the page the client reads."""
+
+    from brain.ops import sweeps
+    from brain.status import closed_task_ids, load_wbs
+
+    real = sweeps._source_claims_never_closed_by_a_commit()
+
+    # A leaf the WBS knows about that no commit has closed. Chosen from the real records
+    # rather than hard-coded, because the first version of this test used `M0.1.1`, which is
+    # closed, so the intersection was empty and the helper correctly returned nought while
+    # the test insisted it should have counted one. The test was wrong and said the code was.
+    closed, _ = closed_task_ids(sweeps.REPO)
+    wbs = load_wbs(sweeps.REPO / "docs" / "wbs.json")
+    leaves = [
+        leaf for module in wbs["modules"] for leaf in module["leaf_ids"] if leaf not in closed
+    ]
+    assert leaves, "every leaf is closed, so this test has nothing to drive the helper with"
+    open_leaf = leaves[0]
+
+    class _OneFile:
+        """A source tree of exactly one file, claiming a leaf no commit has closed."""
+
+        def __init__(self, claim: str) -> None:
+            self._claim = claim
+
+        def rglob(self, pattern: str) -> list[Any]:
+            del pattern
+            return [_Claiming(self._claim)]
+
+    class _Claiming:
+        def __init__(self, claim: str) -> None:
+            self._claim = claim
+
+        def read_text(self, **kwargs: Any) -> str:
+            del kwargs
+            return f"Task ids: {self._claim}\n"
+
+    original = sweeps.SRC
+    try:
+        sweeps.SRC = _OneFile(open_leaf)  # type: ignore[assignment]
+        counted = sweeps._source_claims_never_closed_by_a_commit()
+    finally:
+        sweeps.SRC = original
+
+    assert isinstance(real, int)
+    assert counted == 1, f"{open_leaf} is claimed in source and closed by no commit"
+
+
+def test_the_counter_reports_nothing_rather_than_failing_without_a_repository() -> None:
+    """An advisory line on a sweep must not fail the sweep for want of git. `sweep_dependencies`
+    and `_commit_claims_without_tests` both make this choice and this follows them.
+
+    Delete this and a checkout with no history turns an informational note into a red
+    build, which is how a useful advisory gets deleted rather than fixed."""
+    from brain.ops import sweeps
+
+    original = sweeps.REPO
+    try:
+        sweeps.REPO = Path("/nonexistent-for-this-test")
+        assert sweeps._source_claims_never_closed_by_a_commit() == 0
+    finally:
+        sweeps.REPO = original
