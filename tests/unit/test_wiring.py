@@ -140,6 +140,7 @@ def test_the_baseline_matches_the_compose_file_it_claims_to_describe() -> None:
         "docker-compose.langfuse.yml",
         "docker-compose.objectstore.yml",
         "docker-compose.automation.yml",
+        "docker-compose.worker.yml",
     ],
 )
 def test_every_deployed_service_carries_an_explicit_memory_limit(compose: str) -> None:

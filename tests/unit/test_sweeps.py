@@ -20,6 +20,80 @@ def test_sweep_failure_carries_every_finding() -> None:
     assert "3 finding" in str(exc)
 
 
+# --------------------------------------------------------- the tool registry sweep
+def test_the_tool_sweep_reads_the_registry_the_application_actually_builds() -> None:
+    """For as long as it existed this sweep printed `ok: every tool name matches the grammar
+    (0 literals checked)` on every run. Nothing was wrong with it: it scanned for
+    `ToolDefinition(name="...")` written out in a file and there are none, because tools are
+    built from classifications rather than declared as literals.
+
+    Its own docstring named the fix: read the registry the day a boot function exists to
+    populate one. `brain.tools.startup.build_registry` is that function now.
+
+    So this asserts the sweep sees a real name. `freshdesk.read_price_list` is not hard-coded
+    here for the reason a hard-coded `M0.1.1` broke an earlier test in this file: it is
+    derived from the same builder, and what is asserted is that the sweep and the application
+    agree, not that either matches a string I typed.
+
+    Delete this and the sweep can go back to grepping for a literal that does not exist."""
+    from brain.tools.startup import build_registry
+
+    seen = sweeps._registered_tool_names()
+    stand_in = sweeps._NoRows()
+    built = build_registry(source="freshdesk", records=stand_in)  # type: ignore[arg-type]
+    expected = tuple(sorted(built.names()))
+
+    assert seen, "the sweep reads no registered tool, so it is checking nothing again"
+    assert seen == expected
+
+
+def test_a_sweep_that_checked_nothing_fails_rather_than_reporting_ok() -> None:
+    """**The property that separates this from what it replaced.** A check that found no
+    problems and a check that looked at no inputs print the same word, and this file has
+    already shipped one of the second kind: `sweep_traceability` passed unconditionally and
+    said "all traceable" for as long as it existed.
+
+    So an empty registry is a finding with a sentence, not a quiet pass. It cannot be an
+    honest state: `build_registry` handed a row source registers a tool per built-in row
+    entity, so zero means the builder is broken rather than that the estate is empty.
+
+    Driven by replacing the reader, because the alternative is breaking `build_registry`
+    itself and that would fail for the wrong reason.
+
+    Delete this and the assertion can be softened back to a printed count, which is what a
+    reader mistakes for coverage."""
+    original = sweeps._registered_tool_names
+    try:
+        sweeps._registered_tool_names = lambda: ()
+        with pytest.raises(sweeps.SweepFailure) as raised:
+            sweeps.sweep_tool_registry()
+    finally:
+        sweeps._registered_tool_names = original
+
+    assert any("produced no tools" in finding for finding in raised.value.findings)
+
+
+def test_a_registered_tool_whose_name_breaks_the_grammar_is_a_finding() -> None:
+    """The positive half of the sweep's actual job. The two tests above prove it reads
+    something and refuses to read nothing; neither proves it would object to a bad name.
+
+    The grammar matters because the catalogue is projected per request and the model picks
+    from what it is shown, so a malformed name is a tool that is never selected or selected
+    for the wrong reason.
+
+    Delete this and the sweep can stop applying `TOOL_NAME_RE` entirely while both tests
+    above stay green."""
+    original = sweeps._registered_tool_names
+    try:
+        sweeps._registered_tool_names = lambda: ("NotAToolName",)
+        with pytest.raises(sweeps.SweepFailure) as raised:
+            sweeps.sweep_tool_registry()
+    finally:
+        sweeps._registered_tool_names = original
+
+    assert any("NotAToolName" in finding for finding in raised.value.findings)
+
+
 # ------------------------------------------------------------- dispatcher
 def test_main_rejects_an_unknown_sweep() -> None:
     assert sweeps.main(["not_a_sweep"]) == 2

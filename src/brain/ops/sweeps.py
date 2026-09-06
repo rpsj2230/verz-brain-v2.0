@@ -155,15 +155,23 @@ def sweep_tool_registry() -> None:
     a malformed name is a tool that either never gets selected or gets selected for the
     wrong reason.
 
-    **This reads source text, and that is a real limit rather than an implementation
-    detail.** It sees `ToolDefinition(name="...")` written out in a file; it sees nothing
-    built at run time from a connector manifest, which the architecture says is how most
-    tools will arrive. It becomes a real check the day there is a boot function that
-    populates a registry, at which point it should import that registry and read `.names()`
-    instead of grepping. Until then it guards the literals and no more, and saying so here
-    is cheaper than somebody later mistaking a green sweep for coverage of the manifest
-    path. The registry itself refuses a bad name at registration either way, so the
-    run-time path is guarded; it is guarded later, not never.
+    **This used to read source text only, and printed "ok (0 literals checked)" on every
+    run.** Its own docstring said what would fix it: "it becomes a real check the day there
+    is a boot function that populates a registry, at which point it should import that
+    registry and read `.names()` instead of grepping". `brain.tools.startup.build_registry`
+    is that function and it now exists, so the sweep asks it.
+
+    A green sweep that checked nothing is the exact failure this file has already had once:
+    `sweep_traceability` carried a condition that passed unconditionally and printed "all
+    traceable" for as long as it existed. So the count is not merely printed here, it is
+    **asserted**. `build_registry` handed a row source must produce at least one tool, and
+    zero means the builder is broken rather than that the estate is empty. That is the
+    difference between a check that found nothing and a check that looked at nothing, and
+    on a console they read identically.
+
+    The literal scan is kept beside it rather than replaced. The two see different things: a
+    `ToolDefinition` written in a file that nothing registers is invisible to the registry,
+    and a tool built at run time from a connector manifest is invisible to the grep.
     """
     findings: list[str] = []
     names_seen: set[str] = set()
@@ -178,9 +186,59 @@ def sweep_tool_registry() -> None:
             names_seen.add(name)
             if not TOOL_NAME_RE.match(name):
                 findings.append(f"{path.relative_to(REPO)}: bad tool name {name!r}")
+
+    registered = _registered_tool_names()
+    if not registered:
+        findings.append(
+            "brain.tools.startup.build_registry produced no tools when handed a row source, "
+            "so this sweep would pass by checking nothing; see the docstring"
+        )
+    findings.extend(
+        f"registered tool name {name!r} does not match the grammar"
+        for name in registered
+        if not TOOL_NAME_RE.match(name)
+    )
+
     if findings:
         raise SweepFailure(findings)
-    print(f"ok: every tool name matches the grammar ({len(names_seen)} literals checked)")
+    print(
+        f"ok: every tool name matches the grammar "
+        f"({len(registered)} registered, {len(names_seen)} literal(s) checked)"
+    )
+
+
+class _NoRows:
+    """A row source that answers nothing, so `build_registry` takes its registering branch.
+
+    The sweep is asking what the application *names*, not what it can fetch, and a real row
+    source would need a database. `build_registry` refuses to register a row tool when handed
+    no source at all, deliberately, because a tool that is present and cannot answer tells a
+    person the system has no data on a subject it has plenty of. That refusal is what makes
+    this stand-in necessary rather than lazy: without one the sweep would read an empty
+    registry and report it as fine, which is the bug it was rewritten to stop having.
+    """
+
+    def rows(self, *args: object, **kwargs: object) -> list[object]:
+        return []
+
+    def __call__(self, *args: object, **kwargs: object) -> list[object]:
+        return []
+
+
+def _registered_tool_names() -> tuple[str, ...]:
+    """The names the application actually registers at boot.
+
+    Empty rather than raising if the builder cannot be imported or called, because the
+    caller turns empty into a finding with a sentence explaining it. Swallowing the
+    exception here and reporting nothing would reproduce the defect this replaced.
+    """
+    try:
+        from brain.tools.startup import build_registry
+
+        registry = build_registry(source="freshdesk", records=_NoRows())  # type: ignore[arg-type]
+        return tuple(sorted(registry.names()))
+    except Exception:
+        return ()
 
 
 # --------------------------------------------------- one grammar, not several
