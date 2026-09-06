@@ -2,7 +2,11 @@
 
 Decisions and access I cannot resolve alone. Served at `/build/needs-rupash`.
 
-**Nothing is open. All four were answered on 2026-09-06.**
+**1 item is open: 32, and it is three passwords.** Answering 29 turned up that there is no
+Keycloak deployed at all, which is the real reason nobody can sign in. It is written and
+sized from measurement now; it needs three secrets I will not create on your behalf.
+
+**The four that were open this morning were all answered on 2026-09-06.**
 
 **31 is decided: Option A.** The parsing and name-recognition models go behind the same
 inference server that embedding already assumes, so every Brain container stays small. Work
@@ -33,8 +37,45 @@ in.
 
 # Open
 
-Nothing. All four items that were open on 2026-09-06 were answered the same day;
-they are the first four entries below.
+## 32. Three passwords, and then people can actually sign in
+
+**Small, and it is the last thing between the console and a working login.**
+
+Answering 29 turned up something bigger than a missing address: **there is no Keycloak.**
+Not on the server, not in any deployment file. Keycloak is the piece that holds your staff
+list and decides who is who; the whole permission model rests on it. The realm, which is the
+configuration describing your roles and departments, was written and reviewed and had nowhere
+to run.
+
+It is written now, sized from measurement rather than a guess. I ran a throwaway copy on your
+server for a few minutes to find out what it actually needs: at 512 MB the operating system
+killed it, at 768 MB it settled at 477 MB with room to spare. It has been removed; the server
+is back to where it was.
+
+That test also found a real bug and fixed it. **The realm file would not have imported at
+all.** It carries explanatory comments, which is why it is readable, and Keycloak rejects any
+field it does not recognise. It refuses the file outright. The reviewed version keeps its
+comments and a stripped copy is generated for the import, so both the explanation and the
+import survive.
+
+**What I need from you: three passwords.** I will not create or store passwords on your
+behalf, so these are yours to set in Coolify:
+
+    KEYCLOAK_ADMIN              a username, for example: admin
+    KEYCLOAK_ADMIN_PASSWORD     used once to create your real account, then removed
+    KEYCLOAK_DB_PASSWORD        Keycloak's own database, never typed by a person
+
+**And one decision, where I have a recommendation.** Keycloak needs its own web address,
+separate from the Brain's, because it is a separate system your browser is redirected to.
+I suggest `https://id.194.233.66.89.sslip.io`, which works the same way your existing
+address does and will be replaced alongside it when you buy a domain.
+
+**The memory.** It needs 1 GB in total, and today the budget is 256 MB short. That
+disappears the moment you remove your other project, which frees 2.4 GB. So either order
+works: remove the project first and this fits with room to spare, or say the word and I will
+deploy it now and re-measure.
+
+---
 
 # Answered
 
