@@ -10,11 +10,30 @@ invalidate into the key rather than checking it after the read, so a moved sourc
 produces a miss rather than a hit that something downstream has to notice. Two caches with
 two different invalidation philosophies is how one of them ends up wrong.
 
-Task ids: M3.5.2
+**A hit reaches a person with its age attached, and that is enforced by the type rather
+than by remembering (M3.5.3).** `CachedAnswer.age_label` has existed since the key module
+was written, and its docstring says a cached answer that does not say it is cached is a lie
+of omission. Nothing in `src/` called it: the label existed, the rule was written down, and
+every path that could have served a hit would have served `found.payload` on its own.
+
+That is the third instance of one pattern in this repository, so it is worth fixing in the
+shape that cannot recur rather than by adding the call. `ServedAnswer` refuses to be
+constructed as a cache hit whose text does not carry the label, so a caller that renders the
+payload alone does not produce a quietly wrong answer, it produces an error. `serve_cached`
+is the one function that builds one, and `serve_fresh` is its counterpart for an answer that
+has no age to declare, so the two cases are distinguishable at the call site instead of by
+whether somebody remembered a second argument.
+
+Rejected: putting the label on the channel adapters. There are seven of them and each would
+have its own idea of where the age goes, which is six chances to leave it out and one
+guarantee that the wording drifts. The age belongs to the answer, not to the surface.
+
+Task ids: M3.5.2, M3.5.3
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Protocol
 
@@ -61,6 +80,93 @@ def lookup(
         # is a read path that fails differently under load.
         return None
     return found
+
+
+#: Every string `CachedAnswer.age_label` produces begins with this, whether the answer is
+#: seconds or hours old. Held here as the one token `ServedAnswer` checks for, rather than
+#: the check restating the label's grammar, so a reworded label is one edit and not a guard
+#: that silently stops matching.
+AGE_MARKER = "answered "
+
+#: What separates the answer from its provenance. One blank line, because every channel
+#: this reaches renders plain text and a reader should see the age as a note under the
+#: answer rather than as part of it.
+AGE_SEPARATOR = "\n\n"
+
+
+class AgeNotSurfacedError(Exception):
+    """Raised when a cached answer would reach a person without saying how old it is.
+
+    A programming error, and deliberately not a `BrainError`: the taxonomy in
+    `brain.core.errors` describes outcomes a person is shown, and this is a bug in the
+    caller that must never become one of them.
+    """
+
+
+@dataclass(frozen=True)
+class ServedAnswer:
+    """An answer on its way to a person, with its provenance already in the text.
+
+    **The constructor is the enforcement.** A cache hit whose text does not carry the age is
+    refused here, which is why this type exists at all rather than the caller being trusted
+    to concatenate two strings. The failure being prevented is not exotic: it is
+    `return found.payload`, which is the obvious thing to write and produces an answer the
+    reader assumes was computed just now.
+
+    `age_seconds` is carried beside the text rather than parsed back out of it, because a
+    channel that wants to render the age its own way needs the number, and a channel
+    reaching into the string for it would be a second parser of a sentence meant for people.
+    """
+
+    text: str
+    from_cache: bool
+    age_seconds: int | None = None
+
+    def __post_init__(self) -> None:
+        if not self.from_cache:
+            if self.age_seconds is not None:
+                msg = (
+                    "a freshly computed answer has no age to declare; carrying one would "
+                    "describe the moment it was computed as though it were a lookup"
+                )
+                raise AgeNotSurfacedError(msg)
+            return
+        if self.age_seconds is None:
+            msg = (
+                "a cache hit has an age; serving one without it is the omission this type "
+                "exists to prevent"
+            )
+            raise AgeNotSurfacedError(msg)
+        if AGE_MARKER not in self.text:
+            msg = (
+                "this answer came from the cache and its text does not say so. A reader "
+                "assumes the system just looked, and deciding what to do with an answer "
+                "depends on knowing it might be a quarter of an hour old"
+            )
+            raise AgeNotSurfacedError(msg)
+
+
+def serve_cached(found: CachedAnswer, now: datetime) -> ServedAnswer:
+    """The one way a cached answer becomes text for a person (M3.5.3).
+
+    Takes the `CachedAnswer` rather than its payload, so there is no signature here that
+    could be called without the thing that knows the age.
+    """
+    return ServedAnswer(
+        text=f"{found.payload}{AGE_SEPARATOR}{found.age_label(now)}",
+        from_cache=True,
+        age_seconds=int(found.age(now).total_seconds()),
+    )
+
+
+def serve_fresh(payload: str) -> ServedAnswer:
+    """An answer computed for this request, which has no age to declare.
+
+    Its counterpart exists so the two cases are told apart at the call site. A single
+    `serve(payload, age=None)` would make the cached case the one somebody forgets, which is
+    exactly the omission being prevented.
+    """
+    return ServedAnswer(text=payload, from_cache=False)
 
 
 def store_answer(
