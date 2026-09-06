@@ -21,13 +21,14 @@ right shape for this test: it means the permission-correctness asserted below is
 the projection and the redactor rather than by the double having been polite. A source that
 filtered would make every one of these tests pass with the redactor removed.
 
-Task ids: M31.1.4.1, M31.1.4.3, M31.1.4.4
+Task ids: M31.1.4.1, M31.1.4.3, M31.1.4.4, M32.5.2.1
 """
 
 from __future__ import annotations
 
 import base64
 import json
+import re
 from collections.abc import Iterator, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -36,9 +37,21 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from httpx import Response
+from pydantic import ValidationError
+from sqlalchemy import create_engine
+from sqlalchemy.pool import NullPool
 
+from brain import api_routes
 from brain.api import API_PREFIX
-from brain.api_routes import GateWiring, RecordPage
+from brain.api_routes import (
+    FILTER_PARAM,
+    FILTER_SEPARATOR,
+    MAX_FILTER_TERM_LENGTH,
+    MAX_FILTERS,
+    GateWiring,
+    RecordPage,
+    filter_scope,
+)
 from brain.app import Settings, create_app
 from brain.core.entitlement import Capability, EntitlementSet, Grant
 from brain.core.principal import Employment, Principal, PrincipalKind
@@ -68,6 +81,7 @@ SUBJECTS: dict[str, str] = {
     "u_prefix": "1f2e3d4c-0000-4000-8000-00000000000c",
     "u_none": "1f2e3d4c-0000-4000-8000-00000000000d",
     "u_admin": "1f2e3d4c-0000-4000-8000-00000000000e",
+    "u_elsewhere": "1f2e3d4c-0000-4000-8000-00000000000f",
 }
 
 #: Two seeded rows, one in each prefix, so a scope that admits one of them can be shown to
@@ -103,6 +117,11 @@ def _grants(*capabilities: str, scope: Scope) -> tuple[Grant, ...]:
 
 WHOLE = Scope.unrestricted()
 WEB_ONLY = Scope(clauses=(Clause(field="sku", op=Op.PREFIX, value="WEB-"),))
+#: A scope that reaches the entity and none of the seeded rows, so an unfiltered request from
+#: this person is answered with an empty page by the redactor rather than by a 404. It is the
+#: only way to obtain an empty page that was fetched, which is what a filtered empty page has
+#: to be indistinguishable from.
+NOWHERE = Scope(clauses=(Clause(field="sku", op=Op.PREFIX, value="ZZZ-"),))
 
 #: What each person holds. Written out per person in one place, for the reason the company
 #: fixture gives: a helper with defaults hides the thing under test.
@@ -138,6 +157,14 @@ GRANTS: dict[str, tuple[Grant, ...]] = {
     # Holds an admin capability company-wide, which the assurance ceiling must take away
     # from a session with no second factor in it.
     "u_admin": _grants("admin:grant", "read:price_list", "read:price_list.sku", scope=WHOLE),
+    # Reaches the entity in a scope no seeded row satisfies, so every request of theirs is
+    # answered with an empty page that was nonetheless fetched.
+    "u_elsewhere": _grants(
+        "read:price_list",
+        "read:price_list.sku",
+        "read:price_list.name",
+        scope=NOWHERE,
+    ),
 }
 
 
@@ -197,13 +224,20 @@ class UnfilteredRows:
 
     `asked` records whether it was consulted at all, which is how the short-circuit for a
     caller with no reachable column is proved rather than assumed.
+
+    `seen` keeps the compiled queries. A filter is a claim about what went into the WHERE
+    clause, and a double that ignores the statement can say nothing about that; keeping the
+    query is how a test can ask whether the caller's scope survived beside the asker's term
+    rather than inferring it from rows this double did not filter.
     """
 
     def __init__(self) -> None:
         self.asked = 0
+        self.seen: list[RowQuery] = []
 
     def rows(self, query: RowQuery) -> Sequence[Mapping[str, Any]]:
         self.asked += 1
+        self.seen.append(query)
         return SEEDED_ROWS
 
 
@@ -319,13 +353,21 @@ def ask(
     *,
     signed_by: str | None = None,
     claims: Mapping[str, object] | None = None,
+    terms: Sequence[str] = (),
 ) -> Response:
     token = token_for(pid, signed_by=signed_by, claims=claims)
     # Annotated rather than returned straight through: this TestClient's `get` is typed as
     # returning Any, and a helper every assertion below reads through is the wrong place for
     # a value nothing describes.
+    #
+    # The terms are handed over as repeated pairs rather than as a mapping, because the route
+    # declares one repeatable parameter and a mapping cannot express two of them. An empty
+    # sequence produces no query string at all, which is what every test written before the
+    # filter existed asked for and still asks for.
     response: Response = c.get(
-        f"{API_PREFIX}/records/{entity}", headers={"authorization": f"Bearer {token}"}
+        f"{API_PREFIX}/records/{entity}",
+        headers={"authorization": f"Bearer {token}"},
+        params=[(FILTER_PARAM, term) for term in terms],
     )
     return response
 
@@ -864,3 +906,449 @@ def test_no_route_under_the_prefix_reaches_the_public_schema() -> None:
 
     for path in public_operations(app):
         assert not path.startswith(API_PREFIX)
+
+
+# ------------------------------------------------------ the asker's own filter
+#
+# The route now takes a filter, and every test below is about one of the five ways that is
+# easy to get wrong: a filter becoming a way to read a column the response withholds, a
+# filter widening the scope it was supposed to narrow inside, a refusal that tells a caller
+# which of the two it was, a value reaching the statement as syntax, and a count arriving
+# because somebody wanted to say how many matched.
+#
+# Task ids: M32.5.2.1
+
+#: A PostgreSQL dialect to render a compiled statement against. Taken from an engine because
+#: `postgresql.dialect()` is untyped and mypy runs strict; creating one performs no I/O and
+#: nothing here ever connects it. The same device `tests/unit/test_row_plane.py` uses.
+DIALECT = create_engine("postgresql+psycopg://", poolclass=NullPool).dialect
+
+RECORDS_OPERATION = f"{API_PREFIX}/records/{{entity}}"
+
+
+def rendered(query: RowQuery) -> str:
+    """The statement as PostgreSQL would receive it, with values inlined so a test can read
+    them. The production path binds them; `literal_binds` is a rendering choice made here."""
+    return str(query.statement.compile(dialect=DIALECT, compile_kwargs={"literal_binds": True}))
+
+
+def declared_query_parameters() -> dict[str, Any]:
+    """The query parameters the mounted route publishes, keyed by the name a client sends.
+
+    Read out of the generated document rather than off the function's signature, because the
+    document is what the console reads to decide what it may send, and a parameter that works
+    but is undocumented is a parameter the console will correctly never use.
+    """
+    app: FastAPI = create_app(Settings(env="development"))
+    operation = app.openapi()["paths"][RECORDS_OPERATION]["get"]
+    return {p["name"]: p for p in operation["parameters"] if p["in"] == "query"}
+
+
+def declared_term_pattern() -> re.Pattern[str]:
+    """The filter term grammar as the document publishes it.
+
+    Compiled here from the document's own string, so every assertion about what the grammar
+    admits is made against what a client would be told rather than against the constant the
+    route was written with. `fullmatch` rather than `match`, because Python's `$` also
+    matches before a trailing newline and the server's engine does not.
+    """
+    schema = declared_query_parameters()[FILTER_PARAM]["schema"]
+    return re.compile(str(schema["items"]["pattern"]))
+
+
+def longest_field_name() -> str:
+    """The longest column name `brain.core.scope.Clause` will hold, found by asking it.
+
+    Derived rather than written down, so that the bound in the route's declared grammar is
+    compared against the model that enforces it instead of against a copy of the same number.
+    """
+    longest = ""
+    for length in range(1, 4097):
+        candidate = "a" * length
+        try:
+            Clause(field=candidate, op=Op.EQ, value="x")
+        except ValidationError:
+            break
+        longest = candidate
+    assert longest, "Clause accepts no field name at all, so there is nothing to bound"
+    return longest
+
+
+def test_the_route_declares_the_filter_it_answers() -> None:
+    """**The whole reason the filter has this shape.** FastAPI drops a query parameter no
+    signature names, without a word and with a 200 in front of it, so a console sending a
+    filter the route does not declare gets unfiltered rows back and shows them as the
+    matching ones. `console/tests/records-page.test.tsx` reads these names out of this
+    document and refuses to send anything absent from them, which is why a filter that works
+    and is not declared is a filter nothing will ever send.
+
+    Asserted over the document rather than over the signature, and over the item schema
+    rather than only the name, because the grammar is the half a client needs in order to
+    refuse a malformed term without spending a request.
+
+    Delete this and the parameter can be renamed, aliased away or dropped from the schema
+    while every behavioural test below still passes, at which point the console is back to
+    having no filter it is allowed to send.
+
+    Task ids: M32.5.2.1"""
+    parameters = declared_query_parameters()
+
+    assert FILTER_PARAM in parameters, "the route answers a filter it does not publish"
+    schema = parameters[FILTER_PARAM]["schema"]
+    assert schema["type"] == "array", "one term per occurrence, so the parameter repeats"
+    assert schema["items"]["pattern"], (
+        "a client cannot refuse a malformed term it is not told about"
+    )
+    assert isinstance(schema["maxItems"], int)
+    assert isinstance(schema["items"]["maxLength"], int)
+    # The pagination half of the same leaf, pinned here so that adding the filter cannot be
+    # what removes it.
+    assert "limit" in parameters
+
+
+def test_the_declared_filter_grammar_admits_only_terms_that_build_a_clause() -> None:
+    """The join between the parameter's declaration and `brain.core.scope.Clause`.
+
+    Everything the declaration lets through reaches `filter_scope`, which builds a `Clause`
+    out of it. If the grammar were the wider of the two, a term could pass validation and
+    then raise inside the route, and whether it raised would depend on how long a column name
+    somebody typed. The bound is not copied here: the longest name `Clause` accepts is found
+    by asking `Clause`, and the grammar is then required to stop one character later.
+
+    The refusals are the interesting half and each is a real shape: a term with no separator
+    at all, a term whose value is empty, which `check_grammar` refuses further down as a
+    predicate no projected row can satisfy, and a name outside the field pattern.
+
+    Delete this and the grammar can be widened to `.*`, at which point a filter is refused by
+    a `ValidationError` in the handler rather than by the parameter, and a malformed filter
+    starts being answered differently depending on which entity was asked for.
+
+    Task ids: M32.5.2.1"""
+    grammar = declared_term_pattern()
+    longest = longest_field_name()
+
+    admitted = ["sku:x", "a.b:x", "sku:a:b", "sku: leading space", "sku:%_\\", f"{longest}:x"]
+    for term in admitted:
+        assert grammar.fullmatch(term), f"{term!r} is refused and it is a term somebody means"
+        clauses = filter_scope([term]).clauses
+        assert len(clauses) == 1
+        assert clauses[0].field == term.split(FILTER_SEPARATOR, 1)[0]
+        assert clauses[0].op is Op.EQ
+
+    refused = ["sku", "sku:", "", FILTER_SEPARATOR + "x", "Sku:x", "1sku:x", f"{longest}a:x"]
+    for term in refused:
+        assert not grammar.fullmatch(term), f"{term!r} is admitted and nothing downstream wants it"
+
+    with pytest.raises(ValidationError):
+        # The reason the grammar has to stop where it does, stated as the failure it prevents.
+        Clause(field=f"{longest}a", op=Op.EQ, value="x")
+
+
+def test_a_term_splits_at_the_first_separator_so_a_value_may_contain_one() -> None:
+    """A column name cannot contain the separator and a value can, so the split is at the
+    first one and never the last. The same argument the console makes about its locked-cell
+    separator, and it has the same failure mode: split at the last one instead and
+    `sku:WEB:1001` becomes a filter on a column called `sku:WEB`, which is not a column
+    anybody has and is not the question that was asked.
+
+    Delete this and `partition` becomes `rpartition` in a tidy-up, and every filter whose
+    value contains a colon quietly asks about a different column.
+
+    Task ids: M32.5.2.1"""
+    clauses = filter_scope([f"sku{FILTER_SEPARATOR}WEB{FILTER_SEPARATOR}1001"]).clauses
+
+    assert len(clauses) == 1
+    assert clauses[0].field == "sku"
+    assert clauses[0].value == f"WEB{FILTER_SEPARATOR}1001"
+    # And the separator is one the field grammar cannot hold, which is what makes the split
+    # unambiguous rather than merely conventional.
+    with pytest.raises(ValidationError):
+        Clause(field=f"sku{FILTER_SEPARATOR}web", op=Op.EQ, value="x")
+
+
+def test_a_filter_on_a_column_the_caller_reads_reaches_the_statement_bound(
+    client: TestClient, rows: UnfilteredRows
+) -> None:
+    """**The positive case, and the one a guard tested only by its refusals never has.** A
+    route that ignored every filter would satisfy every leak test in this section and would
+    be the failure the console spent a constant refusing to commit: rows arrive, they are not
+    the filtered ones, and nothing says so.
+
+    Asserted on the compiled statement rather than on the rows, because the double here hands
+    back every seeded row whatever the query narrowed to. That is deliberate everywhere else
+    in this file and it is what makes this assertion honest: the route's job is to put the
+    caller's term into the WHERE clause, and the row plane's job, tested where the rows are,
+    is to turn that into rows.
+
+    Delete this and `filters=` can be dropped from the `RowRequest` the route builds, with
+    every refusal below still green because refusing everything is what they check.
+
+    Task ids: M32.5.2.1"""
+    response = ask(client, "u_wide", terms=["sku:WEB-1001"])
+
+    assert response.status_code == 200
+    assert rows.asked == 1, "the row source was never consulted, so nothing was filtered"
+    query = rows.seen[0]
+    assert query.certainly_empty is False
+    assert "WEB-1001" in query.statement.compile(dialect=DIALECT).params.values(), (
+        "the value did not arrive as a bound parameter, so it arrived some other way"
+    )
+    assert "fields ->> 'sku' = 'WEB-1001'" in rendered(query)
+
+
+def test_a_filter_never_replaces_the_scope_it_narrows_inside(
+    client: TestClient, rows: UnfilteredRows
+) -> None:
+    """**A filter narrows within the caller's row scope and can never widen it.** The scope,
+    the tool's own pin and the asker's filter are three predicates conjoined into one WHERE
+    clause, and the failure this catches is the filter arriving in place of the scope rather
+    than beside it: a caller restricted to one prefix asking about a row outside it would
+    then be asking the database for that row.
+
+    A person who holds a prefix scope asks for a row in the other prefix, and both fragments
+    have to survive into the statement. Asserted on the rendered SQL because the double
+    ignores the statement, so the rows coming back say nothing about what was asked for.
+
+    Delete this and `pinned.and_(caller).and_(asked)` can lose its middle term, which reads in
+    review as a simplification and is a table handed to a stranger.
+
+    Task ids: M32.5.2.1"""
+    assert ask(client, "u_prefix", terms=["sku:MNT-2002"]).status_code == 200
+
+    sql = rendered(rows.seen[0])
+    # Matched up to the prefix value rather than through it, because the renderer doubles the
+    # LIKE wildcard for the driver's paramstyle and a test spelling `%%` would be asserting on
+    # that rendering rather than on the predicate.
+    assert "->> 'sku' LIKE 'WEB-" in sql, "the caller's own scope is no longer in the statement"
+    assert "->> 'sku' = 'MNT-2002'" in sql, "the asker's filter is no longer in the statement"
+    assert "entity = 'price_list'" in sql, "the tool's pin is no longer in the statement"
+
+
+def test_whether_a_column_may_be_filtered_on_moves_with_the_caller_and_not_the_entity(
+    client: TestClient, rows: UnfilteredRows
+) -> None:
+    """**The rule the whole filter rests on, stated as the thing that distinguishes it from
+    the wrong implementation.** A filter is answered by which rows come back, so a filter on
+    a column the response withholds reads that column one comparison at a time. The bound is
+    therefore the compiled projection, which is what this caller may read, and never the
+    entity's classification, which is what the entity has.
+
+    Both are in reach at the route, and the difference between them is invisible in a diff:
+    a check written against `classification.columns()` would admit `cost` for everybody,
+    because the price list does classify a cost. Two people ask the same question about the
+    same column here, and only the one entitled to read it reaches the database.
+
+    Delete this and the projection check can move to the route, or be widened to the
+    classification, with every other test in this section still passing, because every other
+    test looks at one person.
+
+    Task ids: M32.5.2.1"""
+    withheld = ask(client, "u_narrow", terms=[f"cost:{CANARY_COST}"])
+
+    assert withheld.status_code == 200
+    assert RecordPage.model_validate(withheld.json()).items == []
+    assert rows.asked == 0, "a filter on a column this caller cannot read reached the database"
+    assert CANARY_COST not in withheld.text, "the filter was echoed back into the answer"
+
+    entitled = ask(client, "u_wide", terms=[f"cost:{CANARY_COST}"])
+
+    assert entitled.status_code == 200
+    assert rows.asked == 1, "the caller entitled to the column cannot filter on it either"
+    assert f"= '{CANARY_COST}'" in rendered(rows.seen[0])
+
+
+def test_a_filter_on_a_column_the_caller_may_not_read_is_answered_as_one_that_does_not_exist(
+    client: TestClient, rows: UnfilteredRows
+) -> None:
+    """**Denied and absent are one answer, at the column level.** A refusal naming the column
+    would confirm the column exists, and a caller comparing a refusal against an empty page
+    reads a table's schema off the difference one guess at a time. It is the same argument
+    the 404 above makes about entities, one level down.
+
+    Compared as whole bodies rather than field by field, because a difference introduced later
+    will be in whichever field a narrower comparison did not name. There is no trace id to
+    exclude: both answers are a 200 with a page on it.
+
+    The two also take the same path through the row plane, which is the part a body comparison
+    cannot see: neither is fetched, so they are not distinguishable by how long they took
+    either.
+
+    Delete this and an unreadable column can start answering 422, or an unknown one can start
+    answering 404, and either difference maps the columns of every entity in the install.
+
+    Task ids: M32.5.2.1"""
+    denied = ask(client, "u_narrow", terms=[f"cost:{CANARY_COST}"])
+    absent = ask(client, "u_narrow", terms=[f"no_such_column:{CANARY_COST}"])
+
+    assert denied.status_code == absent.status_code == 200
+    assert denied.content == absent.content
+    assert rows.asked == 0, "one of the two was fetched, so they differ in more than the body"
+
+
+def test_a_filtered_empty_page_is_the_unfiltered_empty_page_byte_for_byte(
+    client: TestClient, rows: UnfilteredRows
+) -> None:
+    """**An empty page must not say why it is empty**, and the two ways of arriving at one
+    here could hardly be more different: the first fetches two rows and loses both to the
+    redactor, the second never opens the query at all.
+
+    `brain.core.redaction.ChannelPayload` suppresses the source, the timestamp and the
+    truncation flag when nothing survives, which is what makes this comparison possible at
+    all: a page naming the source it found nothing in would answer a question nobody may ask,
+    and a `fetched_at` would differ between any two requests whatever else did.
+
+    Delete this and a filtered empty page can grow a field the unfiltered one lacks - a
+    `filtered: true`, a source, an echo of the term - and each of them tells a caller that
+    their filter was the reason, which tells them there was something for it to exclude.
+
+    Task ids: M32.5.2.1"""
+    unfiltered = ask(client, "u_elsewhere")
+    assert rows.asked == 1, "the unfiltered page was never fetched, so it is empty for a reason"
+
+    filtered = ask(client, "u_elsewhere", terms=[f"cost:{CANARY_COST}"])
+    assert rows.asked == 1, "the filtered page was fetched, so the two are not the same event"
+
+    assert unfiltered.status_code == filtered.status_code == 200
+    assert RecordPage.model_validate(unfiltered.json()).items == []
+    assert unfiltered.content == filtered.content
+
+
+def test_two_terms_naming_one_column_answer_nothing_rather_than_either_of_them(
+    client: TestClient, rows: UnfilteredRows
+) -> None:
+    """Conjunction means what it means everywhere else in this system. Two terms on one column
+    are two clauses on one field, which `is_unsatisfiable` reads as a contradiction and
+    compiles to an empty page, exactly as two conflicting grants on one field do.
+
+    Pinned rather than left to be discovered, because the obvious improvement is to fold
+    repeated terms into a membership test, and that would make the asker's own narrowing the
+    one place in this system where combining two predicates produces a wider one.
+
+    Delete this and repeated terms can quietly become an OR, at which point a filter is no
+    longer something that only narrows.
+
+    Task ids: M32.5.2.1"""
+    response = ask(client, "u_wide", terms=["sku:WEB-1001", "sku:MNT-2002"])
+
+    assert response.status_code == 200
+    assert RecordPage.model_validate(response.json()).items == []
+    assert rows.asked == 0, "an impossible predicate was sent to the database anyway"
+
+
+def test_a_malformed_term_is_refused_identically_whatever_entity_was_asked_for(
+    client: TestClient, rows: UnfilteredRows
+) -> None:
+    """**A refusal that depended on the entity would be the enumeration this route's single
+    404 exists to prevent.** The term's grammar is declared on the parameter, so a malformed
+    one is refused before the handler runs and therefore before anything has been read about
+    which entity was named. Put the check in the handler instead, after the classification
+    lookup, and the same malformed term answers 422 for an entity that exists and 404 for one
+    that does not, which is a two-request oracle over the whole install.
+
+    Compared as whole bodies, and the bodies are `HTTPValidationError` rather than `ErrorBody`
+    on purpose: the console mirrors the declared grammar for the same reason it mirrors the
+    declared limit bounds, so a person never meets this. It is what a hand-edited address
+    gets.
+
+    Delete this and the parameter's pattern can move into the handler, which reads as putting
+    the validation where the error message can be friendlier.
+
+    Task ids: M32.5.2.1"""
+    known = ask(client, "u_wide", terms=["NOPE"])
+    unknown = ask(client, "u_wide", entity="finance_ledger", terms=["NOPE"])
+
+    assert known.status_code == unknown.status_code == 422
+    assert known.content == unknown.content
+    assert rows.asked == 0
+
+
+def test_more_terms_than_the_route_declares_are_refused_and_the_declared_number_is_accepted(
+    client: TestClient,
+) -> None:
+    """A repeated parameter is otherwise a statement whose size the caller chooses, and every
+    term is one more conjunct in the WHERE clause.
+
+    The number is read out of the document rather than written here, so that a bound which is
+    declared and not enforced fails this, and so does one enforced and not declared. Both
+    halves are asked: a request carrying exactly the declared number is answered, which is the
+    sibling that stops the bound being tightened until nothing passes.
+
+    Delete this and `maxItems` becomes decoration, or the enforced number drifts below the
+    declared one and a client built from the document starts getting 422s it was told it
+    would not.
+
+    Task ids: M32.5.2.1"""
+    declared = int(declared_query_parameters()[FILTER_PARAM]["schema"]["maxItems"])
+
+    at_the_bound = ask(client, "u_wide", terms=[f"sku:v{i}" for i in range(declared)])
+    over_it = ask(client, "u_wide", terms=[f"sku:v{i}" for i in range(declared + 1)])
+
+    assert at_the_bound.status_code == 200
+    assert over_it.status_code == 422
+    # The constant and the document are the same number by construction; what this catches is
+    # a declaration that stopped reading the constant, not a change to its value.
+    assert declared == MAX_FILTERS
+
+
+def test_the_filter_bounds_are_wide_enough_for_the_entities_this_application_ships() -> None:
+    """The bounds asserted against something outside themselves, which is the only way a
+    figure can be checked at all: a test comparing a constant with the constant it imported
+    is green for every value that constant could hold.
+
+    A caller must be able to filter on every column of the widest entity this application
+    registers, or the bound is a limit on the product rather than on a statement's size. And
+    one term must be able to carry the longest column name `Clause` accepts plus a separator
+    plus a value, or a legitimately long column name is unfilterable by everybody.
+
+    Delete this and either bound can be tightened to a number that looks sensible and refuses
+    a question somebody is entitled to ask.
+
+    Task ids: M32.5.2.1"""
+    from brain.tools.startup import BUILT_IN_ROW_ENTITIES
+
+    widest = max(len(c.columns()) for c in BUILT_IN_ROW_ENTITIES)
+
+    assert widest <= MAX_FILTERS, "a caller cannot filter on every column they can already see"
+    assert len(longest_field_name()) + len(FILTER_SEPARATOR) < MAX_FILTER_TERM_LENGTH, (
+        "the longest column name Clause accepts cannot be named in one term, so a column "
+        "somebody is entitled to read is unfilterable by everybody"
+    )
+
+
+def test_the_route_builds_no_statement_out_of_a_formatted_string() -> None:
+    """M15.1.3's second half, applied to the module that now takes a value from a query string
+    and turns it into a predicate. A filter value is data and is bound as a parameter by
+    `compile_where`; nothing here composes a fragment, and this is what says so about the
+    source rather than about the intention.
+
+    Read over the parsed syntax tree rather than over the text, because a check that searched
+    for the word SQL would be satisfied by the docstring above explaining the rule.
+
+    Delete this and the first `text(f"...")` written in a route goes in unremarked, at which
+    point the value the caller typed is syntax.
+
+    Task ids: M32.5.2.1"""
+    from brain.knowledge.rows import assert_no_sql_is_built_by_interpolation
+
+    assert_no_sql_is_built_by_interpolation(api_routes)
+
+
+def test_a_filtered_page_carries_no_count_of_what_the_filter_removed(client: TestClient) -> None:
+    """The count rule and the filter meeting, which is where somebody adds "3 matching" and
+    it reads as helpful. A count behind a permission predicate is the hidden-item leak
+    whatever it is called, and a count beside a filter is that leak with a reason attached:
+    the reader now knows both how many there are and that their filter was what removed the
+    rest.
+
+    Asserted on the raw body rather than on the parsed model, because a model whose default is
+    None reads as absent whatever the server sent.
+
+    Delete this and `total` becomes an obviously useful addition the moment a grid has a
+    filter box on it.
+
+    Task ids: M32.5.2.1"""
+    response = ask(client, "u_wide", terms=["sku:WEB-1001"])
+
+    assert response.json()["total"] is None
+    for banned in ("matching", "matches", "withheld", "hidden", "of 2", "1 of"):
+        assert banned not in response.text.lower()

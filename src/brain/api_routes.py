@@ -35,6 +35,45 @@ a permission predicate is the "showing 3 of 47" leak with a different label on i
 caller gets instead is `truncated`, which says there is more without saying how much more.
 See `A_TOTAL_IS_A_HIDDEN_ITEM_COUNT`.
 
+**A filter is a question about a column's values, so it is bounded by what the caller may
+read.** `?filter=sku:WEB-1001` is answered by which rows come back, and asked of a column the
+response withholds it is a value oracle: `filter=cost:400` returning a row says the cost is
+400, through a column the SELECT list was careful never to fetch. The bound is enforced where
+the SELECT list is compiled, by `brain.knowledge.rows._compile_filters`, off the same
+`compile_projection` output `read_rows` builds its SELECT from. This module supplies no list
+of its own, and the list it happens to be holding is the wrong one: `classification.columns()`
+is every column the entity classifies rather than the ones this caller reaches, so a check
+written here against the one thing in reach would admit exactly the filter the projection
+refuses. See `A_FILTER_IS_A_QUESTION_ABOUT_A_COLUMNS_VALUES`.
+
+**The parameter is declared, because an undeclared one is dropped in silence.** FastAPI
+ignores a query parameter no signature names, so a console sending a filter against a route
+declaring only `limit` would be answered with unfiltered rows and nothing saying so.
+`console/src/pages/recordsQuery.ts` refuses to render a filter box for that reason and reads
+the declared names out of the generated document, so the grammar has to travel in the
+document rather than in a convention. It does: one repeatable `filter`, each occurrence a
+`column:value` term, with the term's shape declared as a pattern and both bounds as
+`maxLength` and `maxItems`. See `AN_UNDECLARED_PARAMETER_IS_DROPPED_WITHOUT_A_WORD`.
+
+Rejected: `filter.<column>=<value>`, which is the spelling the console named when it argued
+itself out of sending one. FastAPI declares parameters from a signature, and which columns an
+entity has is not known until the path parameter has been read, so such a name reaches no
+document at all. A name that reaches no document is a name the console has already, correctly,
+decided never to send.
+
+Rejected: refusing a filter that names a column this caller may not read. A refusal is an
+answer to "is there a column called that", which is the question the 404 above spends itself
+preventing one level up. An unreadable column and an unknown one compile to the same
+unsatisfiable predicate, skip the same fetch and produce the same empty page, and the only
+place either is named is a log line an operator reads.
+
+Rejected: prefix and membership operators beside equality. Both are safe under the same
+argument, and neither is safe under the argument that matters, which is what happens the day
+the projection bound regresses. With equality a leak costs one request per guessed value;
+with a prefix the same leak is a binary search, and a column's contents fall out in the
+length of the value rather than in the size of its domain. Equality is the operator a grid's
+cell actually offers, so the narrower one is also the one somebody asked for.
+
 **The redactor is the only path to a response body.** The handler produces a `TypedResult`,
 `serialise_for_channel` turns it into a `ChannelPayload`, and `RecordPage` is built from that
 payload and from nothing else. There is no branch here that reads a record, a trace or a
@@ -61,19 +100,20 @@ made would put three fabricated values into the one place the platform's reach i
 The agent term of the invariant enters at `gate.invoke` and `gate.leash.decide`, and it is
 deliberately absent here rather than faked.
 
-Task ids: M31.1.4.1, M31.1.4.3, M31.1.4.4
+Task ids: M31.1.4.1, M31.1.4.3, M31.1.4.4, M32.5.2.1
 """
 
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Annotated, Any, Final
 
 import structlog
 from fastapi import APIRouter, Depends, Query, Request
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, StringConstraints
 
 from brain.api import API_PREFIX, COMMON_RESPONSES, Page
 from brain.core.entitlement import EntitlementSet
@@ -84,6 +124,7 @@ from brain.core.redaction import (
     require_typed_result,
     serialise_for_channel,
 )
+from brain.core.scope import Clause, Op, Scope
 from brain.gate.admission import admit
 from brain.gate.context import Channel
 from brain.gate.resolve import EntitlementCache, EntitlementStore, VersionSource, resolve
@@ -125,6 +166,106 @@ A_TOTAL_IS_A_HIDDEN_ITEM_COUNT: Final = (
     "matches. `truncated` says there is more and says nothing about how much more, which is "
     "the whole of what a person paging through a list actually needs."
 )
+
+#: Why a caller may filter only on a column they could already read, and why this module
+#: enforces none of it.
+A_FILTER_IS_A_QUESTION_ABOUT_A_COLUMNS_VALUES: Final = (
+    "A filter is answered by which rows come back, so a filter on a column the response "
+    "withholds reads that column one comparison at a time: cost=400 returning a row says "
+    "the cost is 400 without the figure ever being in the body. The bound is therefore the "
+    "compiled projection and nothing else, applied where the projection is compiled, so a "
+    "column that may be filtered on is exactly a column that may be selected. A second list "
+    "here would be the wrong list: this route holds the entity's classification, which names "
+    "every column the entity has rather than the ones this caller reaches, and a check "
+    "against it would admit precisely the filter the projection refuses."
+)
+
+#: Why the filter travels as a declared parameter rather than as a name built per entity.
+AN_UNDECLARED_PARAMETER_IS_DROPPED_WITHOUT_A_WORD: Final = (
+    "FastAPI ignores a query parameter no signature names, and answers as though it had not "
+    "been sent. A filter dropped that way is the worst failure available on a grid, because "
+    "the rows still arrive and are read as the matching ones, and nothing on the screen or "
+    "in the response says otherwise. So the parameter is declared, the declaration carries "
+    "the grammar into the document, and the console decides what it may send by reading the "
+    "document rather than by agreeing with this module out of band."
+)
+
+
+# ------------------------------------------------------- the asker's own filter
+
+#: The wire spelling of the parameter one filter term arrives in, repeated once per term.
+#: Singular because each occurrence carries one term. The Python parameter is `filters`,
+#: because `filter` is a builtin and shadowing one in a signature is refused by the linter.
+FILTER_PARAM: Final = "filter"
+
+#: What separates the column from the value inside one term. A colon because
+#: `brain.core.scope.Clause` constrains a field name to `[a-z][a-z0-9_.]*`, which cannot hold
+#: one, so the split at the first colon is unambiguous and a value may carry as many more as
+#: it likes. The same argument the console makes for its locked-cell separator, and it is a
+#: property rather than a coincidence: a test splits every term the declared pattern admits.
+FILTER_SEPARATOR: Final = ":"
+
+#: The longest term this route accepts. An equality filter is a value somebody read off a
+#: cell and typed back, so the bound is generous for a business identifier and far short of
+#: the free text nobody filters on by equality.
+MAX_FILTER_TERM_LENGTH: Final = 256
+
+#: How many terms one request may carry. Every term is one more conjunct in the WHERE clause,
+#: and a caller sending more of them than any table here has columns is probing rather than
+#: filtering. Bounded rather than left open because a repeated parameter is otherwise a
+#: statement whose size the caller chooses.
+#:
+#: A resource bound and not a permission one, which is why only its lower end is asserted:
+#: it must admit every column of the widest entity this application ships, or it is a limit
+#: on the product. Raising it survives every test in this section, deliberately, because
+#: nothing about who may see what changes with the number.
+MAX_FILTERS: Final = 16
+
+#: The grammar of one term, declared on the parameter so it reaches the generated document
+#: and a client can refuse a malformed one without spending a request.
+#:
+#: The field half is a subset of `Clause.field`'s own pattern, bounded at that model's own
+#: 120 characters, so every term this admits builds a `Clause`; the bound is not copied into
+#: a test, it is derived there by asking `Clause` what it accepts. The value half excludes
+#: the two characters that would let one term span two lines in a log and admits everything
+#: else, including further colons, because a value is data and is bound as a parameter.
+FILTER_TERM_PATTERN: Final = r"^[a-z][a-z0-9_.]{0,119}:[^\r\n]+$"
+
+#: One term as the parameter carries it. The constraints sit on the item rather than on the
+#: sequence, because pydantic applies a pattern given to the sequence *to the sequence*, which
+#: is a TypeError at request time rather than a validation failure.
+FilterTerm = Annotated[
+    str, StringConstraints(pattern=FILTER_TERM_PATTERN, max_length=MAX_FILTER_TERM_LENGTH)
+]
+
+
+def filter_scope(terms: Sequence[str]) -> Scope:
+    """The asker's own narrowing, as the same `Scope` the system narrows with.
+
+    A `Scope` rather than a filter type belonging to this route, and that is the safety
+    argument rather than a convenience. A `Scope` is a conjunction of validated field names, a
+    closed operator set and values `compile_where` binds as parameters, so there is no value a
+    caller can send that becomes syntax; `RowRequest.filters` is already one, so nothing is
+    translated on the way in and nothing can be lost in the translation. It also means the
+    asker's narrowing and the system's narrowing compose through the one `and_` in
+    `compile_row_query`, which is why a filter can only ever shrink the row scope.
+
+    Every term is an equality, and two terms naming one column are two clauses on one field,
+    which `is_unsatisfiable` reads as a contradiction and compiles to an empty page. That is
+    the same answer two conflicting grants on one field get, and it is conjunction meaning
+    what it means everywhere else in this system rather than a rule invented here.
+
+    `partition` splits at the first separator, so a value may contain one and a field name
+    cannot. Total over anything `FILTER_TERM_PATTERN` admits, and the parameter's declaration
+    is what guarantees the input matched it: a malformed term is refused before this function
+    is reached, which is also why a malformed term cannot be answered differently depending on
+    which entity was asked for.
+    """
+    clauses: list[Clause] = []
+    for term in terms:
+        column, _, value = term.partition(FILTER_SEPARATOR)
+        clauses.append(Clause(field=column, op=Op.EQ, value=value))
+    return Scope(clauses=tuple(clauses))
 
 
 # ------------------------------------------------------------------- the wiring
@@ -356,8 +497,11 @@ async def records(
     entity: str,
     asked: Asked,
     limit: Annotated[int, Query(ge=1, le=MAX_ROW_LIMIT)] = DEFAULT_ROW_LIMIT,
+    filters: Annotated[
+        tuple[FilterTerm, ...], Query(alias=FILTER_PARAM, max_length=MAX_FILTERS)
+    ] = (),
 ) -> RecordPage:
-    """Rows of one entity, at this caller's reach, redacted.
+    """Rows of one entity, at this caller's reach, narrowed by their own filter, redacted.
 
     The reader is handed the reach, which is what puts the scope predicate inside the query
     rather than around the result. The redactor is handed the same object again, which is
@@ -367,7 +511,22 @@ async def records(
     answer an unknown entity gets. An empty page would be the friendlier response and it is
     the leak: it says the entity exists here, and a caller comparing an empty page against a
     404 maps the installation by trying names.
+
+    The filter is turned into a scope before anything about the entity has been looked at,
+    and that ordering is defence in depth rather than a live guard: moving the call below the
+    404 changes no answer today and was measured doing so, because the grammar declared on the
+    parameter makes `filter_scope` total over everything that reaches it. It is written here
+    for the day the parse grows a refusal of its own, since a filter refused after the entity
+    lookup would answer one status for an entity that exists and another for one that does
+    not, which is the enumeration this route's single 404 exists to prevent. What holds that
+    property up today is the declaration, and removing the pattern from it fails three tests.
+
+    Nothing here checks the filter against the entity's columns. `classification` is in scope
+    and would answer such a check, and the answer would be wrong: it names every column the
+    entity classifies rather than the ones this caller reaches. See
+    `A_FILTER_IS_A_QUESTION_ABOUT_A_COLUMNS_VALUES`.
     """
+    narrowing = filter_scope(filters)
     registry = getattr(request.app.state, "tools", None)
     if not isinstance(registry, ToolRegistry):
         # A process-level fault, identical for every caller and every entity, so it discloses
@@ -408,7 +567,10 @@ async def records(
         # resolution costs; running the reader off the event loop is the part that is this
         # module's business.
         raw = await asyncio.to_thread(
-            handler, RowRequest(limit=limit), entitlement=asked.reach, now=asked.now
+            handler,
+            RowRequest(filters=narrowing, limit=limit),
+            entitlement=asked.reach,
+            now=asked.now,
         )
         # The boundary check rather than a cast. A handler that returned a dictionary is
         # refused here, where it is a contract violation by a tool, rather than being walked.
