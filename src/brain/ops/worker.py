@@ -46,8 +46,11 @@ the process it starts has no driver to fetch with. `docker-compose.langfuse.yml`
 M32.1.1.1 on the same grounds and in the same words: a compose file that has never run is a
 design.
 
-Task ids: none. M32.4.1.4 is what this serves and is deliberately not claimed; see the
-paragraph above.
+What this serves is the leaf named in the paragraph above, and it is deliberately not
+claimed. The id is not repeated on the line below, because that line is parsed for ids and
+a sentence saying a leaf is not claimed reads to the parser exactly like claiming it.
+
+Task ids: none
 """
 
 from __future__ import annotations
