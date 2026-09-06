@@ -2,11 +2,13 @@
 
 Decisions and access I cannot resolve alone. Served at `/build/needs-rupash`.
 
-**3 items are open: 32, 33 and 34.** 32 is three passwords, and it is what stands between the
-console and a working sign-in. 33 is one sentence from you about what "shadow-pinned thirty
-days" means, and it decides a safety property rather than a feature. 34 is new today and it
-blocks local embedding: the model we chose produces vectors of one width and the corpus column
-holds another, and which of the two moves is a decision with a cost. Answering 29 turned up that there is no
+**4 items are open: 32, 33, 34 and 35.** 32 is three passwords, and it is what stands between
+the console and a working sign-in. 33 is one sentence from you about what "shadow-pinned
+thirty days" means, and it decides a safety property rather than a feature. 34 blocks local
+embedding: the model we chose produces vectors of one width and the corpus column holds
+another, and which of the two moves is a decision with a cost. 35 is the smallest of the four
+and needs only a yes or a no: renaming the repository broke the deploy this afternoon, it is
+fixed and live again, and what is left is whether to rename the container image to match. Answering 29 turned up that there is no
 Keycloak deployed at all, which is the real reason nobody can sign in. It is written and
 sized from measurement now; it needs three secrets I will not create on your behalf.
 
