@@ -49,8 +49,11 @@ without the thing they act on would be a mechanism with nothing to call it. A ch
 holds state assembled under an entitlement resolved at the time the run started, which is
 the argument for both, and it belongs beside the resume that has to make the check.
 
-Task ids: none. M32.4.1.2 is what this serves and is deliberately not claimed; see the
-paragraph above.
+What this serves is the leaf named in the paragraph above, and it is deliberately not
+claimed. The id is not repeated on the line below, because that line is parsed for ids and
+a sentence saying a leaf is not claimed reads to the parser exactly like claiming it.
+
+Task ids: none
 """
 
 from __future__ import annotations

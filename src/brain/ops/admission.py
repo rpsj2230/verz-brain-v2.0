@@ -55,8 +55,8 @@ This is the capacity half of admission. `brain.gate.admission` is the unrelated 
 what the channel and the strength of a sign-in take away from what a person holds. Nothing
 here touches entitlements, and nothing there knows the machine is busy.
 
-Task ids: M22.1.1, M22.1.2, M22.1.3, M22.1.4, M22.1.5, M22.2.1, M22.2.2, M22.2.3,
-M22.2.4, M22.3.1, M22.3.2, M22.3.4
+Task ids: M22.1.1, M22.1.2, M22.1.3, M22.1.4, M22.1.5, M22.2.1, M22.2.2, M22.2.3
+Task ids: M22.2.4, M22.3.1, M22.3.2, M22.3.4
 """
 
 from __future__ import annotations

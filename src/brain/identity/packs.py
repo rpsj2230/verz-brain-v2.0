@@ -29,7 +29,12 @@ resolver that could see roles is one refactor away from consulting them.
 M1.4.3 names a `capability_pack` table and M1.4.1 a `capability_grant` table. These are
 the types and their rules; the tables belong to whoever owns `src/brain/tables`.
 
-Task ids: M1.4.2, M1.4.3, and the subject half of M1.5.3
+A grant's subject may be a person or a team, which is half of what M1.5.3 asks for. That
+leaf is claimed by `brain.identity.teams`, which owns `TeamGrant` and the rest of it, and
+is deliberately not repeated below: the line is parsed for ids, so naming a leaf there to
+say half of it is here credits the whole of it.
+
+Task ids: M1.4.2, M1.4.3
 """
 
 from __future__ import annotations

@@ -29,9 +29,12 @@ asker's scopes and the departments the question named, and from nothing else. It
 sees a row, so it cannot count what it is hiding, and a department that exists but is out
 of reach produces exactly the text a department that does not exist produces.
 
-Task ids: M2.1.1, M2.1.4, M2.1.5, M2.2.1, M2.2.2, M2.2.3, M2.2.4. The table shapes
-(M2.1.1, M2.2.1) are the domain records only: no SQLAlchemy model and no migration is
-written here, and M2.1.5 is the check itself rather than its wiring into CI.
+The table shapes here are the domain records only: no SQLAlchemy model and no migration is
+written in this module, and the collision check is the check itself rather than its wiring
+into CI. The qualification sits above the line rather than on it, because that line is
+parsed for ids and prose on it is read as claims whatever it says about them.
+
+Task ids: M2.1.1, M2.1.4, M2.1.5, M2.2.1, M2.2.2, M2.2.3, M2.2.4
 """
 
 from __future__ import annotations

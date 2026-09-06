@@ -283,6 +283,15 @@ def sweep_traceability() -> None:
     sweep makes that claim checkable: if no test mentions the id, the claim is unproven
     and the tracker would show a task as done that nothing verifies.
     """
+    # The shape of the `Task ids:` lines is checked before anything is read off them, and
+    # that ordering is the point rather than tidiness. Every check below reads those lines,
+    # so a malformed one makes all of them report confidently about the wrong ids: a line
+    # ending in a comma silently drops its continuation, and prose on a line saying a leaf is
+    # not claimed claims it. Reporting "all traceable" from a line nobody parsed correctly is
+    # worse than reporting nothing. Collected into the same findings list rather than raised
+    # separately, so one run tells you everything wrong with the record at once.
+    findings: list[str] = list(_malformed_task_lines())
+
     # Read claims from the `Task ids:` line only, never from body prose. A file that says
     # "M24.1 is the chain logic only, M24.1.5 needs a decision" is discussing those ids,
     # not claiming them, and counting prose turns every honest caveat into a false claim.
@@ -305,7 +314,7 @@ def sweep_traceability() -> None:
     # `covered_modules` is non-empty the moment any test file exists, so the sweep passed
     # unconditionally and printed "all traceable" while checking nothing. It ran green in
     # CI and on every push for as long as it has existed.
-    findings: list[str] = []
+    #  already holds any malformed-line findings from above.
     for tid, src in sorted(claimed.items()):
         if tid in proven:
             continue
@@ -378,6 +387,56 @@ def sweep_traceability() -> None:
     if phantom:
         print(f"      {', '.join(phantom)}")
         print("      name the leaves under each one individually, or Reopens: the claim")
+
+    # And the shape of the line itself, which is not a third direction but the thing that
+    # decides whether any of the three above read what the author meant. This raises rather
+    # than notes, because both failures it catches are silent and both have happened.
+
+
+#: What may appear on a `Task ids:` line once the ids are removed: separators, and the word
+#: that means there are none. Anything else is prose on a line that is parsed for ids.
+_TASK_LINE_RESIDUE_RE = re.compile(r"^[\s,;.]*(?:none[\s,;.]*)?$", re.I)
+
+
+def _malformed_task_lines() -> list[str]:
+    """`Task ids:` lines that do not say what their author thinks they say.
+
+    Two failures, both silent, both of which happened here on 2026-09-06.
+
+    **A disclaimer on the line is a claim.** Three modules read `Task ids: none. M32.4.1.2 is
+    what this serves and is deliberately not claimed`. The line is parsed for ids and the
+    sentence refusing the leaf contains the leaf, so all three claimed exactly what they said
+    in words they were not claiming. `brain.status.claimed_ids` already records this lesson
+    from the other record: a commit body listing ten ids under "Deliberately NOT claimed, with
+    the reason" claimed all ten. The parser cannot be given a concept of negation reliably,
+    because "not M0.6.5", "M0.6.5 is not done" and "blocked: M0.6.5" all read identically. So
+    the rule is positional there and positional here: the line carries ids, or the word none,
+    and no argument. The argument goes in the paragraph above, where nothing parses it.
+
+    **A wrapped line drops its continuation.** `TASK_LINE_RE` is anchored per line, so ids
+    after the wrap are invisible. I did this to `brain/app.py` an hour after writing the rule
+    above: nine ids became six, and the sweep reported "all traceable" because it never saw
+    the other three. A trailing comma is what that looks like from here. Repeat the whole
+    `Task ids:` prefix on the next line instead; `findall` reads every one of them.
+    """
+    findings: list[str] = []
+    for path in SRC.rglob("*.py"):
+        if path == Path(__file__).resolve():
+            continue
+        where = path.relative_to(REPO)
+        for line in TASK_LINE_RE.findall(path.read_text(encoding="utf-8")):
+            if line.rstrip().endswith(","):
+                findings.append(
+                    f"{where}: a Task ids: line ends in a comma, so anything on the next "
+                    f"line is not read as a claim: {line.strip()!r}"
+                )
+            residue = TASK_ID_RE.sub("", line)
+            if not _TASK_LINE_RESIDUE_RE.match(residue):
+                findings.append(
+                    f"{where}: a Task ids: line carries prose, which is parsed for ids "
+                    f"whatever it says about them: {line.strip()!r}"
+                )
+    return findings
 
 
 def _claims_that_name_no_leaf() -> tuple[str, ...]:

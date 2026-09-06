@@ -90,7 +90,11 @@ application is the one `brain.tools.startup.build_registry` returns and `brain.a
 puts on `app.state`, so a piece call cannot be planned against a registry somebody
 assembled that afternoon.
 
-Task ids: M32.6.1.3
+M32.6.1.3 is what this serves and only half of it is built: there is no transport from the
+sandbox and no dispatcher, both stated above. The commit trailer says Contributes to rather
+than Closes, and this line agrees with it rather than contradicting it.
+
+Task ids: none
 """
 
 from __future__ import annotations

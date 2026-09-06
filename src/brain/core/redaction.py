@@ -56,8 +56,8 @@ the same reason as `brain.audit.ledger`.
 Scope: this is domain logic. Nothing here touches a database, a channel or a model. The
 policy is a value passed in, not a table read.
 
-Task ids: M4.1.1, M4.1.2, M4.1.3, M4.1.4, M4.1.5, M4.1.6, M4.2.3, M4.2.5, M4.3.1, M4.3.2,
-M4.3.3, M4.3.4, M4.4.1, M4.4.2, M4.4.4
+Task ids: M4.1.1, M4.1.2, M4.1.3, M4.1.4, M4.1.5, M4.1.6, M4.2.3, M4.2.5
+Task ids: M4.3.1, M4.3.2, M4.3.3, M4.3.4, M4.4.1, M4.4.2, M4.4.4
 """
 
 from __future__ import annotations

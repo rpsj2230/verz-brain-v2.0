@@ -38,8 +38,8 @@ transition is the part that actually goes wrong.
 Nothing in this module performs I/O, imports a provider SDK, or touches the database. It
 is the policy; `brain.models` will grow the driver beside it.
 
-Task ids: M5.2.1, M5.2.3, M5.3.1, M5.3.2, M5.4.1, M5.4.2, M5.4.4, M5.4.5, M5.4.6,
-M5.5.1, M5.5.2, M5.5.3, M5.5.4
+Task ids: M5.2.1, M5.2.3, M5.3.1, M5.3.2, M5.4.1, M5.4.2, M5.4.4, M5.4.5, M5.4.6
+Task ids: M5.5.1, M5.5.2, M5.5.3, M5.5.4
 """
 
 from __future__ import annotations

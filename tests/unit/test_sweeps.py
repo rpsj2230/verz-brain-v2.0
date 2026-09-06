@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 
+from brain import status as status_module
 from brain.core import department
 from brain.ops import sweeps
 
@@ -92,6 +93,137 @@ def test_a_registered_tool_whose_name_breaks_the_grammar_is_a_finding() -> None:
         sweeps._registered_tool_names = original
 
     assert any("NotAToolName" in finding for finding in raised.value.findings)
+
+
+def test_a_task_ids_line_carrying_prose_is_refused() -> None:
+    """**The disclaimer that claims what it disclaims.** Three modules read `Task ids: none.
+    M32.4.1.2 is what this serves and is deliberately not claimed`. The line is parsed for
+    ids and the sentence refusing the leaf contains the leaf, so each claimed precisely what
+    it said in words it was not claiming.
+
+    `brain.status.claimed_ids` already carries this lesson from the other record: a commit
+    body listing ten ids under "Deliberately NOT claimed, with the reason" claimed all ten.
+    A parser cannot be given a concept of negation reliably, because "not M0.6.5", "M0.6.5 is
+    not done" and "blocked: M0.6.5" all read the same. So the rule is positional in both
+    places: the line carries ids, or the word none, and the argument goes above it.
+
+    `packs.py` was the costly version. It read "and the subject half of M1.5.3", so a leaf
+    the module half implements was credited whole.
+
+    Delete this and the convention survives only as long as everybody remembers it, which is
+    how five modules came to break it."""
+    findings = sweeps._malformed_task_lines()
+    assert findings == [], f"the tree does not satisfy its own rule: {findings}"
+
+    class _Claiming:
+        def __init__(self, line: str) -> None:
+            self._line = line
+
+        def read_text(self, **kwargs: Any) -> str:
+            del kwargs
+            return f"Task ids: {self._line}\n"
+
+        def relative_to(self, other: Any) -> str:
+            del other
+            return "stand_in.py"
+
+    class _OneFile:
+        def __init__(self, line: str) -> None:
+            self._line = line
+
+        def rglob(self, pattern: str) -> list[Any]:
+            del pattern
+            return [_Claiming(self._line)]
+
+    original = sweeps.SRC
+    try:
+        sweeps.SRC = _OneFile("none. M0.6.5 is deliberately not claimed")  # type: ignore[assignment]
+        prose = sweeps._malformed_task_lines()
+        sweeps.SRC = _OneFile("M0.6.5, M0.6.6")  # type: ignore[assignment]
+        clean = sweeps._malformed_task_lines()
+        sweeps.SRC = _OneFile("none")  # type: ignore[assignment]
+        none_only = sweeps._malformed_task_lines()
+    finally:
+        sweeps.SRC = original
+
+    assert prose, "a line saying a leaf is not claimed, while naming it, was accepted"
+    assert clean == [], "a plain list of ids must not be a finding"
+    assert none_only == [], "the word none is how a module says it claims nothing"
+
+
+def test_a_task_ids_line_that_wraps_is_refused_because_the_rest_is_never_read() -> None:
+    """**I did this to `brain/app.py` an hour after writing the rule above.** `TASK_LINE_RE`
+    is anchored per line, so ids after a wrap are invisible. Nine claims became six and the
+    sweep reported "all traceable", because it never saw the other three.
+
+    It was not only mine. Three modules had been dropping their continuations for as long as
+    they have existed: `redaction.py` lost five ids, `routing.py` four and `admission.py`
+    four. Thirteen source claims that no traceability check had ever read.
+
+    A trailing comma is what a dropped continuation looks like from inside a single line,
+    which is why that is what this matches. The fix is to repeat the whole `Task ids:` prefix
+    on the next line, because `findall` reads every one of them.
+
+    Delete this and a line grows past a hundred characters, somebody wraps it, and the claims
+    after the wrap stop being checked with nothing anywhere going red."""
+
+    class _Claiming:
+        def __init__(self, line: str) -> None:
+            self._line = line
+
+        def read_text(self, **kwargs: Any) -> str:
+            del kwargs
+            return f"Task ids: {self._line}\nM0.6.6, M0.6.7\n"
+
+        def relative_to(self, other: Any) -> str:
+            del other
+            return "stand_in.py"
+
+    class _OneFile:
+        def __init__(self, line: str) -> None:
+            self._line = line
+
+        def rglob(self, pattern: str) -> list[Any]:
+            del pattern
+            return [_Claiming(self._line)]
+
+    original = sweeps.SRC
+    try:
+        sweeps.SRC = _OneFile("M0.6.4, M0.6.5,")  # type: ignore[assignment]
+        wrapped = sweeps._malformed_task_lines()
+        sweeps.SRC = _OneFile("M0.6.4, M0.6.5")  # type: ignore[assignment]
+        terminated = sweeps._malformed_task_lines()
+    finally:
+        sweeps.SRC = original
+
+    assert any("ends in a comma" in f for f in wrapped)
+    assert terminated == [], "a line that does not wrap must not be a finding"
+
+
+def test_a_malformed_task_line_actually_fails_the_sweep() -> None:
+    """**A mutation found this missing, and it is the defect this repository has shipped seven
+    times.** Both tests above call `_malformed_task_lines` directly, so replacing the `raise`
+    in `sweep_traceability` with a discard left them green: the findings were computed
+    correctly, returned correctly, and thrown away, and the sweep printed its usual three
+    notes and exited nought.
+
+    A check whose result nothing reads is not a check. It is more expensive than no check,
+    because it looks like one.
+
+    Driven by replacing the helper rather than by writing a malformed file, so this tests the
+    wiring and not the detection, which the two tests above already cover.
+
+    Delete this and the two above can both pass while the sweep ignores everything they
+    prove."""
+    original = sweeps._malformed_task_lines
+    try:
+        sweeps._malformed_task_lines = lambda: ["a deliberate finding"]  # type: ignore[assignment]
+        with pytest.raises(sweeps.SweepFailure) as raised:
+            sweeps.sweep_traceability()
+    finally:
+        sweeps._malformed_task_lines = original  # type: ignore[assignment]
+
+    assert "a deliberate finding" in raised.value.findings
 
 
 # ------------------------------------------------------------- dispatcher
@@ -560,19 +692,18 @@ def test_a_broken_claim_in_a_commit_is_reported_and_not_only_one_in_a_docstring(
     thirty two of the thirty seven found when this was written came from commits rather than
     from docstrings.
 
-    The expected set is recomputed here from `closed_task_ids` and the WBS rather than taken
-    from the helper, so this compares two readings of the same primary sources instead of
-    comparing the helper against itself.
+    **The first version of this test read the repository's own history and asserted it still
+    contained a broken claim.** It passed, then failed the moment the thirty two were
+    retracted, which is a test that depends on a defect being present to prove the check that
+    finds defects. The dependency runs the wrong way round: this must keep working precisely
+    when the tree is clean, which is nearly always.
+
+    So the commit reader is stubbed too, and the input is a broken claim that exists nowhere.
 
     Delete this and the helper can stop reading git entirely while every sweep stays green."""
     from brain.ops import sweeps
-    from brain.status import closed_task_ids, load_wbs
 
-    closed, _ = closed_task_ids(sweeps.REPO)
-    wbs = load_wbs(sweeps.REPO / "docs" / "wbs.json")
-    leaves = {leaf for module in wbs["modules"] for leaf in module["leaf_ids"]}
-    from_commits = closed - leaves
-    assert from_commits, "no commit claims a broken id, so this test cannot drive the helper"
+    invented = "M99.9.9"
 
     class _NoFiles:
         """A source tree with nothing in it, so only the commit half can contribute."""
@@ -581,14 +712,17 @@ def test_a_broken_claim_in_a_commit_is_reported_and_not_only_one_in_a_docstring(
             del pattern
             return []
 
-    original = sweeps.SRC
+    original_src = sweeps.SRC
+    original_reader = status_module.closed_task_ids
     try:
         sweeps.SRC = _NoFiles()  # type: ignore[assignment]
+        status_module.closed_task_ids = lambda *a, **k: ({invented}, [])  # type: ignore[assignment]
         reported = set(sweeps._claims_that_name_no_leaf())
     finally:
-        sweeps.SRC = original
+        sweeps.SRC = original_src
+        status_module.closed_task_ids = original_reader  # type: ignore[assignment]
 
-    assert reported == from_commits
+    assert invented in reported, "a broken claim made only in a commit was not reported"
 
 
 def test_the_counter_reports_nothing_rather_than_failing_without_a_repository() -> None:
