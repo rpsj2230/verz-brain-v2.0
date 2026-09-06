@@ -18,6 +18,7 @@ const REDACTION = "src/brain/core/redaction.py";
 const ERRORS = "src/brain/core/errors.py";
 const APP = "src/brain/app.py";
 const CONNECTOR_CONTRACT = "src/brain/connectors/contract.py";
+const ROUTING_ROUTES = "src/brain/routing_routes.py";
 
 /**
  * The members of one `enum.StrEnum`, member name to value, read from the Python source.
@@ -151,6 +152,43 @@ export function backendFilterGrammar(): FilterGrammar {
     ),
     maxFilters: Number(extractOne(source, /^MAX_FILTERS: Final = (\d+)$/m, "MAX_FILTERS")),
   };
+}
+
+/**
+ * One rung of the routing matrix, as `brain.routing_routes.RungView` answers it.
+ *
+ * The console renders a fixed column per field and there is no route that sends a schema, so
+ * a field added to the model and not to `MATRIX_COLUMNS` would arrive and be dropped with
+ * nothing on the screen looking wrong. Read from the model rather than from the console's own
+ * list, because two lists compared with each other agree for every value they could hold.
+ */
+export function backendRungViewFields(): string[] {
+  return backendModelFields(ROUTING_ROUTES, "RungView");
+}
+
+/**
+ * The four columns `brain.routing_routes.RungEdit` accepts.
+ *
+ * **The one thing on the matrix screen that must not drift in the permissive direction.**
+ * `role` is derived from a rung's position and provider, and the console showing an input for
+ * it would be offering a person a label the chain has already decided. The route forbids the
+ * key; this is how the console proves it does not offer one, against the route's own model
+ * rather than against a constant beside the form.
+ */
+export function backendRungEditFields(): string[] {
+  return backendModelFields(ROUTING_ROUTES, "RungEdit");
+}
+
+/**
+ * Every column `ops.routing_rung` carries, from the table that declares them.
+ *
+ * Read so that "the role is a column and is not editable" can be asserted from both
+ * originals at once: a role that stopped being a column would make the console's role
+ * column meaningless, and a role that became editable would make the derivation
+ * unenforceable, and neither is visible from the console's own files.
+ */
+export function backendRoutingRungColumns(): string[] {
+  return backendModelFields("src/brain/tables/routing.py", "RoutingRungRow");
 }
 
 /** The caller's own facts, as `brain.api_routes.CallerView` declares them. */

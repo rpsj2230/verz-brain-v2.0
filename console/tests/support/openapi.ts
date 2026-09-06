@@ -32,6 +32,9 @@ interface Parameter {
 
 interface Operation {
   readonly parameters?: readonly Parameter[];
+  readonly requestBody?: {
+    readonly content?: Record<string, { readonly schema?: { readonly $ref?: string } }>;
+  };
 }
 
 /** The whole document, parsed. Throws when it has not been generated. */
@@ -73,6 +76,46 @@ export function declaredQueryParameters(path: string, method: string): string[] 
     );
   }
   return names;
+}
+
+/**
+ * The schema of the body one operation accepts, with the `$ref` followed.
+ *
+ * The request body is where a write route states what it will take, and it is the half of a
+ * route's description that a console can be wrong about silently in the other direction from
+ * a query parameter: an undeclared query parameter is discarded, an undeclared body key is
+ * refused, and a form offering a bound the route does not hold spends a round trip producing
+ * `HTTPValidationError`. Both are read from the document rather than agreed out of band.
+ *
+ * FastAPI emits the body as a `$ref` into `components/schemas`, always, so the reference is
+ * resolved here rather than at each call site. A missing or unresolvable reference throws:
+ * returning an empty object would turn every bound checked against it into a comparison
+ * between two nothings, which is the failure this whole directory exists to prevent.
+ */
+export function declaredRequestBodySchema(
+  path: string,
+  method: string,
+): Record<string, unknown> {
+  const content = operation(path, method).requestBody?.content ?? {};
+  const reference = content["application/json"]?.schema?.$ref;
+  if (reference === undefined) {
+    throw new Error(
+      `${method.toUpperCase()} ${path} declares no JSON request body, so anything checked ` +
+        "against its shape is being checked against nothing.",
+    );
+  }
+  const name = reference.split("/").at(-1) ?? "";
+  const schemas = (apiDocument()["components"] as Record<string, unknown> | undefined)?.[
+    "schemas"
+  ] as Record<string, Record<string, unknown>> | undefined;
+  const found = schemas?.[name];
+  if (found === undefined) {
+    throw new Error(
+      `${reference} is not in the document's components, so the body's declared bounds ` +
+        "cannot be read. The document is stale or the reference shape has changed.",
+    );
+  }
+  return found;
 }
 
 /** The schema of one declared parameter, with its bounds as the route states them. */

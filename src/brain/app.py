@@ -35,6 +35,7 @@ from brain.identity.bearer import log_refusal, refusal_headers
 from brain.identity.oidc import SIGN_IN_PROMPT, TokenRefusedError
 from brain.migrate import run_migrations
 from brain.ops.wiring import DEFAULT_PROFILE
+from brain.routing_routes import router as routing_router
 from brain.session import (
     check_reachable,
     dispose,
@@ -370,6 +371,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # Mounted here and nowhere else. An unmounted router is the failure this repository keeps
     # finding, and the timeout middleware three paragraphs up is the most recent one.
     app.include_router(api_router)
+    # The routing matrix. A second router rather than more routes on the first, because the
+    # rules differ: `api_routes` answers about entities, where the name itself is enumerable,
+    # and this one answers about the model chain, where it is not. Both take the same
+    # `asking` dependency, which `api_routes` declares once and this imports.
+    app.include_router(routing_router)
 
     @app.get("/health/live", response_model=Health, tags=["health"])
     async def live() -> Health:

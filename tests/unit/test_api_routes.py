@@ -871,6 +871,20 @@ def test_me_publishes_no_list_of_what_the_caller_holds(client: TestClient) -> No
 
 
 # ------------------------------------------------------------- the mounted set
+#: The one value substituted for every path parameter under the prefix.
+#:
+#: A UUID string, because it has to satisfy each route's own annotation at once: `entity` is
+#: a `str` and takes anything, `rung_id` is a `uuid.UUID` and takes this. The reverse choice
+#: was what this test used to make, and a 422 about a malformed path parameter is not a 401,
+#: so a route would have failed here for a reason that has nothing to do with the gate.
+ANY_PATH_PARAMETER = "11111111-1111-4111-8111-111111111111"
+
+#: The methods a route under this prefix may declare. Read from the document per path rather
+#: than assumed, so a verb nobody here anticipated is still driven; listed at all so a key
+#: FastAPI adds beside the methods cannot be mistaken for one.
+HTTP_METHODS = ("get", "post", "put", "patch", "delete")
+
+
 def test_every_route_under_the_prefix_authenticates_its_caller() -> None:
     """**Asserted over what is mounted, not over what each route was written to do.** The
     failure this catches is a route added later without the dependency: it works, it is
@@ -880,17 +894,39 @@ def test_every_route_under_the_prefix_authenticates_its_caller() -> None:
     dependency that resolves to nothing, and because the property is about the response a
     stranger gets.
 
+    **Every declared method, not just GET.** Until 2026-09-06 this issued a GET at each path
+    and nothing else, so a path serving only a write was answered 405 by the router before
+    any dependency ran, and the assertion passed on a status that says nothing about
+    authentication. The first PATCH mounted under this prefix found it. A write is the route
+    where this matters most, and it was the one shape the check could not see.
+
     Delete this and the next route under this prefix is public until somebody notices."""
     app: FastAPI = create_app(Settings(env="development"))
-    paths = [p for p in app.openapi()["paths"] if p.startswith(API_PREFIX)]
+    document = app.openapi()["paths"]
+    paths = [p for p in document if p.startswith(API_PREFIX)]
 
     assert paths, "no route is mounted under the API prefix"
 
+    checked = 0
     with TestClient(app, raise_server_exceptions=False) as c:
         app.state.gate = wiring()
         for path in paths:
-            response = c.get(path.replace("{entity}", "price_list"))
-            assert response.status_code == 401, f"{path} answered {response.status_code} unsigned"
+            address = re.sub(r"\{[^}]+\}", ANY_PATH_PARAMETER, path)
+            for method in (m for m in document[path] if m in HTTP_METHODS):
+                # An empty object where a body is expected. The dependency runs before the
+                # body is validated, so a missing one would also answer 401; sending one
+                # means a future 422 here is a route whose gate was skipped rather than a
+                # route whose body was absent.
+                response = c.request(method.upper(), address, json=None if method == "get" else {})
+                assert response.status_code == 401, (
+                    f"{method.upper()} {path} answered {response.status_code} unsigned"
+                )
+                checked += 1
+
+    assert checked >= len(paths), (
+        "fewer requests were made than there are paths, so some route declared no method "
+        "this test recognises and was not driven at all"
+    )
 
 
 def test_no_route_under_the_prefix_reaches_the_public_schema() -> None:

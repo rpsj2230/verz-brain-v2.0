@@ -61,6 +61,17 @@ import { Notice } from "./ui/Notice";
 const Records = lazy(async () => ({ default: (await import("./pages/Records")).Records }));
 
 /**
+ * The routing matrix, fetched when somebody asks for it, for the same reason and by the same
+ * measurement.
+ *
+ * It mounts the same two libraries the records screen does, so an eager import here would
+ * undo the split whatever `Records` did: the chunk would simply arrive through this module
+ * instead. `tests/bundle-split.test.ts` walks the static graph from `main.tsx` and does not
+ * care which route reached the library.
+ */
+const Matrix = lazy(async () => ({ default: (await import("./pages/Matrix")).Matrix }));
+
+/**
  * Shown when a page throws while rendering.
  *
  * It deliberately does not print the error. A rendering failure is a bug in this console,
@@ -127,6 +138,11 @@ export const routes: RouteObject[] = [
       // there is no question to ask yet.
       { path: "records", element: <Records /> },
       { path: "records/:entity", element: <Records /> },
+      // Two paths and one component again. The rung being edited is a path segment because
+      // it is what the screen is about, and the same screen with none named is the matrix on
+      // its own: it has the grid and no form, because no rung has been opened.
+      { path: "routing", element: <Matrix /> },
+      { path: "routing/:rungId", element: <Matrix /> },
       { path: "*", element: <NotFound /> },
     ],
   },

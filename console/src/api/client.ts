@@ -38,7 +38,13 @@ export type ApiResult<T> =
   | { readonly ok: false; readonly failure: ApiFailure };
 
 export interface RequestOptions {
-  readonly method?: "GET" | "POST";
+  /**
+   * A closed set rather than `string`, so a call site cannot invent a verb. PATCH is here
+   * because `PATCH /api/v1/routing/rungs/{rung_id}` is the first write this console makes;
+   * DELETE is deliberately absent, because nothing in this system hard-deletes and a verb
+   * with no route behind it is a verb somebody eventually points at one.
+   */
+  readonly method?: "GET" | "POST" | "PATCH";
   readonly body?: unknown;
   readonly signal?: AbortSignal;
 }
