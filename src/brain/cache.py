@@ -1,9 +1,9 @@
-"""The client behind the two caches, and the version that makes one of them safe.
+"""The client behind every cache, and the version that makes one of them safe.
 
-`brain.gate.resolve` and `brain.gate.answer_cache` are written against protocols and have
-only ever run against fakes. That is the right shape: neither module should know what a
-socket is, and every rule about what may be served lives there rather than here. It leaves
-two gaps, and this module is both of them.
+`brain.gate.resolve`, `brain.gate.answer_cache` and `brain.gate.caches` are written against
+protocols and values and have only ever run against fakes. That is the right shape: none of
+them should know what a socket is, and every rule about what may be served lives there
+rather than here. It leaves two gaps, and this module is both of them.
 
 The first is that nothing connects a cache at all, so `valkey_url` is a setting that
 configures nothing. The second is M1.4.5: `VersionSource` had no implementation, so the
@@ -12,9 +12,12 @@ installs bumped a counter nobody looked at. A cache key carrying a version that 
 reads is not invalidation; it is a comment.
 
 **This module holds no policy.** `resolve` decides whether a cached set may be served,
-`answer_cache` decides whether a cached answer is fresh, and `cache_key` decides what makes
-two questions the same question. Nothing here re-decides any of that, and the reason is that
-a rule implemented twice is a rule that will be changed once.
+`answer_cache` decides whether a cached answer is fresh, `cache_key` decides what makes
+two questions the same question, and `caches` decides what every other key is built from and
+how long each of them lives. Nothing here re-decides any of that, and the reason is that a
+rule implemented twice is a rule that will be changed once. Not one TTL is named in this
+file, which is the sharpest version of that split: a lifetime is an argument about how long
+a thing stays true, and this module has no opinion on any of them.
 
 **A miss and an outage are different, and neither may become a wrong answer.** The protocols
 say `get` returns `EntitlementSet | None`, and None means "not in hand". A cache that is
@@ -77,7 +80,16 @@ design takes the whole fleet out of rotation at once, since every replica shares
 That trade-off belongs to whoever owns the deployment, not to the cache client, so it is
 stated here and left as a choice rather than made silently.
 
-Task ids: M1.4.5
+**The four caches of M6.2 share one class and the reason is the self-key check.** See
+`ValkeyRecordCache`. What made two stores worth writing separately above is that they do
+different things on a hit; the plan, retrieval, embedding and freshness stores do the same
+thing as each other, so writing four of them would be writing one `get` four times and
+leaving three of the copies to rot. The one thing this file adds to all four is the check
+that a value found under a key is the value stored under it, which `ValkeyAnswerStore`
+argues for answers and which is really an argument about a shared store rather than about
+answers.
+
+Task ids: M1.4.5, M6.2.2, M6.2.3, M6.2.4, M6.2.5
 """
 
 from __future__ import annotations
@@ -97,6 +109,13 @@ from redis.retry import Retry
 
 from brain.core.entitlement import EntitlementSet
 from brain.gate.cache_key import CachedAnswer
+from brain.gate.caches import (
+    CachedEmbedding,
+    CachedFreshness,
+    CachedPlan,
+    CachedRetrieval,
+    CacheLayerError,
+)
 from brain.gate.resolve import ResolutionFailedError
 
 log = structlog.get_logger()
@@ -396,6 +415,129 @@ class ValkeyAnswerStore(_ValkeyCache):
             msg = f"{self.name} refuses an answer whose key field is not the key it is stored under"
             raise ValueError(msg)
         self._write(key, _ANSWER.dump_json(value), ttl_seconds)
+
+
+class Keyed(Protocol):
+    """A cached value that carries the key it was stored under.
+
+    One attribute, because it is the only thing the store below needs from a value it is
+    otherwise agnostic about. Every `Cached*` type in `brain.gate.caches` satisfies it, and
+    the reason they all carry a key is the check in `ValkeyRecordCache.get`: a store handing
+    back the wrong entry is undetectable otherwise, because the entry is internally
+    consistent and simply belongs to somebody else.
+    """
+
+    @property
+    def key(self) -> str: ...
+
+
+class ValkeyRecordCache[T: Keyed](_ValkeyCache):
+    """The four caches of M6.2 over Valkey, as one class rather than four (M6.2.2 to M6.2.5).
+
+    `ValkeyEntitlementCache` and `ValkeyAnswerStore` above are separate types because they
+    do different things on a hit: one is validated against a model and then checked further
+    by `resolve._usable`, the other is checked against its own key here. These four do
+    exactly the same thing as each other, differing only in the adapter that parses the
+    bytes and the name that appears in a log line, so four classes would be four copies of
+    one `get` and the copy that drifts is the one nobody reads. The name is a constructor
+    argument rather than a class attribute for the same reason.
+
+    **The self-key check is generalised rather than repeated.** `ValkeyAnswerStore` argues
+    it for answers: a value found under a key that is not its own means one person's work
+    reaching another, and nothing downstream would notice because the value is internally
+    consistent. That argument is not about answers. It is about a shared store, and it holds
+    identically for a plan naming tools, a retrieval naming chunks and an embedding naming a
+    model, so the check lives here once and every cache gets it.
+
+    **A value's own refusals are caught as a rejection, not raised.** The types in
+    `brain.gate.caches` validate themselves in `__post_init__` and raise `CacheLayerError`,
+    which is not a `ValueError` and is therefore not wrapped into a `ValidationError` by
+    pydantic. Left uncaught it would leave this module through a *read*, which is the one
+    thing the whole file is written to prevent: an unreachable or corrupt cache must slow
+    the system down, never change what it says or fail a request. So the two are caught
+    together and both count as a rejection rather than a miss, because both mean a value
+    came back and was refused.
+    """
+
+    def __init__(
+        self,
+        client: ValkeyClient,
+        adapter: TypeAdapter[T],
+        *,
+        name: str,
+        health: CacheHealth | None = None,
+    ) -> None:
+        super().__init__(client, health=health)
+        self._adapter = adapter
+        self.name = name
+
+    def get(self, key: str) -> T | None:
+        """The entry, or None. None on a miss, on an outage, and on anything refused."""
+        raw = self._read(key)
+        if raw is None:
+            return None
+        try:
+            found = self._adapter.validate_json(raw)
+        except (ValidationError, CacheLayerError):
+            # Something else is writing to this keyspace, a write was truncated, or a value
+            # that parses as JSON does not satisfy the type's own rules. All three are a
+            # miss, and computing the thing again is the correct answer to each.
+            self._reject("not a valid entry")
+            return None
+        if found.key != key:
+            self._reject("entry stored under a different key")
+            return None
+        self.health.hits += 1
+        return found
+
+    def set(self, key: str, value: T, ttl_seconds: int) -> None:
+        """Store the entry, refusing outright if it disagrees with its own key.
+
+        Raising rather than dropping the write, for the reason `ValkeyAnswerStore.set`
+        gives: a mismatch cannot be caused by data, only by code that built a value under
+        one key and stored it under another, and dropping the write silently hides at write
+        time the only bug this check exists to find.
+        """
+        if value.key != key:
+            msg = f"{self.name} refuses an entry whose key field is not the key it is stored under"
+            raise ValueError(msg)
+        self._write(key, self._adapter.dump_json(value), ttl_seconds)
+
+
+#: One adapter per cached type, built once at import. A `TypeAdapter` compiles a validator,
+#: and building one per call would put that compilation on the request path.
+_PLAN: Final = TypeAdapter(CachedPlan)
+_RETRIEVAL: Final = TypeAdapter(CachedRetrieval)
+_EMBEDDING: Final = TypeAdapter(CachedEmbedding)
+_FRESHNESS: Final = TypeAdapter(CachedFreshness)
+
+
+def plan_cache(
+    client: ValkeyClient, *, health: CacheHealth | None = None
+) -> ValkeyRecordCache[CachedPlan]:
+    """The plan cache (M6.2.2). Stores tool ids; `caches.replay` re-projects them."""
+    return ValkeyRecordCache(client, _PLAN, name="plans", health=health)
+
+
+def retrieval_cache(
+    client: ValkeyClient, *, health: CacheHealth | None = None
+) -> ValkeyRecordCache[CachedRetrieval]:
+    """The retrieval cache (M6.2.3). Stores references; the scope is in the key."""
+    return ValkeyRecordCache(client, _RETRIEVAL, name="retrievals", health=health)
+
+
+def embedding_cache(
+    client: ValkeyClient, *, health: CacheHealth | None = None
+) -> ValkeyRecordCache[CachedEmbedding]:
+    """The embedding cache (M6.2.4). Keyed on a digest of the content and the model."""
+    return ValkeyRecordCache(client, _EMBEDDING, name="embeddings", health=health)
+
+
+def freshness_cache(
+    client: ValkeyClient, *, health: CacheHealth | None = None
+) -> ValkeyRecordCache[CachedFreshness]:
+    """The projection freshness cache (M6.2.5). One reading per source and entity."""
+    return ValkeyRecordCache(client, _FRESHNESS, name="freshness", health=health)
 
 
 class Cursor(Protocol):
