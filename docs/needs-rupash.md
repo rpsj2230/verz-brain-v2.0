@@ -2,12 +2,17 @@
 
 Decisions and access I cannot resolve alone. Served at `/build/needs-rupash`.
 
-**3 items are open: 25, 29 and 30.** All three are waiting on you rather than on me.
+**4 items are open: 25, 29, 30 and 31.** All four are waiting on you rather than on me.
 
 25 is the server capacity question. You asked for options that cost nothing and there are
 four; 25 sets them out with the measurements behind each. Two of them I can carry out as
 soon as you say so, and one of those protects your other production system rather than this
 one.
+
+31 is the one that decides the next fortnight, and it is a sharper, measured version of
+25: wave 2 is at 90%, and the last seven jobs all need a machine-learning stack that is not
+installed and does not fit on the current server. Answer 25 first and 31 mostly answers
+itself.
 
 29 and 30 are both new on 2026-09-06 and both are small. 29 needs one address from you
 before anybody can sign in to the console at all. 30 is a choice between two ways of letting
@@ -26,6 +31,74 @@ in.
 ---
 
 # Open
+
+## 31. Wave 2 is at 90% and the last seven jobs all need the same thing
+
+**This is the one that decides the next fortnight, and it is a sharper version of 25.**
+
+Wave 2 is 194 of 215 done. Of the 21 left, most are already built and waiting on something
+small. Seven are not, and they all need the same missing piece: **a machine-learning stack
+that is not installed and does not fit on the current server.**
+
+Those seven are reading documents properly (layout-aware extraction, scanned-page OCR,
+fallback for odd file formats), recognising names and identifiers the standard rules miss,
+and turning text into something searchable.
+
+### What I measured
+
+Adding just the document-reading library pulls in **83 further packages**. The eight largest,
+taken from the package index rather than guessed:
+
+| | Download size |
+|---|---|
+| torch (the machine-learning engine) | 529 MB |
+| opencv (image handling) | 70 MB |
+| scipy | 34 MB |
+| numpy | 16 MB |
+| transformers | 12 MB |
+| tokenizers | 10 MB |
+| torchvision | 7 MB |
+| safetensors | 1 MB |
+| **Total, compressed** | **678 MB** |
+
+Installed on disk that is roughly **1.5 GB**, and that is before any model file is downloaded.
+
+**The container meant to do this work is allowed 512 MB.** For comparison, the entire Brain
+is currently allowed 3,584 MB and is using 429 MB of it.
+
+It also quietly downgrades one library the system already uses, which is the sort of thing
+that works until it does not.
+
+### The thing that makes this decidable
+
+**Not all seven need it in the same place.** The plan already says embedding runs "through the
+inference server", meaning the model sits in its own service and the Brain just asks it
+questions over the network. That half needs no machine-learning code inside the Brain at all.
+
+The other half, reading documents and recognising names, is currently drawn as running
+*inside* our own containers, and that is what does not fit.
+
+### Three options
+
+**Option A: put the document and name-recognition models behind the same inference server as
+embedding.** One service does all the model work; every Brain container stays small; the plan
+already has a service like this for embedding, so this is finishing a pattern rather than
+inventing one. It is more setup, and the inference server needs its own memory, which brings
+us back to 25. **This is what I would do.**
+
+**Option B: give the parse worker enough memory and accept the bigger image.** Simplest to
+build, and it makes the Brain's own image about 1.5 GB larger to deploy and update. On the
+current server this does not fit without the right-sizing in 25.
+
+**Option C: ship wave 2 without layout-aware reading.** Plain text and simple PDFs work; a
+scanned contract or a document where the meaning is in the table layout does not. This costs
+nothing and it is a real reduction in what the system can read, so it should be a choice
+rather than a default.
+
+None of this is urgent this week. It is the thing that decides whether wave 2 finishes at 90%
+or at 100%, and A and B both depend on 25, which is why 25 is worth answering first.
+
+---
 
 ## 29. Nobody can sign in to the console until you give me one web address
 
