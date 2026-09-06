@@ -29,6 +29,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from brain.api import ErrorBody, TimeoutMiddleware
 from brain.api_routes import router as api_router
+from brain.classification_routes import router as classification_router
 from brain.core.errors import BrainError, Outcome, to_public
 from brain.docs_routes import router as docs_router
 from brain.identity.bearer import log_refusal, refusal_headers
@@ -376,6 +377,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # and this one answers about the model chain, where it is not. Both take the same
     # `asking` dependency, which `api_routes` declares once and this imports.
     app.include_router(routing_router)
+    # Field-level classification. A third router for the reason there is a second: the rules
+    # differ again. This one answers about the policy over a document's columns rather than
+    # about its rows, it takes no session because there is nothing stored to read, and its
+    # write verb is `admin` rather than `write` because what it governs is what other people
+    # may see. The same `asking` dependency, imported rather than re-declared.
+    app.include_router(classification_router)
 
     @app.get("/health/live", response_model=Health, tags=["health"])
     async def live() -> Health:

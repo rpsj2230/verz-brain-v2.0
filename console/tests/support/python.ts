@@ -19,6 +19,8 @@ const ERRORS = "src/brain/core/errors.py";
 const APP = "src/brain/app.py";
 const CONNECTOR_CONTRACT = "src/brain/connectors/contract.py";
 const ROUTING_ROUTES = "src/brain/routing_routes.py";
+const CLASSIFICATION_ROUTES = "src/brain/classification_routes.py";
+const FIELD_POLICY = "src/brain/core/field_policy.py";
 
 /**
  * The members of one `enum.StrEnum`, member name to value, read from the Python source.
@@ -189,6 +191,69 @@ export function backendRungEditFields(): string[] {
  */
 export function backendRoutingRungColumns(): string[] {
   return backendModelFields("src/brain/tables/routing.py", "RoutingRungRow");
+}
+
+/**
+ * One classified column, as `brain.classification_routes.ColumnView` answers it.
+ *
+ * The console renders a fixed column per field and no route sends a schema for this screen,
+ * so a field added to the model and not to `CLASSIFICATION_COLUMNS` would arrive and be
+ * dropped with nothing on the screen looking wrong. The field it will be is `derived_from`,
+ * because a derivation is the part of a rule that reads as bookkeeping and is the part that
+ * decides what a caller short of one column sees.
+ */
+export function backendColumnViewFields(): string[] {
+  return backendModelFields(CLASSIFICATION_ROUTES, "ColumnView");
+}
+
+/**
+ * The three things `brain.classification_routes.ColumnEdit` accepts about one column.
+ *
+ * **The one thing on this screen that must not drift in the permissive direction.** The
+ * entity and the column are path segments, so a form growing an input for either would let a
+ * console believe it had proposed a rule for a column the address does not name. The route
+ * forbids both keys; this is how the console proves it does not offer them, against the
+ * route's own model rather than against a constant beside the form.
+ */
+export function backendColumnEditFields(): string[] {
+  return backendModelFields(CLASSIFICATION_ROUTES, "ColumnEdit");
+}
+
+/**
+ * Everything a review answers, from `brain.classification_routes.ReviewView`.
+ *
+ * Read so the console can prove which of them it deliberately drops. `epoch_now` and
+ * `epoch_after` never reach a screen, and that has to be checked against the model rather
+ * than against the console's own reader, which would agree with itself for every field it
+ * could hold.
+ */
+export function backendReviewViewFields(): string[] {
+  return backendModelFields(CLASSIFICATION_ROUTES, "ReviewView");
+}
+
+/**
+ * The words a review uses for what a proposed rule does, from the enum that defines them.
+ *
+ * The console renders these unchanged and has no table of friendlier wording, for the reason
+ * the matrix screen renders a scope operator unchanged: the word in the enum is the word the
+ * route, the tests and every support conversation use, and a second vocabulary in a browser
+ * is a second thing to keep in step. Read here so a word this console has never seen is
+ * noticed as a gap rather than rendered as nothing.
+ */
+export function backendChangeWords(): string[] {
+  return Object.values(backendEnumMembers(CLASSIFICATION_ROUTES, "Change"));
+}
+
+/**
+ * The four sensitivity levels, from `brain.core.field_policy.Classification`.
+ *
+ * The console offers these in a form, so it holds a copy of them, and the copy is checked
+ * against the enum rather than against the API document alone. Both originals matter and
+ * they fail differently: the document going stale is a generation nobody ran, and the enum
+ * changing is a policy vocabulary the console would silently keep offering the old shape of.
+ */
+export function backendClassificationWords(): string[] {
+  return Object.values(backendEnumMembers(FIELD_POLICY, "Classification"));
 }
 
 /** The caller's own facts, as `brain.api_routes.CallerView` declares them. */

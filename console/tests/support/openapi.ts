@@ -79,6 +79,78 @@ export function declaredQueryParameters(path: string, method: string): string[] 
 }
 
 /**
+ * The parameters one operation declares, in one place in the request, as names.
+ *
+ * The sibling of `declaredQueryParameters` and deliberately not the same function: that one
+ * throws on an empty result, because a subset check against nothing passes for a client that
+ * sends nothing. This one returns what it finds, including nothing, and exists for the
+ * opposite claim: **a route that declares no query parameter at all is a route where any
+ * query string a console sends is discarded in silence and answered 200.** That is a claim
+ * about an empty set, so it has to be assertable, and it is only safe to assert beside the
+ * other half, which is that the console sent none either.
+ *
+ * The caller says which half of the request to look in, so the same reader also proves the
+ * operation was really parsed: an operation whose path parameters are missing is a stale
+ * document or a moved route, and every assertion about its silence would then be vacuous.
+ */
+export function declaredParameterNames(
+  path: string,
+  method: string,
+  where: "query" | "path" | "header" | "cookie",
+): string[] {
+  return (operation(path, method).parameters ?? [])
+    .filter((parameter) => parameter.in === where)
+    .map((parameter) => parameter.name);
+}
+
+/**
+ * The schema of one property of an operation's request body, with a `$ref` followed.
+ *
+ * FastAPI emits an enum-typed field as a reference into `components/schemas` rather than
+ * inline, so a console checking its copy of a closed vocabulary against the document has to
+ * follow one more hop than `declaredRequestBodySchema` does. Following it here rather than
+ * at the call site means the call site never names the component, which matters: a component
+ * name is a pydantic class name, and a test naming one would keep passing against a document
+ * where the field had been repointed at a different enum entirely.
+ *
+ * Throws on a property the body does not declare, and on a reference that resolves to
+ * nothing, for the reason every reader in this directory throws: an empty object turns each
+ * bound checked against it into a comparison between two nothings.
+ */
+export function declaredPropertySchema(
+  path: string,
+  method: string,
+  property: string,
+): Record<string, unknown> {
+  const body = declaredRequestBodySchema(path, method);
+  const properties = body["properties"] as Record<string, unknown> | undefined;
+  const found = properties?.[property];
+  if (found === undefined || typeof found !== "object" || found === null) {
+    throw new Error(
+      `${method.toUpperCase()} ${path} declares no body property named ${property}, so the ` +
+        "console's copy of its shape is being compared against nothing.",
+    );
+  }
+  const schema = found as Record<string, unknown>;
+  const reference = schema["$ref"];
+  if (typeof reference !== "string") {
+    return schema;
+  }
+  const name = reference.split("/").at(-1) ?? "";
+  const schemas = (apiDocument()["components"] as Record<string, unknown> | undefined)?.[
+    "schemas"
+  ] as Record<string, Record<string, unknown>> | undefined;
+  const resolved = schemas?.[name];
+  if (resolved === undefined) {
+    throw new Error(
+      `${reference} is not in the document's components, so ${property} cannot be read. ` +
+        "The document is stale or the reference shape has changed.",
+    );
+  }
+  return resolved;
+}
+
+/**
  * The schema of the body one operation accepts, with the `$ref` followed.
  *
  * The request body is where a write route states what it will take, and it is the half of a

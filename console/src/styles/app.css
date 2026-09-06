@@ -596,6 +596,28 @@ code {
   font-size: var(--text-sm);
 }
 
+/*
+ * A review's verdict, inside the one notice this console has.
+ *
+ * NO SEVERITY VARIANT, and that is the same rule the lock keeps rather than a second one.
+ * A widening is the loud outcome on the classification screen and the tempting way to say
+ * so is a red panel, which would make this the only notice in the console with a colour and
+ * would put the console in the business of grading somebody else's policy change. The words
+ * carry it: the heading says what it is and the list names what it exposes. Both are
+ * monospaced because every item in them is an identifier the API sent, and a column name set
+ * in prose reads as prose.
+ */
+.review__exposed,
+.review__changes {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+
+.review__exposed {
+  margin: var(--space-2) 0;
+  padding-left: var(--space-4);
+}
+
 /* ------------------------------------------------------------------ controls */
 
 .button {

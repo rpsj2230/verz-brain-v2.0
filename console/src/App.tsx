@@ -72,6 +72,19 @@ const Records = lazy(async () => ({ default: (await import("./pages/Records")).R
 const Matrix = lazy(async () => ({ default: (await import("./pages/Matrix")).Matrix }));
 
 /**
+ * The classification screen, fetched when somebody asks for it, and split for the same
+ * measurement again.
+ *
+ * It mounts the same two libraries, so an eager import here would undo the split whatever
+ * the other two routes did: the chunk would simply arrive through this module instead.
+ * `tests/bundle-split.test.ts` walks the static graph from `main.tsx` and does not care
+ * which route reached the library.
+ */
+const Classification = lazy(async () => ({
+  default: (await import("./pages/Classification")).Classification,
+}));
+
+/**
  * Shown when a page throws while rendering.
  *
  * It deliberately does not print the error. A rendering failure is a bug in this console,
@@ -143,6 +156,14 @@ export const routes: RouteObject[] = [
       // its own: it has the grid and no form, because no rung has been opened.
       { path: "routing", element: <Matrix /> },
       { path: "routing/:rungId", element: <Matrix /> },
+      // Three paths and one component. The document is a path segment because it is what
+      // the screen is about, the column is one because it is which rule is being argued
+      // about, and the bare path is where somebody arrives from the menu: it has the form
+      // and no grid, because no document has been named. There is no route that lists the
+      // classified documents, so naming one is how a person gets anywhere at all.
+      { path: "classification", element: <Classification /> },
+      { path: "classification/:entity", element: <Classification /> },
+      { path: "classification/:entity/:column", element: <Classification /> },
       { path: "*", element: <NotFound /> },
     ],
   },
