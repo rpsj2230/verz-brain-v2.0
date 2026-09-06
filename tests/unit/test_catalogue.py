@@ -4,10 +4,14 @@
 *usable*, which is a different claim: six manifests written against real agency work, each
 driven through the real `materialise` rather than asserted about as data.
 
-Task ids: M13.5.7, M13.5.14, M13.5.16, M13.5.19, M13.5.21, M13.5.23
+Task ids: M13.5.1, M13.5.2, M13.5.3, M13.5.4, M13.5.5, M13.5.6, M13.5.7, M13.5.8
+Task ids: M13.5.9, M13.5.10, M13.5.11, M13.5.12, M13.5.13, M13.5.14, M13.5.15
+Task ids: M13.5.16, M13.5.17, M13.5.19, M13.5.20, M13.5.21, M13.5.22, M13.5.23
 """
 
 from __future__ import annotations
+
+import re
 
 import pytest
 
@@ -17,9 +21,16 @@ from brain.agents.catalogue import (
     accountant_agent,
     capacity_and_hours_analyst,
     catalogue_by_id,
+    content_uploader,
+    internal_helpdesk,
     knowledge_gap_curator,
+    laravel_developer,
+    pre_sales,
     sem_agent,
+    seo_agent,
+    site_health_sentinel,
     support_ticket_agent,
+    ux_designer,
     wordpress_developer,
 )
 from brain.agents.template import TemplateManifest, publish
@@ -204,7 +215,7 @@ def test_no_persona_tries_to_decide_a_permission(manifest: TemplateManifest) -> 
         )
 
 
-def test_the_catalogue_is_six_distinct_templates_and_its_index_is_derived() -> None:
+def test_the_catalogue_is_distinct_templates_and_its_index_is_derived() -> None:
     """Two things that drift apart if either is maintained by hand: the ids inside the
     manifests and any mapping keyed by them.
 
@@ -268,3 +279,202 @@ def test_the_support_agent_and_the_developer_both_wait_for_freshdesk() -> None:
     knowledge base instead."""
     assert "freshdesk" in support_ticket_agent().connectors
     assert "freshdesk" in wordpress_developer().connectors
+
+
+def test_no_two_templates_hold_the_same_authority() -> None:
+    """**The failure a catalogue of twenty-two invites, and the one no other test here
+    catches.**
+
+    Writing this many templates in one sitting, the cheap way is to copy the last one, change
+    the name and the persona, and leave the capability list alone. Every other test in this
+    module passes on that: the ids are distinct, the rungs are SHADOW, the ceilings are within
+    bounds, the personas decide no permissions. What would be wrong is that a Shopify
+    developer and a Laravel developer reach the same things, so installing the narrower one
+    buys nothing, and a reader comparing them learns that the distinctions in the docstrings
+    are decoration.
+
+    Compared as a frozen set of capability values, so ordering is not what makes two lists
+    differ, and reported with both names so the duplicate is identifiable rather than merely
+    counted.
+
+    Delete this and the catalogue can grow by copying, which is exactly how it will grow."""
+    seen: dict[frozenset[str], str] = {}
+
+    for manifest in CATALOGUE:
+        held = frozenset(c.value for c in manifest.authority.capabilities)
+        first = seen.get(held)
+        assert first is None, (
+            f"{manifest.identity.template_id} reaches exactly what {first} reaches, so one "
+            "of the two is a copy and installing the narrower buys nothing"
+        )
+        seen[held] = manifest.identity.template_id
+
+
+def test_the_helpdesk_holds_no_capability_naming_a_person() -> None:
+    """The most dangerous template here, and the danger is what it looks like rather than
+    what it does.
+
+    An internal helpdesk is asked everything, so it accumulates reach one reasonable request
+    at a time: the leave policy, then a leave balance, then whose leave was approved. Each
+    step is a small extension of the last and the destination is an HR system with a chat
+    interface.
+
+    Asserted as an absence rather than a presence, because the presence is what a future edit
+    adds. The words below are the ones that would appear when somebody makes the reasonable
+    next request.
+
+    Delete this and "how much leave has she left" becomes answerable by the one agent whose
+    job makes that look like a service."""
+    held = {c.value for c in internal_helpdesk().authority.capabilities}
+
+    for forbidden in ("person", "principal", "employee", "staff", "leave", "salary", "email"):
+        assert not any(forbidden in value for value in held), (
+            f"the helpdesk can read something naming a {forbidden}"
+        )
+
+
+def test_the_uploader_is_named_for_a_verb_it_cannot_perform() -> None:
+    """`content_uploader` describes a job that writes and its ceiling is DRAFT, so a person
+    commits.
+
+    That gap between the name and the ceiling is the thing worth protecting, because it reads
+    as an oversight: somebody will notice that the Content Uploader cannot upload and fix it,
+    and the fix is one word. What it would buy is forty pages published with the wrong
+    template and no record of what changed.
+
+    DRAFT exactly rather than at most DRAFT, because NONE would be a different template that
+    cannot prepare either, and the draft is the deliverable.
+
+    Delete this and the one template whose name argues against its own ceiling loses the
+    argument."""
+    assert content_uploader().guardrails.max_side_effect is SideEffect.DRAFT
+
+
+def test_the_two_marketing_agents_differ_by_ceiling_and_not_by_name() -> None:
+    """`seo_agent` and `sem_agent` are the same discipline at different ceilings: one
+    recommends and one spends. They sit beside each other in the module deliberately.
+
+    This is the clearest statement in the catalogue that a ceiling follows what an agent can
+    do rather than what it is called, and it is asserted because the pair is also the easiest
+    place to lose it: the obvious tidy-up is to give two similar agents the same guardrails.
+
+    Delete this and SEO can quietly acquire DRAFT, or SEM lose it, and the catalogue stops
+    demonstrating the distinction it was written to demonstrate."""
+    assert seo_agent().guardrails.max_side_effect is SideEffect.NONE
+    assert sem_agent().guardrails.max_side_effect is SideEffect.DRAFT
+
+    seo_held = {c.value for c in seo_agent().authority.capabilities}
+    assert not any("budget" in value or "campaign" in value for value in seo_held), (
+        "the SEO agent can reach a campaign or a budget, which is the SEM agent's work"
+    )
+
+
+def test_the_sentinel_reaches_nothing_that_would_be_a_count() -> None:
+    """A monitoring agent's natural output is a list of everything that is wrong, and a list
+    of everything is the one thing this system cannot produce.
+
+    `E_run = E(caller) intersected with the ceiling` means the answer is over the caller's
+    sites, so a sentinel reporting "three sites are down" to somebody entitled to see one has
+    disclosed two. The defence is that there is no figure to reach rather than a rule about
+    rendering: the redactor withholds a count over a filtered collection, and this template
+    gives it nothing to withhold.
+
+    Delete this and the sentinel can grow a capability naming a total, which is the most
+    natural thing in the world to add to a monitoring agent."""
+    held = {c.value for c in site_health_sentinel().authority.capabilities}
+
+    for forbidden in ("count", "total", "summary", "all_sites", "estate"):
+        assert not any(forbidden in value for value in held), (
+            f"the sentinel can read a {forbidden}, which is a fact about what it cannot see"
+        )
+
+
+def test_the_laravel_agent_reads_the_shape_of_an_application_and_never_its_rows() -> None:
+    """One word of difference and all of the difference: `read:model.name` is a fact about
+    the application, and a model's records are a client's data. The same connector reaches
+    both.
+
+    This is the template where that line is easiest to cross, because "show me the model" and
+    "show me what is in it" are one sentence apart in the question a developer actually asks.
+
+    Delete this and a developer agent becomes a way to read production data with a
+    developer's justification attached."""
+    held = {c.value for c in laravel_developer().authority.capabilities}
+
+    assert "read:model.name" in held
+    for forbidden in ("record", "row", "data", "content", "value"):
+        assert not any(forbidden in value for value in held), (
+            f"the Laravel agent can read a {forbidden} rather than the application's shape"
+        )
+
+
+def test_the_presales_agent_reads_a_deals_stage_and_never_what_it_is_worth() -> None:
+    """An agent that can see what a deal is worth can be asked which clients are worth
+    answering quickly, and it will answer, because the figures are in front of it.
+
+    The capability list is what prevents that. The persona is not, and a persona saying "do
+    not rank clients by value" would be a permission decided by whoever last edited a text
+    box.
+
+    Delete this and the pre-sales template acquires the one capability that turns recall into
+    triage."""
+    held = {c.value for c in pre_sales().authority.capabilities}
+
+    assert "read:deal.stage" in held
+    for forbidden in ("value", "amount", "revenue", "margin", "worth"):
+        assert not any(forbidden in one for one in held), (
+            f"the pre-sales agent can read a deal's {forbidden}"
+        )
+
+
+def test_every_leaf_this_module_claims_has_a_template_behind_it() -> None:
+    """The catalogue claims twenty-two leaves in its `Task ids:` line, and a claim is only
+    worth what stands behind it.
+
+    Counted rather than listed, and compared against the module's own docstring rather than
+    against a number written here, so adding a template without claiming its leaf fails, and
+    claiming a leaf without writing its template fails too. Those are the two directions and
+    they are different mistakes: the first under-reports finished work, and the second is the
+    one this repository has a `Reopens:` trailer for.
+
+    M13.5.18, the AR chaser, is deliberately absent from both, which is what makes the two
+    counts agree at twenty-two rather than twenty-three. See
+    `A_PIN_WITH_NO_END_IS_NOT_A_PIN_FOR_THIRTY_DAYS`.
+
+    Delete this and the docstring's claim and the tuple below it drift apart silently, which
+    is the failure the traceability sweep exists to catch one level up."""
+    from brain.agents import catalogue as module
+
+    claimed = set(re.findall(r"M13[.]5[.]\d+", module.__doc__ or ""))
+
+    assert len(claimed) == len(CATALOGUE), (
+        f"the docstring claims {len(claimed)} leaves and the catalogue holds "
+        f"{len(CATALOGUE)} templates"
+    )
+    assert "M13.5.18" not in claimed, (
+        "the AR chaser is claimed, but the leash still has no time dimension"
+    )
+
+
+def test_the_ux_designer_reads_a_finding_and_never_who_produced_it() -> None:
+    """**Written because a mutation survived.** The module's own docstring says the UX
+    designer "reads a finding and never the participant", and adding
+    `read:research_finding.participant` passed the whole file. A claim in prose with nothing
+    behind it is the shape this repository keeps finding, and it was mine this time.
+
+    A usability session has a person in it. A template that can name them turns a research
+    archive into a record of which member of a client's staff struggled with the checkout,
+    and it does so while looking like better citation. The finding is the product; who
+    produced it is not, and the distinction survives only if it is asserted.
+
+    Absence rather than presence, for the same reason the curator's and the helpdesk's tests
+    are: the presence is what a future edit adds, one reasonable request at a time.
+
+    Delete this and the participant comes back, and the docstring goes on saying otherwise."""
+    held = {c.value for c in ux_designer().authority.capabilities}
+
+    assert "read:research_finding.summary" in held
+    for forbidden in ("participant", "person", "user", "tester", "name", "email"):
+        assert not any(forbidden in value for value in held), (
+            f"the UX designer can read something naming a {forbidden}"
+        )
