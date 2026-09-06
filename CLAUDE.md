@@ -107,6 +107,30 @@ must not happen is a survivor being quietly dropped from the table.
 import a stale `.pyc`, which produces false *survivals*. It cannot produce a false catch, so
 earlier passes stay sound, but a mutation run without it will lie to you in the safe direction.
 
+**Mutate the constants too, not only the branches.** This is the sibling of the docstring rule
+above and it caught three separate authors on 2026-09-06, in one afternoon. A test that asserts
+`answer == SOME_CONSTANT` while importing `SOME_CONSTANT` from the module under test compares
+the constant against itself: change its value and both sides move together, and the test is
+green for every value it could possibly hold.
+
+- `hubspot.CEILING_NAME` repointed from `"hubspot"` to `"freshdesk"` passed its whole ceiling
+  test, because the test branches on `connector_ceiling(CEILING_NAME)` and Freshdesk has a
+  measured row. The connector would have run against another source's verified rate limit with
+  `ceiling_is_verified()` flipping to True to say so.
+- `throttle.RETRY_AFTER_WHEN_UNSTATED` dropped from 300 seconds to 1 second passed the two
+  tests written for it that same hour.
+
+Assert a constant against something outside itself: another module's measured value, a second
+constant it must relate to, or the property that makes the figure right. `RETRY_AFTER_WHEN_UNSTATED
+>= MAX_BACKOFF_SECONDS` and `CEILING_NAME == CONNECTOR_NAME` are both stated that way now.
+
+**A test that builds the value the function under test produces has not tested that function.**
+`lark_wiki.restriction_of` reads a vendor payload into a three-way verdict. Every test built a
+node with the verdict already set and asked what the consumer did with it, so the branch that
+reads "this node has its own permissions" could return "inherits the space" with the suite
+green. When a producer and a consumer sit either side of a value, one test for each is two
+tests for the consumer unless you write the producer's from the raw payload.
+
 ---
 
 ## Commits
