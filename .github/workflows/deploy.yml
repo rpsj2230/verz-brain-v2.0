@@ -23,7 +23,24 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE: ghcr.io/${{ github.repository }}
+  # Written out rather than derived from `github.repository`, and that is a repair.
+  #
+  # It was `ghcr.io/${{ github.repository }}` until 2026-09-06, when the repository was
+  # renamed from `verz-brain-v2.0` to `Verz-OS-v2.0` and the next push failed with
+  # `invalid tag "ghcr.io/rpsj2230/Verz-OS-v2.0:79204c6": repository name must be
+  # lowercase`. A rename moves that expression; it does not move the image the server
+  # pulls, which is written into `docker-compose.yml`, `ops/deploy.sh` and
+  # `ops/deploy/brain-autodeploy`. So the two ends stopped agreeing, and the only reason
+  # this was a red build rather than a silent freeze is that the new name happened to
+  # contain capital letters. A rename to a lowercase name would have published to a
+  # package nobody pulls, gone green, and left production on the last old image with
+  # every check passing. That is the failure this repository has already had once.
+  #
+  # `test_the_image_the_pipeline_pushes_is_the_image_the_server_pulls` holds the four
+  # places equal. `github.repository` is still correct in the cosign identity below,
+  # because that asserts where the workflow ran, which is a fact that must follow a
+  # rename, rather than a coordinate the server resolves.
+  IMAGE: ghcr.io/rpsj2230/verz-brain-v2.0
 
 jobs:
   build:

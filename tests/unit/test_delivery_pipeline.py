@@ -96,6 +96,82 @@ def test_the_image_is_pushed_to_the_registry() -> None:
 
 
 # ------------------------------------------------------------------- signing (M38.1.2.4)
+def test_the_image_the_pipeline_pushes_is_the_image_the_server_pulls() -> None:
+    """**Four files name one image and nothing held them equal.**
+
+    The workflow published to `ghcr.io/${{ github.repository }}` while the compose file, the
+    deploy script and the watcher each wrote `ghcr.io/rpsj2230/verz-brain-v2.0` by hand. That
+    agreed for as long as nobody renamed the repository, and on 2026-09-06 somebody did:
+    `verz-brain-v2.0` became `Verz-OS-v2.0` and the next push failed with `invalid tag
+    "ghcr.io/rpsj2230/Verz-OS-v2.0:79204c6": repository name must be lowercase`.
+
+    **The red build was luck, and the luck is the reason this test exists.** The new name
+    happened to contain capital letters, which Docker refuses outright. A rename to a
+    lowercase name would have built cleanly, pushed to a package nothing pulls, reported
+    success, and left the server running the last image built under the old name with every
+    check green. This repository has already had that exact failure once, when production sat
+    fourteen commits behind because Deploy was conditional on CI.
+
+    Compared as a set rather than pairwise, so a fifth file naming the image is covered the
+    day it is added rather than the day somebody remembers to extend a chain of assertions.
+
+    Delete this and the pipeline can publish to one address while the server pulls from
+    another, which is invisible from both ends: the build is green because it pushed, and the
+    server is healthy because it is running something."""
+    published = str(_workflow("deploy.yml")["env"]["IMAGE"])
+    compose = str(_compose("docker-compose.yml")["services"]["app"]["image"])
+    script = (REPO / "ops" / "deploy.sh").read_text(encoding="utf-8")
+    watcher = (REPO / "ops" / "deploy" / "brain-autodeploy").read_text(encoding="utf-8")
+
+    # The compose default is `${APP_IMAGE:-<image>:latest}`; what matters is the image, not
+    # the tag or the override, so the repository half is what is compared.
+    assert published in compose, f"compose pulls {compose}, the pipeline pushes {published}"
+    assert published in script, "ops/deploy.sh names an image the pipeline does not publish"
+    assert published in watcher, "the watcher pulls an image the pipeline does not publish"
+
+
+def test_the_published_image_is_a_name_docker_will_accept() -> None:
+    """A container repository must be lowercase, and the one thing that reliably introduces a
+    capital letter is a person naming a GitHub repository after a product.
+
+    Asserted on the value rather than trusted to review, because the symptom is a failed
+    build at the end of a pipeline rather than anything visible in the file. It cost a red
+    deploy to learn once.
+
+    Delete this and the image name can acquire a capital the next time it is edited, and the
+    failure arrives minutes later in somebody else's log."""
+    published = str(_workflow("deploy.yml")["env"]["IMAGE"])
+
+    assert published == published.lower(), (
+        f"{published} is not a legal container repository; Docker refuses it with "
+        "'repository name must be lowercase' at the end of the build"
+    )
+
+
+def test_the_image_name_does_not_move_when_the_repository_is_renamed() -> None:
+    """The distinction this whole group turns on: `github.repository` is right in one place
+    in this workflow and wrong in another.
+
+    In the cosign identity it is correct and must stay, because that asserts where the
+    workflow ran, and after a rename the workflow genuinely does run from the new name. In
+    the image it is wrong, because that is a coordinate the server resolves, and the server
+    is not renamed when the repository is.
+
+    Delete this and the expression comes back the next time somebody tidies a hardcoded
+    string out of a workflow, which is a reasonable-looking change that breaks deployment
+    the next time the repository is renamed and not before."""
+    published = str(_workflow("deploy.yml")["env"]["IMAGE"])
+
+    assert "github.repository" not in published, (
+        "the image is derived from the repository name again, so a rename will publish it "
+        "somewhere the server does not look; see the cosign step for where that expression "
+        "is correct"
+    )
+    # The positive sibling: the identity really does still use it, so this is a statement
+    # about which of the two uses is right rather than a ban on the expression.
+    assert "github.repository" in _text_of("deploy.yml", "build")
+
+
 def test_the_image_is_signed() -> None:
     """Unsigned, "the registry has an image with this digest" is the only claim anybody can
     make about what is running. Signed, the claim is that this build came out of this
