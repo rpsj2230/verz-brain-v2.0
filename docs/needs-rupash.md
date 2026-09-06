@@ -2,15 +2,16 @@
 
 Decisions and access I cannot resolve alone. Served at `/build/needs-rupash`.
 
-**4 items are open: 24, 25, 26 and 28.** 28 is the only one with a live cost, and it is now
-one command rather than a configuration puzzle: production is being recreated every three
-minutes by an old deploy timer of mine that I replaced but never switched off. The
-diagnosis on this page was wrong until this morning and is corrected there, along with the
-command. The other three block nothing. 24 is a disclosure trade-off that starts to
-matter when people with narrow permissions begin using the system, which is wave 4. 25 is a
-measured capacity limit that needs a decision before wave 4 rather than during it, and its
-own arithmetic has been re-measured and corrected too. 26 is a product question about the
-website widget, and the machinery around it is being built either way.
+**1 item is open: 25, and it is now waiting on you rather than on me.** You asked for options
+that cost nothing and there are four; 25 sets them out with the measurements behind each.
+Two of them I can carry out as soon as you say so, and one of those protects your other
+production system rather than this one.
+
+**24, 26 and 28 were all answered on 2026-09-06.** 24 stays as built: an answer names a
+failed source only to somebody who could already see that source. 26 is decided: public
+visitors get public knowledge only, admins decide what is public, and no login. 28 is done
+and verified: production was being recreated every three minutes by an old deploy timer of
+mine, `brain-deploy.timer` is now disabled, and the recreates have stopped.
 
 Everything else on this page is decided. It is kept as a record: each item states what the
 problem was, what was built, and why, so the reasoning outlives the conversation it happened
@@ -20,7 +21,26 @@ in.
 
 # Open
 
-## 28. Production restarts every few minutes, and it is a leftover timer of mine
+## 28. Production restarts every few minutes - DONE, and it was a leftover timer of mine
+
+**Fixed and verified on 2026-09-06.** You told me to run the command, I ran it, and the
+recreates stopped.
+
+**The evidence, before and after.** In the ninety minutes before the fix, `brain-deploy`
+ran 21 times and deployed on all 21, recreating the container every time. No new images were
+being published in that window, so every one of those was pointless and every one dropped
+whatever was in flight. The last was at 02:41:22. `sudo systemctl disable --now
+brain-deploy.timer` ran at 02:57, and there has not been another since. `brain-autodeploy`
+is untouched and still deploying real changes.
+
+Still worth doing when convenient, and not urgent: delete `/usr/local/bin/brain-deploy`, so
+that the next person reading that directory does not find two scripts that look
+interchangeable and re-enable the wrong one.
+
+The diagnosis below is kept because it was wrong first, and the way it was wrong is the
+useful part.
+
+---
 
 **Corrected on 2026-09-06. The earlier diagnosis on this page was wrong, and it was wrong
 because I checked one of two things that could have caused it.** What follows replaces it.
@@ -77,7 +97,44 @@ interchangeable and re-enable the wrong one.
 
 ---
 
-## 26. The chat widget on a client's marketing site: what may a stranger ask it?
+## 26. The chat widget on a client's marketing site - DECIDED: public knowledge only, no login
+
+**Decided 2026-09-06.** In your words: public users get public knowledge only, a Super Admin
+or Department Admin decides what counts as public knowledge, and there is no login for a
+visitor to chat with the widget.
+
+**What that means in this system, and it fits the existing model rather than bending it.**
+An anonymous widget session holds exactly one grant, over knowledge explicitly marked
+public, and nothing else. Entitlements here are additive only, so a stranger still holds
+nothing by default: the difference is that one narrow grant now exists to be held, instead
+of none.
+
+Three consequences worth reading before this is built, because they are the parts that go
+wrong quietly:
+
+**Marking something public is a one-way door in practice.** Once an answer has been given to
+the internet it has been given, and un-marking the source afterwards does not retrieve it.
+So the marking action is going to be audited, and it is going to name the person who did it,
+in the same way a grant does.
+
+**Public is a property of the knowledge, never of the question.** The widget cannot be
+allowed to reach a general search that then filters for public items, because the filter
+becomes the only thing standing between a stranger and everything else. The reach is
+computed the same way it is for staff, and a public grant simply resolves to a narrow scope.
+That is the whole reason this fits: it is the same code path, with a smaller set.
+
+**A department admin can only publish their own department's knowledge.** Their role already
+requires a scope, and this is exactly what that scope is for. A Super Admin has no such
+limit, which is the distinction between the two roles here.
+
+**Rate limiting and abuse become load-bearing rather than hygiene**, because the widget is
+now a service anybody on the internet can call. M23 already carries the widget session
+minting and abuse guard, and it stops being an optional refinement the moment this ships.
+
+Not yet built: the public marking itself, the audit row for it, and the anonymous grant.
+Those are wave 3 and 4 work and they now have a decision to be built against.
+
+---
 
 **Nothing is blocked.** The plumbing is being built either way, and it is safe by default
 today: an anonymous visitor currently holds nothing, so the widget can mint a session and
@@ -129,7 +186,17 @@ one.
 
 ---
 
-## 24. When a source is down, should the answer name it?
+## 24. When a source is down, should the answer name it? - DECIDED: keep it as built
+
+**Decided 2026-09-06: go with the recommendation. No code changes.** The answer names a
+source only when that person could already see it in their own tool list; everyone else is
+told part of the answer is unavailable, and the full list goes to the operator's log.
+
+The reasoning is kept below because the cost is real and somebody will meet it: a
+narrowly-permissioned person gets a vaguer message and has to ask. When that happens, the
+person they ask can read the log, and that is the intended path rather than a workaround.
+
+---
 
 **Nothing is blocked. I have built the safe reading and this is a question about whether to
 loosen it.**
@@ -227,7 +294,90 @@ It is an argument for the second server being about resilience as well as capaci
 by step, so a wrong answer can be explained afterwards. It is genuinely useful and it is
 genuinely large.
 
-**Your options, cheapest first.**
+## You asked for options that cost nothing. There are four, and together they are enough.
+
+**Answered 2026-09-06. You said you did not like any of the paid options and asked whether
+there are free ones. There are, and I should have led with them.**
+
+The reason I did not is that I had been treating the declared limits as though they were
+requirements. They are not. They are numbers somebody wrote, and one of those numbers is
+mine. Measured on the live box this morning:
+
+| | Declared | Actually using |
+|---|---|---|
+| The Brain's application | 1,024 MB | 330 MB |
+| The Brain's database | 2,048 MB | 63 MB |
+| The Brain's cache | 512 MB | 5 MB |
+| **The Brain, total** | **3,584 MB** | **429 MB** |
+
+The Brain reserves 3.5 GB and uses under half a gigabyte. That reservation is what the
+"it does not fit" arithmetic was subtracting.
+
+### Option 1: right-size what is already reserved. Frees about 1.2 GB. Costs nothing.
+
+A limit should be above the real peak with headroom, not eight times it. Proposed, and each
+figure is derived from what the service is configured to do rather than from what it happens
+to use today: application 768 MB, database 1,280 MB (its `shared_buffers` is 512 MB and the
+pooler caps it to twenty backends), cache 384 MB, pooler 64 MB. That is 2,496 MB instead of
+3,712 MB.
+
+**The honest caveat, and it is the same one I raised against shrinking the tracing
+database.** Those measurements are of a system almost nobody is using. Right-sizing on idle
+numbers is how you get an outage under real load. So this is safe to do now and needs a load
+test before wave 4 to confirm it, which is a task already on the plan (M22.3.3).
+
+### Option 2: cap the fifteen containers on your box that have no limit at all. Costs nothing.
+
+This is the one I would do first, and it is not really about the Brain.
+
+Your server runs 31 containers. Sixteen declare a memory limit and together they are allowed
+9,600 MB. **The other fifteen declare nothing.** They are using 3,693 MB right now and
+nothing stops them using more. Among them are Coolify itself and your Activepieces instance.
+
+That means every "how much room is left" answer on this page, including mine, is a guess.
+The machine is 11,960 MB and the promises already add up to more than that. Capping those
+fifteen near what they actually use would not create a single megabyte, and it would turn
+the headroom from something we hope for into something the kernel guarantees. It also
+decides, in advance and in daylight, which container dies at three in the morning instead of
+leaving that to whichever one asks for memory first.
+
+### Option 3: stop treating the full feature set as all or nothing. Frees 512 MB to 1 GB.
+
+"Full" is a label I put on a list, and the list bundles things that do not have to arrive
+together:
+
+- **Activepieces, 512 MB.** The plan itself calls it "an optional sandboxed container ...
+  enabled per client by configuration". It has nothing to do with tracing.
+- **The PII analyser, 512 MB.** Only needed when text is sent to a third-party model. If the
+  reasoning model is self-hosted, it is not on the path at all.
+
+Dropping either from what you actually deploy is a configuration choice, not a downgrade.
+
+### Option 4: run the trace ledger without its database. Frees 1 GB.
+
+ClickHouse is the single biggest item and the reason the total does not fit. Langfuse's
+earlier line runs on PostgreSQL alone, against the database you already have. You lose the
+query speed that ClickHouse buys over millions of spans, which is a real loss at scale and
+not one you are near. Sampling is the smaller version of the same idea: trace one request in
+twenty and the same store runs in half the memory.
+
+### Put together
+
+Right-sizing (option 1) plus dropping the optional canvas (option 3) is enough on its own:
+the wave-2 components then want 3,200 MB against 3,648 MB available, and it fits with room
+to spare. Add option 2 and the budget stops being a guess.
+
+**So my recommendation changes: do options 1 and 2 now, and you do not need to buy
+anything.** Option 2 is the one with a deadline, because it protects your other production
+system as much as this one.
+
+**What I would still not do** is shrink the tracing database and call it sized. It would
+work, then fail under load, and it would fail as "the AI is broken" rather than as "we
+undersized a component on purpose in September".
+
+---
+
+**The paid options, kept for the record, since they are what this page said before.**
 
 | Option | Cost | What you give up |
 |---|---|---|
@@ -235,16 +385,6 @@ genuinely large.
 | A second small server just for tracing | Another VPS, similar to what you pay now | Nothing functionally; one more machine to keep patched |
 | Run without full tracing | Nothing | When an answer is wrong, "why" gets much harder to establish. This is the thing that makes an AI system auditable |
 | Move your other project off this box | Depends where it goes | Nothing here, but it is work on the other project |
-
-**My recommendation: a second small server, and not yet.** The tracing database is only
-needed once real people are asking real questions of real data, which is wave 4. Deciding
-now costs you money for months before it is used. What is worth doing now is knowing the
-number, which is why this is written down: `budget_breaches("full")` in the code answers it
-at any time, and it is checked by a test so it cannot quietly become wrong.
-
-**The thing I would not do** is quietly shrink the tracing database to make it fit. It would
-work, then fail under real load, and it would fail as "the AI is broken" rather than as "we
-undersized a component on purpose in September".
 
 ---
 
