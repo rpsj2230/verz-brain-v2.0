@@ -164,6 +164,29 @@ skips the habit of formatting, and the pre-push hook catches it after the commit
 **Python writes CRLF.** `Path.write_text` without `newline="\n"` inserts CRLF on this machine,
 which dirties a clean tree and has broken a shell script on the server.
 
+**Never stage a file another agent is editing.** `git add` takes the working tree, not your
+edits, so staging a shared file commits whatever anybody else has written into it. This has
+now happened once with `src/brain/tables/__init__.py` and `tests/unit/test_tables.py`: a
+commit registering the memory tables also carried an in-flight registration of
+`brain.tables.fast_lane`, whose module was untracked, so the commit imported a module it did
+not contain and seven tests failed on a clean checkout of it.
+
+The pre-push worktree check is what caught it, which is that guard doing exactly its job. The
+repair is worth knowing because the obvious two attempts both failed: editing the file on disk
+and re-staging races the other agent, who added four more references between the first attempt
+and the second. Rewrite the committed blob instead and never open the working tree:
+
+```
+git show HEAD:<path>            # the committed version
+                                # strip the other agent's block from that text
+git hash-object -w --stdin      # write the corrected blob
+git update-index --cacheinfo 100644,<sha>,<path>
+git commit --amend --no-edit
+```
+
+Amending rather than fixing forward, because every push to main deploys, so a broken commit in
+the history is a failed deployment rather than an untidy log.
+
 **pytest addopts already contains `-q`.** Passing another one makes it `-qq` and suppresses the
 summary line, so a green run prints no count at all.
 
