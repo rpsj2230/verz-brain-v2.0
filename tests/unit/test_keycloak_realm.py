@@ -50,7 +50,8 @@ import pytest
 from brain.identity.roles import ROLE_COUNT, SCOPE_REQUIRED, Role
 from brain.identity.sessions import SESSION_ABSOLUTE_MAX
 
-REALM_PATH = Path(__file__).resolve().parents[2] / "ops" / "keycloak" / "realm-export.json"
+REPO = Path(__file__).resolve().parents[2]
+REALM_PATH = REPO / "ops" / "keycloak" / "realm-export.json"
 
 
 def _realm() -> dict[str, Any]:
@@ -337,3 +338,71 @@ def test_brute_force_protection_is_on() -> None:
     """A sign-in page with no lockout is a password-guessing service. Cheap to leave off and
     unpleasant to discover, because nothing about it looks wrong until somebody is inside."""
     assert _realm()["bruteForceProtected"] is True
+
+
+CALLBACK_PATH = "/auth/callback"
+SIGNED_OUT_PATH = "/signed-out"
+
+
+def test_the_console_can_actually_be_signed_in_to() -> None:
+    """**The realm shipped with `.invalid` placeholders, so sign-in could not complete from
+    any address, including localhost.** That was deliberate while nobody had given an address:
+    Keycloak hands an authorisation code to any URI listed here, so a stale one is an open
+    redirect, and a placeholder is safer than somebody else's hostname.
+
+    An address exists now, so the placeholder is the thing that would be wrong. This asserts
+    the client can be signed in to at all, which is the property the placeholders removed.
+
+    Exact paths rather than a wildcard, because a wildcard readmits exactly the risk the
+    placeholders were guarding against: `https://example.com/*` accepts a code at any path on
+    that host, including one an attacker controls.
+
+    Delete this and the realm can go back to a state where every sign-in fails at the last
+    step, which reads to a user as "login is broken" and is nowhere near the file causing it."""
+    console = {c["clientId"]: c for c in _realm()["clients"]}["brain-console"]
+    uris = console["redirectUris"]
+
+    assert uris, "the console has no redirect URI, so no sign-in can complete"
+    for uri in uris:
+        assert ".invalid" not in uri, f"{uri} is a placeholder, so sign-in cannot complete"
+        assert not uri.rstrip("/").endswith("*"), (
+            f"{uri} is a wildcard, and Keycloak will hand a code to any path under it"
+        )
+        assert uri.endswith(CALLBACK_PATH), (
+            f"{uri} does not end in the path the console actually returns to"
+        )
+
+    origins = console["webOrigins"]
+    assert origins, "no web origin, so the browser cannot call the API after signing in"
+    for uri in uris:
+        assert any(uri.startswith(origin) for origin in origins), (
+            f"{uri} has no matching webOrigin, so its CORS preflight is refused"
+        )
+
+
+def test_every_registered_address_agrees_with_the_paths_the_console_uses() -> None:
+    """The join between two files that must not drift. `console/src/auth/constants.ts` decides
+    where the browser comes back to, and the realm decides where Keycloak is willing to send
+    it. If they disagree the sign-in fails at the final redirect, after the person has already
+    typed their password, which is the least debuggable place for it to fail.
+
+    Read out of the TypeScript rather than repeated here, so this compares the two records
+    instead of comparing the realm against a third copy of the same string.
+
+    Delete this and either file can be edited alone."""
+    import re
+
+    source = (REPO / "console" / "src" / "auth" / "constants.ts").read_text(encoding="utf-8")
+    callback = re.search(r'CALLBACK_PATH\s*=\s*"([^"]+)"', source)
+    signed_out = re.search(r'SIGNED_OUT_PATH\s*=\s*"([^"]+)"', source)
+
+    assert callback and signed_out, "the console no longer declares its own paths"
+    assert callback.group(1) == CALLBACK_PATH
+    assert signed_out.group(1) == SIGNED_OUT_PATH
+
+    console = {c["clientId"]: c for c in _realm()["clients"]}["brain-console"]
+    post_logout = console["attributes"]["post.logout.redirect.uris"]
+    for entry in post_logout.split("##"):
+        assert entry.endswith(SIGNED_OUT_PATH), (
+            f"{entry} is not where the console goes after signing out"
+        )

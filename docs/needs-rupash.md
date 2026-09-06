@@ -2,21 +2,22 @@
 
 Decisions and access I cannot resolve alone. Served at `/build/needs-rupash`.
 
-**4 items are open: 25, 29, 30 and 31.** All four are waiting on you rather than on me.
+**Nothing is open. All four were answered on 2026-09-06.**
 
-25 is the server capacity question. You asked for options that cost nothing and there are
-four; 25 sets them out with the measurements behind each. Two of them I can carry out as
-soon as you say so, and one of those protects your other production system rather than this
-one.
+**31 is decided: Option A.** The parsing and name-recognition models go behind the same
+inference server that embedding already assumes, so every Brain container stays small. Work
+has started; see 31 for what that changes.
 
-31 is the one that decides the next fortnight, and it is a sharper, measured version of
-25: wave 2 is at 90%, and the last seven jobs all need a machine-learning stack that is not
-installed and does not fit on the current server. Answer 25 first and 31 mostly answers
-itself.
+**29 is answered and done.** Yes, `https://brain.194.233.66.89.sslip.io` is exactly the right
+address and it is now registered. Read 29: there is one thing to know about what happens when
+you buy a real domain.
 
-29 and 30 are both new on 2026-09-06 and both are small. 29 needs one address from you
-before anybody can sign in to the console at all. 30 is a choice between two ways of letting
-the automation canvas reach the system, and they have different security properties.
+**30 is decided: Option A, and it costs nothing.** No new server, no new container, no money.
+It is a Docker network, which is a few lines of configuration.
+
+**25 is answered: you will remove your other project from this server.** Measured today, that
+frees about 2.4 GB, which changes the picture in 25 completely and is more than the full
+feature set was short by.
 
 **24, 26 and 28 were all answered on 2026-09-06.** 24 stays as built: an answer names a
 failed source only to somebody who could already see that source. 26 is decided: public
@@ -32,277 +33,101 @@ in.
 
 # Open
 
-## 31. Wave 2 is at 90% and the last seven jobs all need the same thing
+Nothing. All four items that were open on 2026-09-06 were answered the same day;
+they are the first four entries below.
 
-**This is the one that decides the next fortnight, and it is a sharper version of 25.**
+# Answered
 
-Wave 2 is 194 of 215 done. Of the 21 left, most are already built and waiting on something
-small. Seven are not, and they all need the same missing piece: **a machine-learning stack
-that is not installed and does not fit on the current server.**
+## 31. Wave 2's last seven jobs - DECIDED: Option A, models behind the inference server
 
-Those seven are reading documents properly (layout-aware extraction, scanned-page OCR,
-fallback for odd file formats), recognising names and identifiers the standard rules miss,
-and turning text into something searchable.
+**Decided 2026-09-06: Option A.** The parsing and name-recognition models go behind the same
+inference server that embedding was always going to use. Every Brain container stays small,
+and there is one place that loads models instead of three.
 
-### What I measured
+What that means in practice: the ~1.5 GB machine-learning stack measured below never enters
+our own image. The Brain sends a document or a piece of text over the network and gets back
+what was extracted. The inference server needs its own memory, which is why this waited on 25,
+and 25 is now answered: removing your other project frees about 2.4 GB, comfortably more than
+this needs.
 
-Adding just the document-reading library pulls in **83 further packages**. The eight largest,
-taken from the package index rather than guessed:
+The original analysis is kept below because the measurements are what made the choice.
 
-| | Download size |
+---
+
+## 29. The console address - DONE: your existing address, now registered
+
+**You were right, and it is done.** `https://brain.194.233.66.89.sslip.io` is exactly the
+address, and it is now registered in the realm. Nothing further is needed from you today.
+
+**Why your instinct was correct.** The console is not a separate system, it is the screen on
+top of the one already running at that address. Keeping both on one address is the better
+arrangement rather than merely the convenient one: the browser treats a different hostname as
+a different site, so a separate address would need cross-origin permissions configured for
+every call the console makes, and the sign-in token would be crossing a boundary it does not
+have to cross.
+
+**What is registered**, exact paths rather than a wildcard, because Keycloak will hand a
+sign-in code to any address on this list and a wildcard means any path on that host:
+
+    https://brain.194.233.66.89.sslip.io/auth/callback     where sign-in returns to
+    https://brain.194.233.66.89.sslip.io/signed-out        where sign-out returns to
+    http://localhost:5173/auth/callback                    development only
+
+**The one thing to know for when you buy a domain.** Those addresses live in
+`ops/keycloak/realm-export.json`. When the real domain replaces the sslip.io one, all three
+entries change together, or sign-in completes at Keycloak and then fails on the way back. The
+symptom is "login is broken" and the cause is one line in a file nobody would think to open.
+Tell me the domain and it is a two-minute change; there is now a test that fails if the file
+and the console ever disagree about these paths.
+
+---
+
+## 30. How the automation canvas reaches the Brain - DECIDED: Option A, no extra cost
+
+**Decided 2026-09-06: Option A. To answer your question directly: no, there is no additional
+cost and no additional server.**
+
+A Docker network is not a machine. It is a named route between containers that already exist,
+declared in a few lines of the compose file. It uses no memory, no disk and no money. Nothing
+new is deployed and nothing is exposed to the internet.
+
+What it buys is that the automation canvas can reach the Brain and nothing else, while still
+having no route out to the internet. Option B would have sent that traffic out to the public
+address and back in, which works and spends part of the reason the sandbox exists.
+
+---
+
+## 25. Server capacity - ANSWERED: you are removing the other project
+
+**You said you will remove your other project from this server so it is used by this one
+only. Measured today, that changes everything below.**
+
+Your other project is the tenant control plane: eight containers, and they are the largest
+block on the machine.
+
+| | Using now |
 |---|---|
-| torch (the machine-learning engine) | 529 MB |
-| opencv (image handling) | 70 MB |
-| scipy | 34 MB |
-| numpy | 16 MB |
-| transformers | 12 MB |
-| tokenizers | 10 MB |
-| torchvision | 7 MB |
-| safetensors | 1 MB |
-| **Total, compressed** | **678 MB** |
-
-Installed on disk that is roughly **1.5 GB**, and that is before any model file is downloaded.
-
-**The container meant to do this work is allowed 512 MB.** For comparison, the entire Brain
-is currently allowed 3,584 MB and is using 429 MB of it.
-
-It also quietly downgrades one library the system already uses, which is the sort of thing
-that works until it does not.
-
-### The thing that makes this decidable
-
-**Not all seven need it in the same place.** The plan already says embedding runs "through the
-inference server", meaning the model sits in its own service and the Brain just asks it
-questions over the network. That half needs no machine-learning code inside the Brain at all.
-
-The other half, reading documents and recognising names, is currently drawn as running
-*inside* our own containers, and that is what does not fit.
-
-### Three options
-
-**Option A: put the document and name-recognition models behind the same inference server as
-embedding.** One service does all the model work; every Brain container stays small; the plan
-already has a service like this for embedding, so this is finishing a pattern rather than
-inventing one. It is more setup, and the inference server needs its own memory, which brings
-us back to 25. **This is what I would do.**
-
-**Option B: give the parse worker enough memory and accept the bigger image.** Simplest to
-build, and it makes the Brain's own image about 1.5 GB larger to deploy and update. On the
-current server this does not fit without the right-sizing in 25.
-
-**Option C: ship wave 2 without layout-aware reading.** Plain text and simple PDFs work; a
-scanned contract or a document where the meaning is in the table layout does not. This costs
-nothing and it is a real reduction in what the system can read, so it should be a choice
-rather than a default.
-
-None of this is urgent this week. It is the thing that decides whether wave 2 finishes at 90%
-or at 100%, and A and B both depend on 25, which is why 25 is worth answering first.
-
----
-
-## 29. Nobody can sign in to the console until you give me one web address
-
-**Small, and it blocks everything visual.** One line from you and it is done.
-
-The admin console now exists and builds. It signs in through Keycloak, which is the thing
-that decides who your staff are and what they may see.
-
-Keycloak will only send somebody back to an address that was registered in advance. That is
-the right behaviour: without it, anybody could point a fake login page at your Keycloak and
-collect real sessions. The address is registered in `ops/keycloak/realm-export.json`, and
-today it reads `https://console.invalid`, which is a deliberate placeholder meaning "nobody
-filled this in yet". `.invalid` is reserved and can never be a real address.
-
-So right now sign-in cannot complete from anywhere, including from a laptop.
-
-**What I need from you: the web address the console will live at.** For example
-`https://console.yourdomain.com`, or a subdirectory of a domain you already own. If you do
-not have one yet, say so and I will register `http://localhost:5173` only, which lets
-development proceed and lets nothing else in.
-
-While I was checking this I found a real bug in the same file and fixed it, so it is worth
-knowing it was there. The setting that stamps "this token is for the Brain's API" onto a
-login was attached to the wrong half of the configuration: it sat on a component that never
-issues logins, so it could never have run. Every sign-in would have appeared to succeed and
-then been refused by the system a moment later, which reads to a user as "login is broken"
-and would have been very hard to trace. It is fixed and there is now a test that fails if
-anybody moves it back. It is **not** verified against a running Keycloak, because there
-isn't one I can reach from here; the first real sign-in is what settles it.
-
----
-
-## 30. How should the automation canvas reach the Brain? Two options, different risk
-
-**Not urgent, and it decides a piece of the design rather than a setting.**
-
-The automation canvas is the drag-and-drop tool where somebody builds "when a ticket is
-tagged urgent, look up the client and post to the channel". It runs in a locked box: it has
-no route to the internet except through a proxy that only allows named addresses, so a step
-somebody adds cannot quietly send your data somewhere.
-
-The custom step that lets an automation ask the Brain a question is now built, and it is
-built the right way round: the step names a *tool*, never an address, so the permission
-check still runs and an automation can never see more than the person it runs as. That is
-the part that mattered and it is done and tested.
-
-**What is not decided is how the locked box talks to the Brain at all.** Today it cannot,
-which is safe and useless. There are two ways:
-
-**Option A: give the canvas a private line to the Brain and nothing else.** A second internal
-network carrying only those two. Nothing else on your server can see it, and the canvas still
-has no route to the internet. More configuration, and it is the option I would choose.
-
-**Option B: put the Brain's public web address on the canvas's allowed list.** One line of
-configuration. The cost is that the canvas's traffic to the Brain then goes out and back in
-through the public internet, and the allowed list becomes the only thing standing between an
-automation and that address.
-
-**My recommendation is A**, because the whole argument for the locked box is that a step
-somebody adds cannot reach out, and B spends a little of that to save a little configuration.
-
-Either way nothing is exposed to the public that is not already, and neither option changes
-what an automation is allowed to see. That is decided by the permission check, which is
-built and does not depend on this.
-
----
-
-## 25. The full feature set does not fit on the current server
-
-**Measured, not estimated. Nothing is blocked today, and this needs deciding before
-wave 4 rather than during it.**
-
-**Re-measured on 2026-09-06, on the live box. Two numbers in the original version of this
-note were wrong. The recommendation at the bottom does not change.**
-
-What was written here before: "your server has about 6.4 GB usable, your other production
-system already uses 3.7 GB of it". Neither is right.
-
-- **The machine is 11.7 GB, not 6.4 GB.** The 6.4 figure is a budget the code sets for
-  itself, deliberately well below the machine, so the Brain can never be the reason a
-  neighbour falls over. It was written up as though it were the size of the server.
-- **The 3.7 GB is the Brain's own, not your other project's.** The same number appears
-  twice for two unrelated things, which is what made this confusing. 3,712 MB is what the
-  Brain's four services are *allowed* to use, and separately it happens to be what the full
-  feature set wants. Your other containers actually use about **5.2 GB** right now.
-
-The corrected picture, all measured this morning:
-
-| | Measured |
-|---|---|
-| The machine | 11,960 MB |
-| Actually in use, everything on the box | 5,641 MB |
-| Of that, the Brain | **394 MB** |
-| Free right now | 6,318 MB |
-| Swap in use | 1,352 MB of 2,047 |
-
-The Brain today is using **394 MB** of the 3,584 MB it is allowed. It is not the thing
-under pressure.
-
-**The conclusion is unchanged: the full feature set is over budget by about 1.3 GB.** That
-was right for the right reason, because the budget is a deliberate self-imposed cap rather
-than the size of the machine, and the arithmetic behind it was never wrong.
-
-### The thing worth knowing that was not in here before
-
-**15 of the 31 containers on that box have no memory limit at all.** Not a high one, none.
-Among them are Coolify itself, `verzbrain-activepieces`, and the two largest consumers on
-the machine. Together the containers that *do* have limits are already allowed 9,600 MB on
-an 11,960 MB machine, and the 15 unlimited ones are on top of that.
-
-In plain terms: the box is already promised more memory than it has, and the swap figure
-above is the evidence that it has been asked for it at least once. Nothing has fallen over,
-and the Brain is the well-behaved tenant here rather than the risk. But it does mean that if
-something on that machine goes wrong at 3am, the kernel picks what to kill, and it does not
-know which container is your client-facing system.
-
-That is not a Brain problem to fix, and I have not touched anything outside our own project.
-It is an argument for the second server being about resilience as well as capacity.
-
-**What is using it.** The single biggest item is the database behind the tracing tool
-(`langfuse-clickhouse`) at 1 GB. That is the component that records what the AI did, step
-by step, so a wrong answer can be explained afterwards. It is genuinely useful and it is
-genuinely large.
-
-### You asked for options that cost nothing. There are four, and together they are enough.
-
-**Answered 2026-09-06. You said you did not like any of the paid options and asked whether
-there are free ones. There are, and I should have led with them.**
-
-The reason I did not is that I had been treating the declared limits as though they were
-requirements. They are not. They are numbers somebody wrote, and one of those numbers is
-mine. Measured on the live box this morning:
-
-| | Declared | Actually using |
-|---|---|---|
-| The Brain's application | 1,024 MB | 330 MB |
-| The Brain's database | 2,048 MB | 63 MB |
-| The Brain's cache | 512 MB | 5 MB |
-| **The Brain, total** | **3,584 MB** | **429 MB** |
-
-The Brain reserves 3.5 GB and uses under half a gigabyte. That reservation is what the
-"it does not fit" arithmetic was subtracting.
-
-### Option 1: right-size what is already reserved. Frees about 1.2 GB. Costs nothing.
-
-A limit should be above the real peak with headroom, not eight times it. Proposed, and each
-figure is derived from what the service is configured to do rather than from what it happens
-to use today: application 768 MB, database 1,280 MB (its `shared_buffers` is 512 MB and the
-pooler caps it to twenty backends), cache 384 MB, pooler 64 MB. That is 2,496 MB instead of
-3,712 MB.
-
-**The honest caveat, and it is the same one I raised against shrinking the tracing
-database.** Those measurements are of a system almost nobody is using. Right-sizing on idle
-numbers is how you get an outage under real load. So this is safe to do now and needs a load
-test before wave 4 to confirm it, which is a task already on the plan (M22.3.3).
-
-### Option 2: cap the fifteen containers on your box that have no limit at all. Costs nothing.
-
-This is the one I would do first, and it is not really about the Brain.
-
-Your server runs 31 containers. Sixteen declare a memory limit and together they are allowed
-9,600 MB. **The other fifteen declare nothing.** They are using 3,693 MB right now and
-nothing stops them using more. Among them are Coolify itself and your Activepieces instance.
-
-That means every "how much room is left" answer on this page, including mine, is a guess.
-The machine is 11,960 MB and the promises already add up to more than that. Capping those
-fifteen near what they actually use would not create a single megabyte, and it would turn
-the headroom from something we hope for into something the kernel guarantees. It also
-decides, in advance and in daylight, which container dies at three in the morning instead of
-leaving that to whichever one asks for memory first.
-
-### Option 3: stop treating the full feature set as all or nothing. Frees 512 MB to 1 GB.
-
-"Full" is a label I put on a list, and the list bundles things that do not have to arrive
-together:
-
-- **Activepieces, 512 MB.** The plan itself calls it "an optional sandboxed container ...
-  enabled per client by configuration". It has nothing to do with tracing.
-- **The PII analyser, 512 MB.** Only needed when text is sent to a third-party model. If the
-  reasoning model is self-hosted, it is not on the path at all.
-
-Dropping either from what you actually deploy is a configuration choice, not a downgrade.
-
-### Option 4: run the trace ledger without its database. Frees 1 GB.
-
-ClickHouse is the single biggest item and the reason the total does not fit. Langfuse's
-earlier line runs on PostgreSQL alone, against the database you already have. You lose the
-query speed that ClickHouse buys over millions of spans, which is a real loss at scale and
-not one you are near. Sampling is the smaller version of the same idea: trace one request in
-twenty and the same store runs in half the memory.
-
-### Put together
-
-Right-sizing (option 1) plus dropping the optional canvas (option 3) is enough on its own:
-the wave-2 components then want 3,200 MB against 3,648 MB available, and it fits with room
-to spare. Add option 2 and the budget stops being a guess.
-
-**So my recommendation changes: do options 1 and 2 now, and you do not need to buy
-anything.** Option 2 is the one with a deadline, because it protects your other production
-system as much as this one.
-
-**What I would still not do** is shrink the tracing database and call it sized. It would
-work, then fail under load, and it would fail as "the AI is broken" rather than as "we
-undersized a component on purpose in September".
+| Your other project (control plane, tenant console, provisioning API, its database) | **2,402 MB** |
+| The Dify stack, if that is also yours | 541 MB |
+| The Company Brain, everything | 1,414 MB |
+| Coolify itself, which stays | 563 MB |
+
+The machine is 11,960 MB. Removing the control plane alone frees **2.4 GB**, which is more
+than the full feature set was ever short by, and roughly twice the largest single component.
+
+**So the shortfall in this item is gone once you do that**, and the options below become a
+matter of tidiness rather than necessity. Two are still worth doing on their own merits and I
+can do both whenever you say:
+
+Option 1, right-sizing the Brain's own reservations, because 3.5 GB reserved against 429 MB
+used is a number that misleads everyone who reads it, including me.
+
+Option 2, capping the containers that declare no limit at all, because the kernel decides what
+dies at three in the morning and it does not know which container is your client-facing one.
+That one matters less once the other project is gone, and it is not free of risk while it is
+still there, so it is worth doing in the order: remove the project, then re-measure, then cap.
+
+Nothing is blocked on this now.
 
 ---
 
@@ -318,8 +143,6 @@ undersized a component on purpose in September".
 ---
 
 ---
-
-# Answered
 
 ## 28. Production restarts every few minutes - DONE, and it was a leftover timer of mine
 

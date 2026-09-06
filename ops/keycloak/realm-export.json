@@ -218,8 +218,11 @@
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": false,
       "frontchannelLogout": false,
-      "redirectUris": ["https://brain.example.invalid/auth/callback"],
-      "webOrigins": ["https://brain.example.invalid"],
+      "redirectUris": [
+        "https://brain.194.233.66.89.sslip.io/auth/callback",
+        "http://localhost:5173/auth/callback"
+      ],
+      "webOrigins": ["https://brain.194.233.66.89.sslip.io", "http://localhost:5173"],
       "_comment": [
         "brain-identity alone, and the three that used to sit beside it are gone.",
         "",
@@ -249,8 +252,8 @@
         "user.info.response.signature.alg": "RS256",
         "backchannel.logout.session.required": "true",
         "backchannel.logout.revoke.offline.tokens": "true",
-        "backchannel.logout.url": "https://brain.example.invalid/auth/backchannel-logout",
-        "post.logout.redirect.uris": "https://brain.example.invalid/signed-out"
+        "backchannel.logout.url": "https://brain.194.233.66.89.sslip.io/auth/backchannel-logout",
+        "post.logout.redirect.uris": "https://brain.194.233.66.89.sslip.io/signed-out##http://localhost:5173/signed-out"
       },
       "_comment": [
         "webOrigins is an explicit origin and never '*' or '+'. A wildcard here lets any",
@@ -258,9 +261,14 @@
         "backchannel.logout.session.required true makes Keycloak send the sid, which is",
         "what SessionRegistry.end_session needs; end_all_for covers the case where it does",
         "not arrive or the session was never seen by this replica.",
-        "redirectUris are .invalid placeholders on purpose. Setting a real hostname here",
-        "would put a production URL in a file that gets copied between environments, and a",
-        "stale redirect URI in a realm import is an open redirect."
+        "redirectUris name the deployment this realm is imported into, and the risk the",
+        "previous .invalid placeholders were guarding against is real: a stale redirect URI",
+        "in a realm import is an open redirect, because Keycloak will hand a code to any",
+        "address listed here. So they are exact paths rather than a wildcard, there are only",
+        "two, and the second is localhost for development. Rupash gave the address on",
+        "2026-09-06 and said a purchased domain will replace the sslip.io one later; when it",
+        "does, these three entries and backchannel.logout.url change together or sign-in",
+        "breaks in a way that looks like Keycloak being wrong."
       ]
     },
     {
