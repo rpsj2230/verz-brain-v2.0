@@ -254,3 +254,99 @@ def test_the_skip_message_claims_nothing_about_where_it_does_run() -> None:
 
     assert "always" not in SKIPPED_FOR_WANT_OF_A_DATABASE
     assert "nothing was checked" in SKIPPED_FOR_WANT_OF_A_DATABASE
+
+
+# ------------------------------------------------------------------- the console
+
+
+def _console_job() -> dict[str, Any]:
+    """The job that runs the console's own gates, or a failure saying it is gone."""
+    job = _workflow()["jobs"].get("console")
+    if job is None:
+        pytest.fail(
+            "there is no console job in CI, so the console's type check, import boundaries, "
+            "tests and build run nowhere but somebody's laptop"
+        )
+    return dict(job)
+
+
+@pytest.mark.parametrize(
+    "script",
+    ["npm run typecheck", "npm run check:boundaries", "npm run test", "npm run build"],
+)
+def test_ci_runs_every_console_gate(script: str) -> None:
+    """**None of these ran anywhere but a laptop until 2026-09-07.**
+
+    The console had 266 tests, a strict type check, an import-boundary check and a production
+    build, and CI ran none of them: its only Node step regenerated the tracker page. Found by
+    an agent building the matrix screen, and it is the largest hole this pipeline has had.
+
+    What makes it worse than an ordinary missing job is which tests were in that set. The
+    console's checks against the Python side live there: the ones that read a route's declared
+    query parameters out of the generated document, and the ones that read a bound or an enum
+    out of the Python source. Those exist precisely because the two halves drift silently, and
+    they were the ones nothing ran. The console spelled a filter parameter no route declared
+    for the life of the module, and even after that check was written, CI would not have run
+    it.
+
+    Delete this and the job can be removed to make a red build green, which is the move that
+    produced this state in the first place.
+
+    Parametrised so each gate names itself in the failure, rather than one assertion reporting
+    that something among four is missing."""
+    commands = "\n".join(
+        str(step.get("run", "")) for step in _console_job().get("steps", [])
+    )
+
+    assert script in commands, f"CI does not run {script!r} for the console"
+
+
+def test_the_console_is_compiled_against_a_document_generated_in_the_same_run() -> None:
+    """`console/src/api/generated/` is gitignored on purpose: the README argues that a
+    committed schema is right until somebody changes a response model and does not rerun the
+    generator, and from then on the console compiles against an API that no longer exists
+    while every check stays green.
+
+    That argument only holds if something regenerates it. A console job that skipped
+    `api:generate` would read whatever the runner happened to have, which is nothing, and the
+    OpenAPI-based tests would compare against an empty document and pass.
+
+    So the job needs both toolchains, and this asserts the Python one is set up as well as
+    Node: `api:schema` is `uv run python scripts/export-openapi.py`, so a job with only
+    `setup-node` fails at that step rather than skipping it, and a job with neither runs the
+    tests against a stale file.
+
+    Delete this and the console's checks against the API quietly become checks against
+    nothing."""
+    job = _console_job()
+    steps = job.get("steps", [])
+    commands = "\n".join(str(step.get("run", "")) for step in steps)
+    uses = [str(step.get("uses", "")) for step in steps]
+
+    assert "npm run api:generate" in commands, (
+        "the console job does not regenerate the typed client, so its tests read whatever "
+        "document is lying around, and there is none in a fresh checkout"
+    )
+    assert any("setup-uv" in one for one in uses), (
+        "api:generate runs a Python exporter first, so this job needs uv as well as node"
+    )
+    assert any("setup-node" in one for one in uses)
+
+
+def test_the_console_installs_from_its_lockfile() -> None:
+    """`npm install` resolves versions afresh and can pick up a release published between two
+    runs, so a build that passed this morning and fails this afternoon says nothing about the
+    commit. `npm ci` installs exactly `package-lock.json`.
+
+    The lockfile is asserted to exist here as well, because `npm ci` fails without one and the
+    failure reads as a broken workflow rather than a missing file.
+
+    Delete this and CI stops testing the dependency set the developer tested."""
+    commands = "\n".join(
+        str(step.get("run", "")) for step in _console_job().get("steps", [])
+    )
+
+    assert "npm ci" in commands, "the console job resolves dependencies afresh on every run"
+    assert (REPO / "console" / "package-lock.json").is_file(), (
+        "there is no console lockfile, so npm ci has nothing to install from"
+    )

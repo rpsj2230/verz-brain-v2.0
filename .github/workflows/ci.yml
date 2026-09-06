@@ -142,6 +142,54 @@ jobs:
         # drop plus an add, a not-null column with no default, and schema mixed with data.
         run: uv run python -m brain.ops.migration_policy
 
+  # The console's guards ran nowhere but a laptop until 2026-09-07.
+  #
+  # Found by an agent building the matrix screen, and it is the largest hole this pipeline
+  # has had: 266 tests, a strict type check, an import-boundary check and a production build,
+  # none of them run by anything except the person who happened to remember. Every one of the
+  # console's checks against the Python side is in that set, including the ones that read a
+  # route's declared query parameters out of the generated document, which is exactly the
+  # class of check that exists because the two halves drift silently.
+  #
+  # `api:generate` runs the Python exporter first, so this job needs both toolchains. That is
+  # also the point of running it here rather than trusting a committed schema:
+  # `src/api/generated/` is gitignored precisely so the console cannot compile against an API
+  # that no longer exists, and a job that skipped regeneration would restore that hazard with
+  # extra steps.
+  console:
+    name: Console types, boundaries, tests, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+      - run: uv sync --locked
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: console/package-lock.json
+      - name: Install
+        working-directory: console
+        run: npm ci
+      - name: Generate the typed client from the live application
+        working-directory: console
+        run: npm run api:generate
+      - name: Types (strict)
+        working-directory: console
+        run: npm run typecheck
+      - name: Import boundaries
+        working-directory: console
+        run: npm run check:boundaries
+      - name: Tests
+        working-directory: console
+        run: npm run test -- --run
+      - name: Build
+        working-directory: console
+        run: npm run build
+
   docs:
     name: Tracker matches the WBS
     runs-on: ubuntu-latest
