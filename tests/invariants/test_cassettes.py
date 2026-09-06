@@ -237,3 +237,92 @@ def test_the_awkward_date_format_is_captured() -> None:
     without erroring, which is worse than failing."""
     xero = for_source(Source.XERO)
     assert any("/Date(" in str(c.body) for c in xero)
+
+
+#: Connectors that deliberately run against another source's ceiling, and the source they
+#: share with. Listed rather than inferred, so borrowing is a visible edit here instead of a
+#: constant somebody changed in a module.
+#:
+#: `lark_wiki` is the only one and the reason is the tenant's, not ours: Lark publishes one
+#: unraisable 100-a-minute bucket for the whole tenant, so two windows would each be correct
+#: and together would spend twice the minute that exists. Its module argues that at length.
+SHARES_ANOTHER_CEILING: dict[str, str] = {"lark_wiki": "lark_base"}
+
+
+def test_no_connector_quietly_runs_against_another_sources_measured_ceiling() -> None:
+    """**Generalised from a mutation that survived HubSpot's own suite.** Repointing
+    `hubspot.CEILING_NAME` from "hubspot" to "freshdesk" passed every test that connector
+    had, because its ceiling test read `connector_ceiling(CEILING_NAME)` and branched on the
+    answer: Freshdesk has a measured row, so the branch flipped, every assertion held, and
+    the suite stayed green.
+
+    What that would do in production is not a crash. HubSpot would begin pacing itself
+    against Freshdesk's verified 100 a minute, `ceiling_is_verified()` would answer True to
+    say so, and a connector's whole argument for refusing to invent a ceiling would have been
+    replaced by silently borrowing somebody else's measurement. Nothing anywhere would say
+    which source a connector was sized against.
+
+    A constant asserted against itself proves nothing about its value. The independent fact
+    is that a connector runs against its own name, and the one exception is declared above
+    with its reason rather than discovered in a module.
+
+    The count is asserted because this is the check that finds nothing when it reads nothing:
+    these constants are module-level in some connectors and per-manifest in others, so a
+    rename would quietly empty the loop and leave a green test that inspected no connector at
+    all. That failure has happened twice in this repository already.
+
+    Delete this and any connector can be repointed at any measured source in the table, and
+    the first symptom is a rate limit nobody can explain."""
+    import importlib
+    import pkgutil
+
+    import brain.connectors as package
+
+    checked: dict[str, str] = {}
+    for info in pkgutil.iter_modules(package.__path__):
+        module = importlib.import_module(f"brain.connectors.{info.name}")
+        own = getattr(module, "CONNECTOR_NAME", None)
+        ceiling = getattr(module, "CEILING_NAME", None)
+        if not isinstance(ceiling, str):
+            continue
+        # A borrower is checked against the list whether or not it names itself. Requiring
+        # `CONNECTOR_NAME` here skipped `lark_wiki`, which declares only the ceiling, so the
+        # one connector the exception list exists for was the one connector never examined.
+        # A mutation flipping its ceiling survived, which is how this was found.
+        expected = SHARES_ANOTHER_CEILING.get(info.name)
+        if expected is None:
+            if not isinstance(own, str):
+                continue
+            expected = own
+        checked[info.name] = ceiling
+        assert ceiling == expected, (
+            f"{info.name} runs against {ceiling!r} rather than {expected!r}; if that is "
+            f"deliberate, say so in SHARES_ANOTHER_CEILING with the reason"
+        )
+
+    assert len(checked) >= 3, (
+        f"only {len(checked)} connector(s) were examined, so this compared almost nothing: "
+        f"{sorted(checked)}"
+    )
+    # Every declared exception must have been reached. Without this the list can name a
+    # module the loop skips, which is exactly what it did.
+    unreached = sorted(set(SHARES_ANOTHER_CEILING) - set(checked))
+    assert not unreached, (
+        f"{unreached} are listed as sharing a ceiling and were never examined, so the "
+        f"exception is documentation rather than a check"
+    )
+
+
+def test_a_connector_that_shares_a_ceiling_shares_one_that_exists() -> None:
+    """The guard on the list above. An entry naming a source with no measured row would read
+    as a considered exception and would in fact point the borrower at nothing, which
+    `throttle.limits_for` refuses at run time and no test would have caught here.
+
+    Delete this and `SHARES_ANOTHER_CEILING` can name a typo."""
+    from brain.ops.limits import connector_ceiling
+
+    assert SHARES_ANOTHER_CEILING, "the exception list is empty, so this checks nothing"
+    for borrower, lender in SHARES_ANOTHER_CEILING.items():
+        assert connector_ceiling(lender) is not None, (
+            f"{borrower} is declared to share {lender!r}, which has no measured ceiling"
+        )
