@@ -185,6 +185,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # lifespan handles a failure, and deliberately: an unreachable database leaves an
     # instance that answers what it can, whereas a catalogue that failed its own checks is
     # a set of tools nobody validated being offered to a model.
+    # **This check says the catalogue is valid, and it does not say there is anything in
+    # it.** Measured on production on 2026-09-06: `tools=0` in the log beside
+    # `/health/ready` returning `{"tools": true}`. Both are accurate and together they read
+    # as something that is not true, because this module's own docstring defines readiness
+    # as "can this process answer a question correctly" and a process with no tools cannot
+    # answer anything.
+    #
+    # The emptiness is expected and disclosed: `build_registry` is called with no
+    # `records=`, because `RowSource.rows` is synchronous and this application has an
+    # `AsyncEngine`. `brain.tools.startup` sets out the three ways to resolve that and why
+    # each one changes the deployed connection profile and therefore deserves its own
+    # measurement rather than riding along here.
+    #
+    # It is left reporting True rather than flipped, deliberately. Nothing asks this
+    # instance a question yet, there is no route to ask through, and a readiness check that
+    # fails on a known and intended state is a container restart loop rather than a signal.
+    # What is refused is leaving it undocumented: the day somebody passes a row source, the
+    # test named below fails and this paragraph has to be rewritten by whoever does it.
     app.state.tools = build_registry(source=settings.tool_source)
     app.state.ready["tools"] = True
     log.info("tool registry frozen", tools=len(app.state.tools))
