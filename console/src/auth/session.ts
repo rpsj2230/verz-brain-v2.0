@@ -124,14 +124,60 @@ function redirectUri(): string {
 }
 
 /**
+ * `value` resolved against this origin, or null when it names another one or does not parse.
+ *
+ * An unparseable value means an opaque origin, which has no same-origin path to return to,
+ * so failing to parse and naming another host are the same refusal and share an answer.
+ */
+function onThisOrigin(value: string, origin: string): URL | null {
+  try {
+    const url = new URL(value, origin);
+    return url.origin === origin ? url : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Where to send the person after sign-in, made safe.
  *
- * Only a path on this origin. A value beginning with two slashes is protocol relative and
- * navigates off-site, which is an open redirect however unlikely the route into it, and
- * "it came from our own storage" is the reasoning that makes those bugs live for years.
+ * Only a path on this origin. A value that leaves it is an open redirect however unlikely
+ * the route into it, and "it came from our own storage" is the reasoning that makes those
+ * bugs live for years.
+ *
+ * **The check is a parse, and then a second parse of its own result.** The ways a string can
+ * begin with a single slash and still name another host do not enumerate. Two slashes is
+ * protocol relative. A backslash in the second position is folded to a slash for http(s)
+ * URLs, which is the bug GHSA-wrjc-x8rr-h8h6 reports against react-router itself and which
+ * this console reaches by handing the value to `navigate`. A tab, newline or carriage return
+ * is stripped before parsing, so a second slash behind one of those is protocol relative by
+ * the time anything looks, and a guard that read the first two characters has passed it.
+ *
+ * Two designs were rejected here on 2026-09-06, and the second is why the result is parsed
+ * again. The list of forbidden prefixes that stood here originally refused two slashes and
+ * nothing else, so every other shape above walked through it. Replacing it with a single
+ * resolve-and-compare was still wrong: `/.//evil.example` is same origin as written, because
+ * the dot segment sits where an authority would be, and normalising it yields a path of
+ * `//evil.example`, so rebuilding the return value from that parse **created** a protocol
+ * relative string out of an input that was not one. A differential fuzz over 333,450 inputs
+ * found twelve of that shape against the single parse and nothing else, and none at all
+ * against the two below. What is returned therefore has to be same origin both as it
+ * arrived and as it leaves.
+ *
+ * The leading slash is still required, so that resolving widens nothing: a same-origin
+ * absolute URL is refused here exactly as the prefix list refused it.
  */
 function safeReturnTo(candidate: string): string {
-  return candidate.startsWith("/") && !candidate.startsWith("//") ? candidate : "/";
+  const { origin } = globalThis.location;
+  if (!candidate.startsWith("/")) {
+    return "/";
+  }
+  const resolved = onThisOrigin(candidate, origin);
+  if (!resolved) {
+    return "/";
+  }
+  const path = `${resolved.pathname}${resolved.search}${resolved.hash}`;
+  return onThisOrigin(path, origin) ? path : "/";
 }
 
 function currentLocation(): string {

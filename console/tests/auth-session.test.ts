@@ -297,7 +297,31 @@ describe("the callback", () => {
     // is protocol relative and navigates off-site, and "it came from our own storage" is
     // the reasoning that keeps bugs of this shape alive for years. React Router has had
     // this exact bug, with this exact input, in the version this console pins.
-    for (const hostile of ["//evil.example/x", "https://evil.example/x", "javascript:alert(1)"]) {
+    //
+    // Everything after the first three is why the guard resolves the candidate instead of
+    // refusing a list of prefixes, and each one passed the prefix list that stood until
+    // 2026-09-06. A backslash is folded to a slash for http(s) URLs, which is
+    // GHSA-wrjc-x8rr-h8h6 against react-router itself; a tab, newline or carriage return is
+    // stripped before parsing. Each reaches another host through a string whose first two
+    // characters are a slash and something that reads as harmless.
+    //
+    // The two dot-segment inputs are the opposite failure and they guard the second parse.
+    // They are same origin as written, because the dot sits where an authority would be, so
+    // a single resolve-and-compare admits them. Normalising them collapses the path to
+    // "//evil.example/x", which means a guard that rebuilds its answer from that parse and
+    // stops there hands the router a protocol relative string that the input never was.
+    // These two fail on a guard that checks its own output, and only on that.
+    for (const hostile of [
+      "//evil.example/x",
+      "https://evil.example/x",
+      "javascript:alert(1)",
+      "/\\evil.example/x",
+      "/\t/evil.example/x",
+      "/\n/evil.example/x",
+      "/\r/evil.example/x",
+      "/.//evil.example/x",
+      "/.\\\\evil.example/x",
+    ]) {
       const loaded = await loadConsole();
       await loaded.session.beginSignIn(hostile);
       const state = loaded.location.lastAssigned().searchParams.get("state") ?? "";
@@ -313,6 +337,16 @@ describe("the callback", () => {
 
       expect(landed).toBe("/");
     }
+  });
+
+  test("a return address that names this origin in full is still replaced with the root", async () => {
+    // What breaks if this is deleted: the guard widens and no refusal case notices. Once the
+    // candidate is resolved rather than prefix-matched, a same-origin absolute URL parses to
+    // this origin, so dropping the leading-slash check would start accepting a shape that was
+    // always refused, and every input in the test above would stay green because they all
+    // name another host. The rule is a path on this origin, not any URL that lands on it.
+    const loaded = await loadConsole();
+    expect(await signIn(loaded, { returnTo: `${CONSOLE_ORIGIN}/activity` })).toBe("/");
   });
 
   test("a return address on this origin is kept", async () => {
