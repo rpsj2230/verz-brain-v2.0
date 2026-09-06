@@ -52,11 +52,28 @@ already has. There are exactly three ways out and none is a small edit:
 - Give the application a sync engine beside the async one.
 
 The last two both add a connection pool, and `docker-compose.yml` sizes PgBouncer at
-`DEFAULT_POOL_SIZE=20` against `max_connections=100` on a host `brain.ops.wiring` shows is
-already overcommitted. Picking one of these at the same time as wiring the registry would
-be changing the deployed resource profile inside a commit about something else, and the
-sizing deserves its own measurement. `build_registry` takes the source as a parameter
-precisely so that whichever is chosen is one call site.
+`DEFAULT_POOL_SIZE=20` against `max_connections=100`. Picking one at the same time as wiring
+the registry would be changing the deployed resource profile inside a commit about something
+else, so the sizing was left for its own measurement. `build_registry` takes the source as a
+parameter precisely so that whichever is chosen is one call site.
+
+**That measurement has now been taken, and it says the pool is not what should decide this.**
+On the live database, 2026-09-07: `max_connections` is 100 and `pg_stat_activity` showed 9
+connections in use. Ninety-one are spare, so a second pool of five or ten is comfortably
+affordable and the resource objection to the last two options does not hold.
+
+What that leaves is the engineering question on its own, and the answer is the first option.
+The application is async from the socket to the session; the row plane is the only synchronous
+island in it. Keeping that island means a second connection pool *and* a thread per concurrent
+row query, both of them permanent, to avoid changing five call sites: `RowSource`, `read_rows`,
+`RowTool.reader`, `fast_lane.respond` and this builder. A second pool added to preserve a sync
+island is the kind of decision that looks cheap on the day and is never removed.
+
+It is not done here for a reason that is about sequencing rather than doubt. `read_rows` is
+where the permission predicate is compiled, so it is the single module in this system where a
+mistake is a disclosure, and it deserves a change of its own with its own mutation pass rather
+than one folded into a measurement. Whoever takes it should know the resource question is
+settled and the refactor is five call sites.
 
 What this module does fix is the thing that was actually broken: a registry now exists, one
 builder makes it, the application calls that builder at startup, and every rule runs on the
