@@ -2,7 +2,9 @@
 
 Decisions and access I cannot resolve alone. Served at `/build/needs-rupash`.
 
-**1 item is open: 32, and it is three passwords.** Answering 29 turned up that there is no
+**2 items are open: 32 and 33.** 32 is three passwords, and it is what stands between the
+console and a working sign-in. 33 is one sentence from you about what "shadow-pinned thirty
+days" means, and it decides a safety property rather than a feature. Answering 29 turned up that there is no
 Keycloak deployed at all, which is the real reason nobody can sign in. It is written and
 sized from measurement now; it needs three secrets I will not create on your behalf.
 
@@ -38,6 +40,40 @@ in.
 ---
 
 # Open
+
+## 33. "Shadow-pinned thirty days" - which of the two things does it mean?
+
+**Small, and it decides a safety property rather than a feature.**
+
+Your work breakdown lists two agents with a supervision constraint in their titles:
+
+- **SEM Agent**, shadow-pinned, human commits budget changes
+- **AR and Renewal Chaser**, shadow-pinned **thirty days**
+
+The first is built. "A human commits budget changes" is something the system can refuse: the
+agent may prepare a change and may not apply one, and that is enforced by the gate rather
+than by asking the agent nicely in its instructions.
+
+The second I did not build, because the system cannot currently express it and I do not want
+to guess which of two very different things you meant.
+
+**Reading one: review after thirty days.** The agent stays supervised. After a month somebody
+looks at what it did and decides whether to trust it further. Nothing changes on its own.
+
+**Reading two: becomes autonomous after thirty days.** The pin expires. On day thirty-one the
+agent starts chasing customers for money without anybody watching, because a timer ran out.
+
+I would build the first and would want to argue with you before building the second. An agent
+that gains authority on a date nobody diarised is the one kind of change that happens when
+nobody is paying attention, which is exactly when you would want it not to.
+
+**Either way there is a small piece of work**, because today a supervision level has no time
+attached to it at all. Reading one needs a review date and a reminder. Reading two needs an
+expiry, and I would want it to be loud rather than silent.
+
+No rush: the chaser is one of twenty-three agent templates and six are written so far.
+
+---
 
 ## 32. Three passwords, and then people can actually sign in
 
