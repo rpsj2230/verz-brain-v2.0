@@ -90,6 +90,16 @@ services:
       BRAIN_WORKER_SLOTS_HUMAN_ASYNC: "4"
       BRAIN_WORKER_SLOTS_AUTOMATION: "2"
       BRAIN_WORKER_SLOTS_SYSTEM: "1"
+      # Which shape of container this is, which decides the queue names it drains. Standard:
+      # every job here is bounded by something we wrote, so several fit inside one container.
+      #
+      # Set explicitly although it is also the default. This file and
+      # `docker-compose.parse-worker.yml` run the same image and the same command and differ
+      # in exactly two variables, and a difference expressed as one file saying something and
+      # the other saying nothing is a difference nobody sees in a diff. Before this existed
+      # both containers drained `system` and the general worker could fetch the 50 MiB parse
+      # the parse worker was built for, into a 48 MiB slot.
+      BRAIN_WORKER_SLOT_CLASS: standard
       # glibc gives a threaded process up to eight arenas per core and never returns them,
       # so resident memory climbs to a plateau set by the host's core count rather than by
       # the container's limit. On this box that plateau is above 384M. Two arenas costs a

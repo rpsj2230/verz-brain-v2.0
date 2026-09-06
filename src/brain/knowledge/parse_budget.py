@@ -68,13 +68,24 @@ fit any other in `brain.ops.wiring`'s budget either. Raising the figure below un
 would be answering a question the owner has been asked, so the figure is sized for the input
 and the dependency question stays open where it was put.
 
-What is not here: anything that routes a parse job to the parse worker. `queue_name_for`
-derives a queue from the traffic class and refuses per-task queues on purpose, and ingestion
-is `TrafficClass.SYSTEM` like every other piece of housekeeping, so both workers drain
-`system` and either could fetch a parse. Closing that needs a change to
-`brain.ops.queue`'s central rule rather than to this module, and it is why M7.2.6 is claimed
-for the bound and the container and not for the placement. Nothing runs today either way:
-there is no queue driver and no parser, so no job has ever been fetched by either container.
+**The placement gap this module named is closed, and it was a live defect.** This paragraph
+used to say that `queue_name_for` derived a queue from the traffic class alone, that ingestion
+is `TrafficClass.SYSTEM` like every other piece of housekeeping, and that both workers
+therefore drained `system` and either could fetch a parse. That was exactly right, and what it
+meant is that the general worker, whose slots are 48 MiB inside 384, could fetch the 50 MiB
+document the knowledge door admits. Every check passed while it was true: the slot arithmetic
+said one 48 MiB slot fits, and `parse_worker_gaps` was only ever asked of the container named
+as the parse worker.
+
+`SlotClass` in `brain.ops.queue` is the change to the central rule that closes it. A
+whole-container job derives `system.whole_container`, the general worker drains the standard
+names and the parse worker drains that one, and the two are now checked against each other
+rather than each alone. The priority rule survives intact: a task may declare a cost and still
+may not declare a class, because saying a job is expensive only ever routes it to the scarcer
+container that runs one at a time.
+
+Nothing runs today either way: there is no queue driver and no parser, so no job has ever been
+fetched by either container. The routing exists and the traffic does not.
 
 Task ids: M7.2.6
 """

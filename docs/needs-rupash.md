@@ -79,6 +79,45 @@ column width before choosing the model would spend the same migration twice.
 
 ---
 
+## 35. You renamed the GitHub repository, and it stopped the deploy
+
+**Fixed already, in about twenty minutes, and there is one small decision left for you.**
+
+You renamed the repository from `verz-brain-v2.0` to `Verz-OS-v2.0` this afternoon. The build
+that ran straight afterwards failed:
+
+    invalid tag "ghcr.io/rpsj2230/Verz-OS-v2.0:79204c6": repository name must be lowercase
+
+The pipeline was naming the container image after the repository, so renaming one renamed the
+other, and container image names may not contain capital letters. Meanwhile the server pulls
+the image by its old name, written into three files.
+
+**The lucky part.** Your new name has capital letters in it, so this arrived as a failed build
+half a minute after the push. Had you renamed it to something lowercase, the build would have
+worked, published the image somewhere nothing looks, reported success, and left the server
+running the old one with every check green. That is the failure you had in August, when
+production sat fourteen commits behind and nothing said so.
+
+The image name is now written out rather than derived, four files that name it are held equal
+by a test, and production is live on the current commit again. Nothing is outstanding.
+
+**The decision.** The image is still called `verz-brain-v2.0` while the repository is called
+`Verz-OS-v2.0`. Two options:
+
+1. **Leave it.** The image name is an internal address that only the pipeline and the server
+   use. Nothing is wrong with it, and it costs nothing. My recommendation.
+2. **Rename the image to match.** Tidier to read, and it has to be done in one step: publish
+   under the new name and change what the server pulls at the same moment, or the server
+   spends that deploy pulling something that is no longer published. Ten minutes and a
+   deploy, and worth doing only if the mismatch will bother you every time you see it.
+
+**One thing to know for next time**, not a complaint: a rename is the kind of change that
+looks free and reaches the build, the registry and the server. If you tell me before or just
+after, I can have the three files moved in the same minute rather than finding it in a red
+build.
+
+---
+
 ## 33. "Shadow-pinned thirty days" - which of the two things does it mean?
 
 **Small, and it decides a safety property rather than a feature.**

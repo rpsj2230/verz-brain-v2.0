@@ -38,11 +38,16 @@
 # omitted class is reported as one whose jobs are never fetched and the two must not look
 # alike in a file somebody reads during an incident.
 #
-# **Nothing routes a parse to this container yet, and that is the part of M7.2.6 that is not
-# built.** `brain.ops.queue.queue_name_for` derives a queue from the traffic class and refuses
-# per-task queues on purpose, so a parse job sits on the `system` queue alongside every other
-# piece of housekeeping and either worker could fetch it. Closing that needs a change to the
-# queue's own rule about who may choose a queue, not a line in this file.
+# **A parse now has a queue of its own, and this is the line that puts it there.** Until
+# `BRAIN_WORKER_SLOT_CLASS` existed, `queue_name_for` derived a queue from the traffic class
+# alone, ingestion is `SYSTEM` like every other piece of housekeeping, and both workers
+# drained `system`: the general worker could fetch the 50 MiB PDF this container was sized
+# for, into a 48 MiB slot, and every check in `brain.ops.worker` passed. The change is in the
+# queue's rule rather than in a task name, which is what
+# `brain.knowledge.parse_budget` said it would have to be. A task still cannot choose a
+# priority; it can declare a cost, and declaring a cost can only ever move a job to the
+# container that runs one at a time. What is still not built is the enqueue side: nothing
+# constructs a parse job, because there is no driver to enqueue it with.
 #
 # **It has never been started**, for the same reason `docker-compose.worker.yml` has not:
 # `brain.ops.worker` exits 69 saying no queue driver is installed. There is also no parser,
@@ -85,6 +90,16 @@ services:
       BRAIN_WORKER_SLOTS_HUMAN_ASYNC: "0"
       BRAIN_WORKER_SLOTS_AUTOMATION: "0"
       BRAIN_WORKER_SLOTS_SYSTEM: "1"
+      # The variable that stops this container and the general worker draining the same
+      # queue. `brain.ops.queue.queue_name_for` derives a queue from the traffic class and
+      # this, so a whole-container slot drains `system.whole_container` and the general
+      # worker, which serves standard slots, cannot fetch from it. Until this existed both
+      # containers drained `system`, ingestion is `SYSTEM` like all housekeeping, and the
+      # header above said plainly that nothing routed a parse here: this is that routing, and
+      # it is a queue name rather than a rule about task names, so a task author still cannot
+      # choose one. Declaring a job whole-container is never an advantage; it moves the job to
+      # the container that runs one at a time.
+      BRAIN_WORKER_SLOT_CLASS: whole_container
       # glibc gives a threaded process up to eight arenas per core and never returns them, so
       # resident memory climbs to a plateau set by the host's core count rather than by the
       # container's limit. It matters more here than on the general worker, because a parser

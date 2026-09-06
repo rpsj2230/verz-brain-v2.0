@@ -26,6 +26,53 @@ wrong; it is not something the system learnt, so `mem` is wrong; it is not a tra
 `chat` is wrong. `agent` is where the artifacts of an agent run live and it is where this
 goes.
 
+**What stops a checkpoint becoming a copy of somebody's data is a refusal at the write
+boundary, and it is deliberately not the mask `brain.ops.tracing` applies to a span.** That
+module masks `payload_in` and `payload_out` before the span is constructed, and it can,
+because a masked span is still a useful trace: an operator wants the shape, the outcome and
+the latency, and never wanted the question. A masked checkpoint is not a degraded
+checkpoint, it is a broken one. A resume from `[masked:str/medium]` either fails or, worse,
+continues from a string that reads like state, and the second is a wrong answer with a full
+audit trail behind it.
+
+So the structural protection is the one `brain.ops.queue.Job` uses and not the one
+`brain.ops.tracing.mask` uses: **a checkpoint carries references, and a value that is content
+rather than a reference is refused rather than shortened.** `MAX_ARGUMENT_CHARS` is imported
+from the queue rather than chosen again here, because a job row and a checkpoint row are the
+same question asked twice. `PERSISTABLE_CHANNELS` is the closed set of state a graph may
+save, and `checkpoint_refusals` is a pure function over a proposed write, so "the retrieved
+passages never reach the saver" is a test rather than a review comment.
+
+Three rules and each catches a different way the state grows a payload. A channel nobody
+declared is refused outright, because the failure is a graph author adding a working field
+and the store keeping it: default-deny is what `brain.core.field_policy` and
+`brain.ops.tracing.SAFE_ATTRIBUTES` both do for the same reason. A value over the length is
+content. A list or a dictionary is refused whatever its length, which is the rule
+`tracing._keep` reached from the other side: a container under a declared name is where
+somebody puts a record while meaning to put a summary, and the retrieved passages are a list.
+
+**A re-driven job resolves entitlements afresh, so what it may see can narrow or widen
+between attempts, and both are correct.** `E_run(caller, agent) = E(caller) ∩ agent_ceiling`
+is evaluated at the attempt, never at the enqueue. Narrowing is the one that must be
+guaranteed: a grant revoked between two attempts is a grant deleted, and a queue row or a
+checkpoint that still carried the earlier answer would be the one place in this system where
+a revocation does not take effect. Widening is the honest consequence of the same rule and it
+is harmless, because the caller is entitled to it now; the alternative is a stored copy of a
+permission decision outliving the decision, which is what this repository refuses everywhere
+else.
+
+The reason that argument holds is the refusal above rather than anything at resume time. **A
+checkpoint that carried retrieved passages would be a widening no re-resolution could
+undo**, because the rows are already inside the state and nothing downstream would ask again.
+Carrying only references means a resume must re-fetch, a re-fetch goes through the gate, and
+the gate resolves the caller's reach at that moment. The re-check is not a step somebody has
+to remember; it is the only way the state can be reconstituted at all.
+
+`may_resume` is the smaller half of the same rule: a checkpoint is not a bearer token. It
+belongs to the principal the run was started for, and a resume by anybody else is refused
+whatever their own entitlements are, because the state was assembled under a reach that was
+not theirs.
+
 **The saver's tables are not ours, and `CHECKPOINT_SCHEMA` is the whole of what we can do
 about it.** See `THE_CHECKPOINT_TABLES_ARE_NOT_OURS`. The library creates them itself, so
 Alembic does not own them, they arrive with no row-level security, and no migration can
@@ -34,20 +81,29 @@ enable it on a table that does not exist yet. What the schema choice buys is tha
 tables land somewhere that check can see, and the gap becomes a red sweep instead of an
 absence. The default lands them in `public`, which that sweep does not enumerate.
 
-**What does not exist.** `langgraph` is not in `uv.lock` and nothing here builds a graph:
-`src/brain/agents/` is a docstring and no code. So no saver is constructed
-from this configuration, no checkpoint has ever been written, and M32.4.1.2 is not claimed.
-What is real today is that `brain.ops.worker.preflight` validates a checkpointer URL before
-the worker starts, so an install that has been pointed at the pooler is refused at the door
-rather than discovered by a resume that never resumes. `brain.knowledge.uploads` states the
-same kind of gap the same way: the four lines that do not exist are named rather than
-implied.
+**What does not exist, and this is the part to read before believing anything above.**
+`langgraph` is not in `uv.lock` and nothing here builds a graph: `src/brain/agents/` is a
+docstring and no code. So no saver is constructed from this configuration, no checkpoint has
+ever been written, and M32.4.1.2 is not claimed. Two of the functions below have **no caller
+anywhere in this repository**: `checkpoint_refusals` and `may_resume` are the write boundary
+and the resume boundary of a saver that does not exist, and saying so is the point rather
+than a caveat on it. This repository's most common defect is a mechanism that is correct,
+tested, documented and invoked from nowhere, and the way it survives review is by being
+described in a sentence that sounds like it is wired.
 
-Deliberately absent: a retention rule and a resume-time entitlement re-check. Both are real
-requirements of a checkpoint store, both are their own WBS leaves, and writing them here
-without the thing they act on would be a mechanism with nothing to call it. A checkpoint
-holds state assembled under an entitlement resolved at the time the run started, which is
-the argument for both, and it belongs beside the resume that has to make the check.
+What is wired today: `brain.ops.worker.preflight` validates a checkpointer URL before the
+worker starts, so an install pointed at the pooler is refused at the door rather than
+discovered by a resume that never resumes, and it now also asks `channel_policy_gaps`, so a
+declared allowlist that has drifted into holding a content channel stops a container instead
+of being found by reading the constant.
+
+Deliberately absent: a retention rule. It is a real requirement of a checkpoint store, it is
+its own WBS leaf, and writing it here without the thing it acts on would be a mechanism with
+nothing to call it. The resume-time entitlement re-check is no longer on this list, and it is
+worth saying why rather than quietly moving it: it turned out not to be a step at all.
+Carrying references means the state cannot be reconstituted without going back through the
+gate, so the re-check is what a resume *is*, and the thing that had to be built was the
+refusal that keeps the state to references.
 
 What this serves is the leaf named in the paragraph above, and it is deliberately not
 claimed. The id is not repeated on the line below, because that line is parsed for ids and
@@ -58,11 +114,12 @@ Task ids: none
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Final
 
 from brain.db import SCHEMAS
-from brain.ops.queue import pooler_url_findings
+from brain.ops.queue import MAX_ARGUMENT_CHARS, pooler_url_findings
 
 # ------------------------------------------------------------------ written-down reasons
 #: Why the saved state is not filed with traces, and not with memory either.
@@ -193,3 +250,180 @@ def connection_refusals(url: str, *, app_url: str = "") -> tuple[str, ...]:
             "to a backend that never saw the prepare. Give it a session-mode or direct URL."
         )
     return (*findings, *pooler_url_findings(url))
+
+
+# ------------------------------------------------------------------ what may be saved
+#: Why a checkpoint is refused rather than masked, which is the opposite of what a span gets.
+A_MASKED_CHECKPOINT_IS_A_BROKEN_ONE = (
+    "brain.ops.tracing masks payload_in and payload_out before a span leaves the process, "
+    "and it can, because a trace was never wanted for its payload: the shape, the outcome "
+    "and the latency survive masking and are the whole of what an operator needs. A "
+    "checkpoint is the opposite. It exists to be read back, so masking it does not degrade "
+    "it, it breaks it: a resume from a masked value either fails or continues from a string "
+    "that reads like state, and the second is a wrong answer with a full audit trail behind "
+    "it. So the boundary here refuses the write instead of shortening it, which is what "
+    "brain.ops.queue.Job does to a job argument for the same reason."
+)
+
+#: Why re-resolving is right even though it can hand two attempts different reach.
+ENTITLEMENT_IS_RESOLVED_AT_THE_ATTEMPT = (
+    "E_run(caller, agent) = E(caller) intersect agent_ceiling is evaluated when the attempt "
+    "runs, never when the job was enqueued, so two attempts of one job can see different "
+    "things. Narrowing is the guarantee: revocation in this system is the deletion of a "
+    "grant, and a checkpoint or a queue row carrying the earlier answer would be the one "
+    "place a revocation does not take effect. Widening is the same rule read the other way "
+    "and is harmless, because the caller is entitled to it now; the alternative is a stored "
+    "copy of a permission decision outliving the decision. Neither is a step anybody "
+    "performs at resume time: a checkpoint carries references, so the state cannot be "
+    "reconstituted without going back through the gate, and going back through the gate is "
+    "what resolves the reach."
+)
+
+#: The state channels a graph may write to the checkpoint store. Closed, and short on
+#: purpose: everything not named is refused, so the cost of forgetting one is a graph that
+#: cannot save until somebody adds it and argues for it, and the cost of adding a wrong one
+#: is business data in a store with its own retention and no row-level security.
+#:
+#: Every entry is a reference or a decision. There is no entry for retrieved passages, tool
+#: results or a draft answer, and that is the whole of the protection: those are the three
+#: things a graph accumulates that are copies of what somebody was allowed to see.
+PERSISTABLE_CHANNELS: Final[frozenset[str]] = frozenset(
+    {
+        #: Which run this is. The trace reference, not the trace.
+        "run_id",
+        #: Who it is for, as an identifier. `may_resume` is the only thing that reads it.
+        "principal_id",
+        #: Which agent is the lens. Its ceiling is looked up, never stored.
+        "agent_id",
+        #: Where the graph had got to. A node name is system vocabulary.
+        "node",
+        #: How many times round. An integer, and the reason a resume is not a loop.
+        "step",
+        #: What the caller asked, by reference. The question itself is a payload and is
+        #: fetched through the gate like everything else.
+        "question_id",
+        #: Which records the run has decided it needs, as identifiers.
+        "record_refs",
+        #: Which tool it is part-way through calling, by registered name.
+        "pending_tool",
+    }
+)
+
+#: Channels whose names read as state and whose values are always a copy of somebody's data.
+#: Not the mechanism, which is the allowlist above; this is what `channel_policy_gaps` checks
+#: the allowlist against, so a name that ought never to be admissible cannot be added to it
+#: quietly during a debugging session.
+CONTENT_CHANNELS: Final[frozenset[str]] = frozenset(
+    {"passages", "documents", "retrieved", "messages", "answer", "draft", "tool_results"}
+)
+
+
+def checkpoint_refusals(channels: Mapping[str, object]) -> tuple[str, ...]:
+    """Every reason this state may not be written to the checkpoint store.
+
+    Returns all of them rather than the first, matching `connection_refusals` and
+    `brain.config.check`: a graph author who has put three payloads in their state should
+    learn that once rather than three times.
+
+    **This has no caller.** No saver is constructed anywhere in this repository, so nothing
+    passes state through here today. It is written now because the rule is what makes the
+    entitlement argument above true, and a boundary added after the first saver is a boundary
+    added after the first checkpoint has been written.
+
+    Order matters only in that the allowlist is asked first. A channel nobody declared is
+    refused whatever its value, so a graph author who adds a working field gets the same
+    answer for an empty one as for a full one, and does not learn that emptying it helps.
+    """
+    findings: list[str] = []
+    for name, value in channels.items():
+        if name not in PERSISTABLE_CHANNELS:
+            findings.append(
+                f"channel {name!r} is not one a checkpoint may hold, so it is refused "
+                "whatever it contains; the saver's tables have their own retention and no "
+                f"row-level security. Declared: {sorted(PERSISTABLE_CHANNELS)}"
+            )
+            continue
+        if isinstance(value, (list, tuple, set, frozenset, dict)):
+            findings.append(
+                f"channel {name!r} holds a {type(value).__name__}, which is where somebody "
+                "puts a record while meaning to put a summary; a checkpoint holds references "
+                "and the passages a run retrieved are a list"
+            )
+            continue
+        if isinstance(value, str) and len(value) > MAX_ARGUMENT_CHARS:
+            findings.append(
+                f"channel {name!r} is {len(value)} characters; over {MAX_ARGUMENT_CHARS} it "
+                "is content rather than a reference, which is the bound "
+                "brain.ops.queue.Job applies to a job argument and for the same reason"
+            )
+    return tuple(findings)
+
+
+def channel_policy_gaps(channels: Iterable[str] | None = None) -> tuple[str, ...]:
+    """Every way the declared allowlist has stopped being an allowlist.
+
+    Two checks. An empty set means no graph can save anything, which presents as a
+    checkpointer that is configured, connected and silently useless. And no declared channel
+    may be one of `CONTENT_CHANNELS`, which is the check that has to exist because the
+    allowlist is the whole protection: adding `passages` to it during a debugging session is
+    one line, reads as making the saver work, and moves every retrieved row into the store.
+
+    A parameter defaulting to the declared set, for the reason `brain.ops.queue.concurrency_gaps`
+    takes one: a check that can only be run against the constant beside it cannot be shown to
+    fail, and a check nobody has seen fail is a check nobody knows works.
+
+    This one **is** called: `brain.ops.worker.preflight` asks it whenever a checkpointer URL
+    is configured, so a drifted allowlist stops a container rather than waiting to be read.
+    """
+    declared = PERSISTABLE_CHANNELS if channels is None else frozenset(channels)
+    findings: list[str] = []
+    if not declared:
+        findings.append(
+            "no state channel is persistable, so a graph can save nothing and the "
+            "checkpointer is configured, connected and unable to resume anything"
+        )
+    findings.extend(
+        f"channel {name!r} is declared persistable and is a channel that holds a copy of "
+        "what somebody was allowed to see; the allowlist is the whole of the protection"
+        for name in sorted(declared & CONTENT_CHANNELS)
+    )
+    return tuple(findings)
+
+
+@dataclass(frozen=True)
+class CheckpointHeader:
+    """Who a saved run belongs to. The only part of a checkpoint this module reads.
+
+    Two fields and no entitlement set. Storing the reach the run was assembled under would
+    make the row a permission decision that outlives the decision, and the resume would then
+    have a choice about whether to believe it. See `ENTITLEMENT_IS_RESOLVED_AT_THE_ATTEMPT`:
+    there is nothing to believe, because the state is references and reconstituting it goes
+    through the gate.
+    """
+
+    run_id: str
+    principal_id: str
+
+    def __post_init__(self) -> None:
+        for name in ("run_id", "principal_id"):
+            if not str(getattr(self, name)).strip():
+                msg = (
+                    f"checkpoint header has no {name}; a saved run nobody owns is a run "
+                    "anybody may resume"
+                )
+                raise CheckpointerError(msg)
+
+
+def may_resume(header: CheckpointHeader, principal_id: str) -> bool:
+    """Whether this caller may resume this run.
+
+    Exact identity, and no fallback to entitlements. A checkpoint is not a bearer token and
+    it is not a record either: the state inside it was assembled under one person's reach,
+    and a second person with a wider reach still did not ask the question. A check that
+    admitted anybody who could see the referenced records would let a manager resume a
+    subordinate's half-finished run and receive an answer composed for somebody else.
+
+    **This has no caller**, for the same reason `checkpoint_refusals` has none: there is no
+    resume, because there is no graph.
+    """
+    return bool(principal_id.strip()) and header.principal_id == principal_id

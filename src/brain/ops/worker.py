@@ -37,6 +37,20 @@ checks the slot arithmetic cannot make. Reading it from the environment rather t
 inferring it from the slot allocation is deliberate: a wrong allocation is the thing being
 checked, and a limit inferred from it would make every allocation fit.
 
+**Both containers drained the same queue, and sizing them differently did not stop that.**
+`queue_name_for` derived a queue from the traffic class alone, ingestion is
+`TrafficClass.SYSTEM` like every other piece of housekeeping, and both workers were allocated
+a `system` slot. So the general worker could fetch the parse the parse worker was built for,
+into a slot a fifth its size, and every check in this file passed: the slot arithmetic said
+one slot at 48 MiB fits 384, and `parse_worker_gaps` was asked only of the container named as
+the parse worker. `brain.knowledge.parse_budget` names that gap in its own docstring and says
+closing it needs a change to the queue's rule about who may choose a queue.
+`BRAIN_WORKER_SLOT_CLASS` is that change arriving here: it says which shape of container this
+is, `queue_name_for` takes it, and the two containers stop being able to fetch each other's
+work. It is read from the environment for the same reason the component is, and the two are
+checked against each other, because a container that says it is the parse worker and serves
+standard slots is the original defect written down explicitly.
+
 That is also one of the two imports in this file that run from `brain.ops` into
 `brain.knowledge`, and both are the right way round: what a parse may cost is a property of the
 knowledge door and of the container's limit, and this module is the only thing that knows which
@@ -59,7 +73,17 @@ will accept, and a container that may be handed a batch is a container that may 
 `NO_DRIVER_IS_INSTALLED` and exits. A worker that started anyway would poll an empty queue
 and report itself healthy, and an empty queue and an absent queue look identical from every
 metric there is - which is the same argument `brain.ops.queue` makes about a listener behind
-a transaction pooler.
+a transaction pooler. That is now asked rather than stated: it prints the sentence when
+`driver_is_installed` says so, having previously printed it unconditionally, which would have
+gone on being printed on the first day it was false.
+
+**`--deploy-plan` prints the steps that install the queue, because they existed nowhere.**
+`THE_QUEUE_SCHEMA_IS_NOT_ALEMBICS` argues that the driver's DDL is a deploy step rather than
+a migration and that the price is paid in two places rather than hidden. The second place was
+not written down anywhere: no command, no ordering, and no statement to enable row-level
+security on the tables the driver creates without it. `brain.ops.queue.DEPLOY_PLAN` is that
+runbook and this is the mode that prints it, so the answer to "what does this leaf still
+need" is a command an operator can run rather than a paragraph somebody has to find.
 
 **Readiness is the heartbeat, and the heartbeat is not written yet.** `brain.ops.wiring`
 says the worker is ready when "the queue driver has fetched at least once and the database
@@ -69,10 +93,11 @@ re-drive sweep uses rather than a second copy of it. Nothing writes that file to
 check answers "not ready", which is the correct answer for a container that is not draining
 a queue.
 
-Not claimed: M32.4.1.4. The service is written and sized and has never been started, because
-the process it starts has no driver to fetch with. `docker-compose.langfuse.yml` refuses
-M32.1.1.1 on the same grounds and in the same words: a compose file that has never run is a
-design.
+Not claimed: M32.4.1.4, and the reason has narrowed rather than gone. The placement defect
+above is fixed and the two containers are now checked against each other, which is real work
+against that leaf. The service is still written, sized, and never started, because the process
+it starts has no driver to fetch with. `docker-compose.langfuse.yml` refuses M32.1.1.1 on the
+same grounds and in the same words: a compose file that has never run is a design.
 
 What this serves is the leaf named in the paragraph above, and it is deliberately not
 claimed. The id is not repeated on the line below, because that line is parsed for ids and
@@ -98,15 +123,19 @@ from brain.knowledge.parse_budget import (
     parse_budget_note,
     parse_worker_gaps,
 )
-from brain.ops.checkpoints import connection_refusals
+from brain.ops.checkpoints import channel_policy_gaps, connection_refusals
 from brain.ops.inference import inference_gaps
 from brain.ops.queue import (
+    DEPLOY_PLAN,
     DRIVER_SCHEMA,
     FALLBACK_POLL_SECONDS,
     MIB_PER_SLOT,
     NO_DRIVER_IS_INSTALLED,
     Shard,
+    SlotClass,
     concurrency_gaps,
+    deploy_plan_gaps,
+    driver_is_installed,
     driver_schema_gaps,
     queue_url_refusals,
     stale_after,
@@ -143,6 +172,32 @@ WORKER_COMPONENT_ENV: Final = "BRAIN_WORKER_COMPONENT"
 #: deployment that existed first and a variable added later must not change what a container
 #: already running does.
 DEFAULT_WORKER_COMPONENT: Final = "brain-worker"
+
+#: Which shape of container this is: several standard slots, or one job whose size somebody
+#: outside this company chose. It decides the queue names this worker drains, which is what
+#: stops the general worker fetching the parse the parse worker was sized for.
+#:
+#: Read from the environment rather than derived from the component, although today the two
+#: agree. Deriving it would make the pair unable to disagree, and a container that names
+#: itself the parse worker while serving standard slots is exactly the state worth catching:
+#: it is the original defect, written out explicitly, and a derived value would silently
+#: correct it instead of refusing it.
+SLOT_CLASS_ENV: Final = "BRAIN_WORKER_SLOT_CLASS"
+
+#: What an unset `SLOT_CLASS_ENV` means. The standard slot, for the reason
+#: `DEFAULT_WORKER_COMPONENT` defaults to the general worker: a variable added later must not
+#: change what a container already running does, and it is the safe direction. A container
+#: that has not been told keeps draining the cheap queues and cannot fetch the expensive work.
+DEFAULT_SLOT_CLASS: Final = SlotClass.STANDARD
+
+#: Which slot class each component serves. One entry per worker container, and it is the
+#: pairing rather than either value that is checked: `brain-parse-worker` exists because a
+#: parse is bounded by its input, so a parse worker serving standard slots has been sized for
+#: one job and pointed at the queue for the other kind.
+COMPONENT_SLOT_CLASS: Final[Mapping[str, SlotClass]] = {
+    DEFAULT_WORKER_COMPONENT: SlotClass.STANDARD,
+    PARSE_WORKER_COMPONENT: SlotClass.WHOLE_CONTAINER,
+}
 
 #: The directory the heartbeat lives in, under whatever the platform calls temporary.
 HEARTBEAT_DIRECTORY: Final = "brain-worker"
@@ -224,6 +279,16 @@ class WorkerPlan:
     def slot_memory_mib(self) -> int:
         return self.slots * MIB_PER_SLOT
 
+    @property
+    def slot_class(self) -> SlotClass:
+        """Which shape of container this plan lays out.
+
+        Read off the shards rather than stored, so it cannot disagree with the queues they
+        drain. A stored copy is a label, and a label that disagrees with the queue names is
+        the one that gets believed in a log.
+        """
+        return self.shards[0].slot_class if self.shards else SlotClass.STANDARD
+
     def describe(self) -> str:
         """The plan in the form an operator reads in a container log.
 
@@ -233,27 +298,92 @@ class WorkerPlan:
         so the number somebody would need during that incident is in the log from the start
         rather than being looked up while it is happening.
         """
+        sizing = (
+            f"{self.slot_memory_mib} MiB of a {self.memory_mib} MiB limit"
+            if self.slot_class is SlotClass.STANDARD
+            # The standard-slot arithmetic understates a whole-container plan by an order of
+            # magnitude, and printing it unqualified is what would make an operator shrink
+            # the container. What one such job may cost is not this module's to compute; the
+            # component that runs them prints it beside this line.
+            else f"the whole of a {self.memory_mib} MiB limit for each, one at a time"
+        )
         lines = [
-            f"worker plan: {len(self.shards)} process(es), {self.slots} slot(s), "
-            f"{self.slot_memory_mib} MiB of a {self.memory_mib} MiB limit",
+            f"worker plan: {len(self.shards)} process(es), {self.slots} "
+            f"{self.slot_class.value} slot(s), {sizing}",
             f"queue schema: {DRIVER_SCHEMA}",
             f"fallback poll: {FALLBACK_POLL_SECONDS}s, which is the whole latency if "
             "notifications stop being delivered",
         ]
         lines.extend(
-            f"  {shard.queue}: {shard.concurrency} slot(s)"
+            f"  {shard.queue}: {shard.concurrency} slot(s), {shard.slot_class.value}"
             for shard in sorted(self.shards, key=lambda s: s.queue)
         )
         return "\n".join(lines)
 
 
 def plan_for(
-    allocation: Mapping[TrafficClass, int], *, worker_component: str = "brain-worker"
+    allocation: Mapping[TrafficClass, int],
+    *,
+    worker_component: str = "brain-worker",
+    slot_class: SlotClass = SlotClass.STANDARD,
 ) -> WorkerPlan:
-    """The processes this allocation lays out, against the component's own memory limit."""
+    """The processes this allocation lays out, against the component's own memory limit.
+
+    The slot class reaches `worker_shards` rather than being recorded beside the plan, because
+    it is what the queue names are derived from: a plan that carried it as a label while the
+    shards drained the standard queues would print the intention and deploy the defect.
+    """
     return WorkerPlan(
-        shards=worker_shards(allocation),
+        shards=worker_shards(allocation, slot_class),
         memory_mib=component(worker_component).memory_mib,
+    )
+
+
+def declared_slot_class(env: Mapping[str, str]) -> tuple[SlotClass, tuple[str, ...]]:
+    """Which shape of container this is, and the reason if the environment did not say.
+
+    Returns the default alongside the complaint rather than raising, matching
+    `declared_slots`: every check after this one is arithmetic that needs a slot class, and a
+    preflight that stopped here would report one problem out of the several a badly
+    configured container usually has.
+
+    An unreadable value falls back to the default rather than to nothing, and the default is
+    the safe direction: a container that drains the standard queues cannot fetch the job that
+    would kill it. The finding is still returned, so the container does not start.
+    """
+    raw = (env.get(SLOT_CLASS_ENV) or "").strip()
+    if not raw:
+        return DEFAULT_SLOT_CLASS, ()
+    try:
+        return SlotClass(raw), ()
+    except ValueError:
+        return DEFAULT_SLOT_CLASS, (
+            f"{SLOT_CLASS_ENV}={raw!r} is not a slot class, so this container's queue names "
+            f"would be guessed; known: {[s.value for s in SlotClass]}",
+        )
+
+
+def component_slot_class_gaps(worker_component: str, slot_class: SlotClass) -> tuple[str, ...]:
+    """Whether this container is serving the slot class its component was budgeted for.
+
+    The check the two variables exist to make possible. `BRAIN_WORKER_COMPONENT` decides which
+    memory limit every figure is checked against and `BRAIN_WORKER_SLOT_CLASS` decides which
+    queues are drained, and getting one of the two right is worse than getting both wrong: a
+    container sized for a parse and pointed at the standard queues reports a healthy fleet
+    while the parse it exists for is fetched by a container a fifth its size.
+
+    A component nobody has paired is left alone rather than refused. `COMPONENT_SLOT_CLASS`
+    names the two worker containers, and a third one is a deployment decision this function
+    has no basis to make; `preflight` has already refused a component `brain.ops.wiring` does
+    not budget, which is the case worth refusing.
+    """
+    expected = COMPONENT_SLOT_CLASS.get(worker_component)
+    if expected is None or expected is slot_class:
+        return ()
+    return (
+        f"{worker_component!r} is budgeted as a {expected.value} container and "
+        f"{SLOT_CLASS_ENV} says {slot_class.value}, so it is sized for one kind of job and "
+        "draining the queue for the other",
     )
 
 
@@ -298,11 +428,19 @@ def preflight(env: Mapping[str, str]) -> tuple[str, ...]:
     else:
         findings.extend(queue_url_refusals(queue_url, app_url=app_url))
     findings.extend(driver_schema_gaps())
+    findings.extend(deploy_plan_gaps())
     if checkpointer_url:
         findings.extend(connection_refusals(checkpointer_url, app_url=app_url))
+        # Asked only when a checkpointer is configured, which is the same condition the URL
+        # is checked under. An install with no durable graph has no allowlist to have drifted,
+        # and reporting a channel policy at a container that saves nothing would be a finding
+        # nobody can act on in a list whose whole value is that every line names a fix.
+        findings.extend(channel_policy_gaps())
 
     allocation, unreadable = declared_slots(env)
     findings.extend(unreadable)
+    slot_class, unreadable_class = declared_slot_class(env)
+    findings.extend(unreadable_class)
 
     worker_component = declared_component(env)
     try:
@@ -315,7 +453,10 @@ def preflight(env: Mapping[str, str]) -> tuple[str, ...]:
         )
         return tuple(findings)
 
-    findings.extend(concurrency_gaps(allocation, worker_component=worker_component))
+    findings.extend(component_slot_class_gaps(worker_component, slot_class))
+    findings.extend(
+        concurrency_gaps(allocation, worker_component=worker_component, slot_class=slot_class)
+    )
     # Every container, not only one of them, and that is the difference between this check and
     # the parse worker's below. A parse budget is a property of a container, because only one
     # container is sized for a document somebody else chose. A batch budget is a property of a
@@ -383,19 +524,49 @@ def is_ready(path: Path, *, now: datetime) -> bool:
 
 
 # ----------------------------------------------------------------------------- the process
-def main(argv: Sequence[str] | None = None, env: Mapping[str, str] | None = None) -> int:
-    """`python -m brain.ops.worker [--check | --ready]`.
+def deploy_plan_text() -> str:
+    """The queue's install steps, in the form an operator reads before a deploy.
 
-    Three modes, and each one is used by something. `--check` is an operator asking whether
-    a deployment would start; `--ready` is the container healthcheck; no argument is the
-    container's command. The environment is a parameter defaulting to the real one so the
-    modes can be tested without one, which is the same reason `brain.ops.admission` takes
-    `now` rather than reading a clock.
+    Rendered here rather than in `brain.ops.queue` for the split this module exists for: the
+    queue decides what the steps are and this is the process that prints things. The state of
+    the first step is asked rather than written, because `driver_is_installed` can answer it
+    and a runbook that says a dependency is missing after somebody has added it is a runbook
+    that gets ignored on the line that matters.
+    """
+    lines = ["queue deploy plan, in order:"]
+    for step in DEPLOY_PLAN:
+        marks = []
+        if step.optional:
+            marks.append("optional")
+        if step.order == 1:
+            marks.append("done" if driver_is_installed() else "NOT DONE")
+        suffix = f" [{', '.join(marks)}]" if marks else ""
+        lines.append(f"  {step.order}. {step.what}{suffix}")
+        lines.append(f"     because {step.why}")
+    return "\n".join(lines)
+
+
+def main(argv: Sequence[str] | None = None, env: Mapping[str, str] | None = None) -> int:
+    """`python -m brain.ops.worker [--check | --ready | --deploy-plan]`.
+
+    Four modes, and each one is used by something. `--check` is an operator asking whether a
+    deployment would start; `--ready` is the container healthcheck; `--deploy-plan` is the
+    steps that install the queue, which existed nowhere before and which nothing else prints;
+    no argument is the container's command. The environment is a parameter defaulting to the
+    real one so the modes can be tested without one, which is the same reason
+    `brain.ops.admission` takes `now` rather than reading a clock.
     """
     import os
 
     arguments = list(sys.argv[1:] if argv is None else argv)
     environment = os.environ if env is None else env
+
+    if "--deploy-plan" in arguments:
+        # Before the preflight and independent of it. An operator asking what installs the
+        # queue is usually asking because the queue is not installed, which is the state in
+        # which every other mode here refuses.
+        print(deploy_plan_text())
+        return 0
 
     if "--ready" in arguments:
         declared = (environment.get(HEARTBEAT_PATH_ENV) or "").strip()
@@ -415,7 +586,8 @@ def main(argv: Sequence[str] | None = None, env: Mapping[str, str] | None = None
 
     allocation, _ = declared_slots(environment)
     worker_component = declared_component(environment)
-    print(plan_for(allocation, worker_component=worker_component).describe())
+    slot_class, _ = declared_slot_class(environment)
+    print(plan_for(allocation, worker_component=worker_component, slot_class=slot_class).describe())
     if worker_component == PARSE_WORKER_COMPONENT:
         # The plan's own numbers understate this container by an order of magnitude: it says
         # one slot at `MIB_PER_SLOT` of a 512 MiB limit, and an operator reading that would
@@ -428,7 +600,19 @@ def main(argv: Sequence[str] | None = None, env: Mapping[str, str] | None = None
     # The run mode, which does not run. See the module docstring: a worker that started
     # against no driver would poll an empty queue and report itself healthy, and an empty
     # queue is indistinguishable from an absent one in every metric there is.
-    print(NO_DRIVER_IS_INSTALLED, file=sys.stderr)
+    #
+    # Asked rather than asserted. The sentence was printed unconditionally, which was true
+    # and would have stayed printed on the first day it stopped being. There is still nothing
+    # to run when a driver is present, because nothing implements `QueueDriver`, so that path
+    # says what is missing instead of saying what is installed.
+    if not driver_is_installed():
+        print(NO_DRIVER_IS_INSTALLED, file=sys.stderr)
+        return EXIT_NO_DRIVER
+    print(
+        "a queue driver is installed and nothing implements brain.ops.queue.QueueDriver, so "
+        "there is still nothing to fetch with. See --deploy-plan for what remains.",
+        file=sys.stderr,
+    )
     return EXIT_NO_DRIVER
 
 
