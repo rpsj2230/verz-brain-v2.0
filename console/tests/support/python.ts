@@ -108,6 +108,51 @@ export function backendRowLimits(): { max: number; fallback: number } {
   };
 }
 
+/** The route's filter grammar, as the console must spell it to be understood at all. */
+export interface FilterGrammar {
+  /** The wire name of the repeated parameter. */
+  readonly parameter: string;
+  /** What separates the column from the value inside one term. */
+  readonly separator: string;
+  /** The whole-term pattern the parameter declares. */
+  readonly termPattern: string;
+  /** The longest one term may be. */
+  readonly maxTermLength: number;
+  /** How many terms one request may carry. */
+  readonly maxFilters: number;
+}
+
+/**
+ * The filter grammar `GET /api/v1/records/{entity}` declares, read from the route.
+ *
+ * **The one thing in the console that fails silently when it is wrong.** FastAPI ignores a
+ * query parameter no signature names and answers as though it had not been sent, so a console
+ * spelling the parameter any other way gets a page of unfiltered rows, a 200, and nothing on
+ * the screen or in the body saying a filter was discarded. The reader takes the rows for the
+ * matching ones. `AN_UNDECLARED_PARAMETER_IS_DROPPED_WITHOUT_A_WORD` in `brain.api_routes` is
+ * the same sentence from the other side.
+ *
+ * That is why this reads the route rather than the console's constants: two copies compared
+ * with each other agree for every value they could hold, and the value they would agree on
+ * here was `filter.<column>` for the life of the module.
+ */
+export function backendFilterGrammar(): FilterGrammar {
+  const source = readRepoFile("src/brain/api_routes.py");
+  return {
+    parameter: extractOne(source, /^FILTER_PARAM: Final = "([^"]*)"$/m, "FILTER_PARAM"),
+    separator: extractOne(source, /^FILTER_SEPARATOR: Final = "([^"]*)"$/m, "FILTER_SEPARATOR"),
+    termPattern: extractOne(
+      source,
+      /^FILTER_TERM_PATTERN: Final = r"([^"]*)"$/m,
+      "FILTER_TERM_PATTERN",
+    ),
+    maxTermLength: Number(
+      extractOne(source, /^MAX_FILTER_TERM_LENGTH: Final = (\d+)$/m, "MAX_FILTER_TERM_LENGTH"),
+    ),
+    maxFilters: Number(extractOne(source, /^MAX_FILTERS: Final = (\d+)$/m, "MAX_FILTERS")),
+  };
+}
+
 /** The caller's own facts, as `brain.api_routes.CallerView` declares them. */
 export function backendCallerViewFields(): string[] {
   return backendModelFields("src/brain/api_routes.py", "CallerView");

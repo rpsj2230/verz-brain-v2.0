@@ -4,12 +4,14 @@
  * Three properties matter more than the rest, and each of them is a way this screen could be
  * wrong while looking right.
  *
- * **It must ask the route only what the route declares.** `GET /api/v1/records/{entity}` has
- * one query parameter. A filter box would send `filter.owner`, FastAPI would ignore it, and
- * the grid would answer with every row it was already showing while a person read it as the
- * matching ones. `paging.ts` calls that the worst failure available because the grid still
- * returns rows, and the parameter names are read out of the API's own document rather than
- * listed here.
+ * **It must ask the route only what the route declares.** FastAPI discards an undeclared
+ * query parameter without a word, so a console that sent `filter.owner` against a route
+ * declaring `filter` would get back every row it was already showing while a person read
+ * them as the matching ones. `paging.ts` calls that the worst failure available because the
+ * grid still returns rows, and it is not hypothetical here: the console spelled it
+ * `filter.<column>` until 2026-09-06 and no test could see it, because there was no route to
+ * disagree with. The parameter names are read out of the API's own document rather than
+ * listed here, which is what makes the disagreement visible now.
  *
  * **A withheld field must still get a column.** `brain.core.redaction` deletes the key from
  * the record and reports the field in `locked`, so a column list derived from the rows alone
@@ -24,7 +26,7 @@
  */
 
 import { createMemoryRouter, RouterProvider } from "react-router-dom";
-import { render, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, waitFor } from "@testing-library/react";
 import { beforeAll, describe, expect, test } from "vitest";
 import { fieldOfLockedCell, lockedCellKey, LOCKED_CELL_SEPARATOR } from "../src/components/paging";
 import { valueCell } from "../src/components/cells";
@@ -44,7 +46,7 @@ import {
 import { Lock } from "../src/ui/Lock";
 import { fakeIdentityProvider, loadConsole, signIn, type FakeIdp } from "./support/auth";
 import { declaredParameterSchema, declaredQueryParameters } from "./support/openapi";
-import { backendRowLimits } from "./support/python";
+import { backendFilterGrammar, backendRowLimits } from "./support/python";
 import { readRepoFile } from "./support/repo";
 
 const RECORDS_OPERATION = "/api/v1/records/{entity}";
@@ -174,16 +176,56 @@ describe("what the console asks for", () => {
     expect(sent.filter((name) => !declared.has(name))).toEqual([]);
   });
 
-  test("the grid offers no filter the route would ignore", async () => {
-    // What breaks if this is deleted: a filter box appears the moment somebody gives a
-    // column a `filterLabel`, and it does nothing. A control that does nothing is worse than
-    // an absent one here, because a person cannot tell it from a filter that matched
-    // everything, or from one the API refused.
+  test("a column the route can be asked about gets a box, and typing in it asks", async () => {
+    // What breaks if this is deleted: the grid keeps its columns and loses the control that
+    // makes them answerable, or grows one that goes nowhere. Both halves are asserted because
+    // either alone is satisfied by the wrong thing: a box that renders and sends nothing is
+    // the control that does nothing, and a request with a term in it proves nothing about
+    // what a person can reach. The term is checked against the route's own declared pattern,
+    // so this is the API's grammar and not a second copy of it written here.
+    const { container, idp } = await gridAt("/records/clients", {
+      body: page([{ entity: "client", id: "one", name: "Ada" }]),
+    });
+
+    const boxes = [...container.querySelectorAll("input.grid__filter")];
+    expect(boxes.length).toBeGreaterThan(0);
+    const named = boxes.find(
+      (box) => box.getAttribute("aria-label") === "Filter by name",
+    ) as HTMLInputElement | undefined;
+    expect(named).toBeDefined();
+
+    // The stand-in answers every records request with the same body, so what this measures
+    // is the question the console asked and never the rows it got back.
+    await act(async () => {
+      fireEvent.change(named as HTMLInputElement, { target: { value: "Ada" } });
+    });
+
+    await waitFor(() => expect(recordRequests(idp).length).toBeGreaterThan(1));
+    const asked = recordRequests(idp).at(-1) as URL;
+    const grammar = backendFilterGrammar();
+    const terms = asked.searchParams.getAll(grammar.parameter);
+    expect(terms).toEqual(["name:Ada"]);
+    expect(new RegExp(grammar.termPattern).test(terms[0] as string)).toBe(true);
+  });
+
+  test("a filter box holds only as much as the route will take in one term", async () => {
+    // What breaks if this is deleted: a person types past the route's bound and the request
+    // comes back 422 carrying `HTTPValidationError`, which is not `ErrorBody` and reaches
+    // them as the least useful sentence this console has. The budget is per column because
+    // the column name and the separator are spent out of the same 256 characters, so one
+    // number for every box on the screen would be wrong for all but one of them.
     const { container } = await gridAt("/records/clients", {
       body: page([{ entity: "client", id: "one", name: "Ada" }]),
     });
-    expect(container.querySelectorAll(".grid__filter")).toHaveLength(0);
-    expect(container.querySelectorAll(".grid__filters")).toHaveLength(0);
+
+    const grammar = backendFilterGrammar();
+    const named = container.querySelector(
+      'input.grid__filter[aria-label="Filter by name"]',
+    ) as HTMLInputElement | null;
+    expect(named).not.toBeNull();
+    expect(named?.getAttribute("maxLength")).toBe(
+      String(grammar.maxTermLength - "name".length - grammar.separator.length),
+    );
   });
 
   test("the limit in the address is the limit asked for", async () => {

@@ -53,22 +53,84 @@ export const LIMIT_PARAMETER = "limit";
 export const CURSOR_PARAMETER = "cursor";
 
 /**
- * What a filter parameter is called, given the column it filters.
+ * The wire spelling of the parameter one filter term travels in, repeated once per term.
  *
- * Prefixed rather than sent as a bare column name, because a bare one collides: a grid over
- * anything with a column called `limit` or `cursor` would send a filter that reads as
- * paging, and the failure would be a page size silently set to whatever somebody typed. The
- * prefix costs nothing and the collision cannot be predicted from here.
+ * **This was `filter.<column>` until 2026-09-06, and it was wrong the whole time.** The note
+ * that stood here said no test could check it, because nothing was mounted under `/api/v1`
+ * and there was no other spelling to agree with. `GET /api/v1/records/{entity}` now declares
+ * a single repeatable `filter` taking `column:value`, so there is an original, this is a copy
+ * of it, and the tests read the original out of the Python source rather than comparing two
+ * console constants with each other.
  *
- * **This is the one thing in this file that no test can check.** Nothing is mounted under
- * `/api/v1` yet, so no route declares its query parameters and there is no other spelling
- * to agree with. Whoever writes the first list endpoint has to make it match, or change
- * this; a console and an API that disagree here fail as a filter that silently does nothing,
- * which is the worst failure available, because the grid still returns rows.
+ * **The collision the prefix was invented for is still closed, by the declaration instead.**
+ * A grid over a table with a column called `limit` sends `filter=limit:9`, which is a term
+ * inside the filter parameter and cannot be read as a page size however it is spelled. The
+ * property survives; only the mechanism changed.
  */
-export function filterParameter(column: string): string {
-  return `filter.${column}`;
+export const FILTER_PARAMETER = "filter";
+
+/**
+ * What joins the column to the value inside one term.
+ *
+ * The same argument this file makes for `LOCKED_CELL_SEPARATOR` below, and `brain.api_routes`
+ * makes it too: a field name matches `[a-z][a-z0-9_.]*` and so cannot hold a colon, which
+ * makes the split at the first one unambiguous and lets a value carry as many more as it
+ * likes. A separator either half could contain would make `due:2026` and `due` plus `2026`
+ * the same term.
+ */
+export const FILTER_SEPARATOR = ":";
+
+/**
+ * The longest term the route accepts, and therefore the longest this console builds.
+ *
+ * Spent at the point of entry rather than at the point of sending: a grid bounds what its
+ * filter box will hold, so an over-long term cannot be constructed. See
+ * `A_TERM_THE_CONSOLE_DROPS_IS_A_FILTER_THAT_SILENTLY_DID_NOTHING` for why the alternative,
+ * trimming on the way out, is the failure this module exists to refuse.
+ */
+export const MAX_FILTER_TERM_LENGTH = 256;
+
+/** How many terms one request may carry, from `brain.api_routes.MAX_FILTERS`. */
+export const MAX_FILTERS = 16;
+
+/**
+ * The column half of a term, as the route's own pattern admits it.
+ *
+ * Anchored and applied to the column alone, because that is the half this console chooses.
+ * The value half is whatever a person typed, and the route bounds it to text that cannot
+ * span two lines in a log; a single-line input cannot produce either character.
+ */
+export const FILTER_COLUMN_PATTERN = /^[a-z][a-z0-9_.]{0,119}$/;
+
+/** Whether a column name can be asked about at all. A grammar question, never a permission. */
+export function filterableColumn(column: string): boolean {
+  return FILTER_COLUMN_PATTERN.test(column);
 }
+
+/**
+ * How much of a term is left for the value, once the column and the separator have taken
+ * theirs. What a filter box for that column may hold.
+ */
+export function filterValueBudget(column: string): number {
+  return Math.max(0, MAX_FILTER_TERM_LENGTH - column.length - FILTER_SEPARATOR.length);
+}
+
+/** One term, as the parameter carries it. */
+export function filterTerm(column: string, value: string): string {
+  return `${column}${FILTER_SEPARATOR}${value}`;
+}
+
+/**
+ * Written down because trimming a term on the way out looks like defensive programming and
+ * is the exact failure the rest of this module is built to avoid.
+ */
+export const A_TERM_THE_CONSOLE_DROPS_IS_A_FILTER_THAT_SILENTLY_DID_NOTHING =
+  "A term the route would refuse is sent, not dropped and not truncated. A dropped term is " +
+  "a filter box with a word in it and every row still on the screen, read as the matching " +
+  "ones; a truncated one asks a different question and answers it convincingly. Both are " +
+  "invisible. A refused one is a failure the reader can see, and between an invisible wrong " +
+  "answer and a visible bad one the visible one wins. What is bounded is what the box will " +
+  "hold, so the term that would be refused is one a person cannot type in the first place.";
 
 /** How many rows a grid asks for when it does not say. */
 export const DEFAULT_PAGE_SIZE = 25;
@@ -153,6 +215,16 @@ export interface PageRequest {
  * every time. That matters more than tidiness: the hook keys its effect on this string, and
  * a query whose spelling depended on the order somebody typed in would refetch on every
  * keystroke that changed nothing.
+ *
+ * **A blank filter is dropped and a filled one never is.** Those look like the same rule and
+ * are opposites. An empty box is a filter nobody asked for, so sending it would ask the API
+ * to match the empty string and answer with nothing, which reads as a permission problem;
+ * dropping it is what the reader meant. A box with a word in it is a question that was asked,
+ * and this builds the term whatever it says, including one too long or one more than the
+ * route will take. See `A_TERM_THE_CONSOLE_DROPS_IS_A_FILTER_THAT_SILENTLY_DID_NOTHING`.
+ *
+ * `append` rather than `set`, because the parameter is repeated once per term and `set`
+ * would leave the last column typed in as the only filter sent.
  */
 export function pageQuery(request: PageRequest): string {
   const parameters = new URLSearchParams();
@@ -163,7 +235,7 @@ export function pageQuery(request: PageRequest): string {
   for (const column of Object.keys(request.filters).sort()) {
     const value = (request.filters[column] ?? "").trim();
     if (value !== "") {
-      parameters.set(filterParameter(column), value);
+      parameters.append(FILTER_PARAMETER, filterTerm(column, value));
     }
   }
   return `?${parameters.toString()}`;

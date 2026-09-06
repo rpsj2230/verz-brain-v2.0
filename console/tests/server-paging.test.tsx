@@ -12,10 +12,14 @@
  * a field added to either fails here rather than being quietly ignored by a console that
  * was written against an older shape.
  *
- * **No route is mounted under `/api/v1`.** The hook is exercised against a stand-in that
- * answers in the shape `brain.api.Page` describes, which checks this console's half of the
- * conversation and nothing about the API's. The query parameter names are the part that
- * cannot be checked against anything until the first list endpoint exists.
+ * **The hook is exercised against a stand-in**, which checks this console's half of the
+ * conversation and nothing about the API's. The parameter names used to be the part that
+ * could not be checked against anything, and that is no longer true:
+ * `GET /api/v1/records/{entity}` declares `limit`, `cursor` and a repeatable `filter` taking
+ * `column:value`, so the spellings are read out of `brain/api_routes.py` and compared against
+ * the console's copies. That check is the point of this file rather than a detail of it: an
+ * undeclared query parameter is discarded by FastAPI without a word, so the console's half of
+ * a filter failing silently is a screen full of unfiltered rows read as matching ones.
  *
  * Task ids: M32.5.2.1
  */
@@ -27,8 +31,14 @@ import {
   FIRST_PAGE,
   LIMIT_PARAMETER,
   UnreadablePage,
+  FILTER_PARAMETER,
+  FILTER_SEPARATOR,
+  MAX_FILTERS,
+  MAX_FILTER_TERM_LENGTH,
   back,
-  filterParameter,
+  filterTerm,
+  filterValueBudget,
+  filterableColumn,
   forward,
   lockedCellKey,
   lockedCellsFrom,
@@ -36,6 +46,7 @@ import {
   readPage,
 } from "../src/components/paging";
 import {
+  backendFilterGrammar,
   backendLockedFieldFields,
   backendPageFields,
   backendRedactionReasons,
@@ -111,6 +122,11 @@ function queryOf(url: string): URLSearchParams {
   return new URL(url, "https://console.test").searchParams;
 }
 
+/** Every filter term one query carries, in the order it carries them. */
+function termsOf(query: URLSearchParams): string[] {
+  return query.getAll(FILTER_PARAMETER);
+}
+
 describe("reading a page", () => {
   test("the console's page carries the API's items and cursor and nothing else", () => {
     // What breaks if this is deleted: the console's envelope drifts from the API's without
@@ -173,26 +189,123 @@ describe("asking for a page", () => {
     expect(second.get(CURSOR_PARAMETER)).toBe("OPAQUE-1");
   });
 
+  test("a filter is spelled the way the route declares it, or it is silently discarded", () => {
+    // What breaks if this is deleted: the failure this whole leaf exists to close. FastAPI
+    // ignores a query parameter no signature names and answers 200 with unfiltered rows, so
+    // a console that spells this wrong shows every row it was already showing while a person
+    // reads them as the matching ones. Nothing on the screen or in the body says a filter was
+    // dropped. The names are read out of `brain/api_routes.py` rather than compared with the
+    // console's own copies, because two copies agree for every value they could hold, and the
+    // value these two agreed on until 2026-09-06 was `filter.<column>`, which no route
+    // declares.
+    const declared = backendFilterGrammar();
+
+    expect(FILTER_PARAMETER).toBe(declared.parameter);
+    expect(FILTER_SEPARATOR).toBe(declared.separator);
+    expect(MAX_FILTER_TERM_LENGTH).toBe(declared.maxTermLength);
+    expect(MAX_FILTERS).toBe(declared.maxFilters);
+  });
+
+  test("every term the console builds is one the route's declared pattern admits", () => {
+    // What breaks if this is deleted: the console sends a term the route refuses, and the
+    // answer is a 422 carrying `HTTPValidationError` rather than `ErrorBody`, which reaches a
+    // person as the least useful sentence this console has. The pattern is compiled from the
+    // route's own source, so it is the route's grammar being applied and not a second copy of
+    // it written here.
+    const declared = new RegExp(backendFilterGrammar().termPattern);
+    const query = queryOf(
+      pageQuery({
+        limit: 25,
+        cursor: null,
+        filters: { owner: "Ada", "contract.value": "400", team_name: "Ops: EMEA" },
+      }),
+    );
+
+    const terms = termsOf(query);
+    expect(terms).toHaveLength(3);
+    for (const term of terms) {
+      expect(declared.test(term)).toBe(true);
+    }
+    // The value half may hold further colons; only the first one splits.
+    expect(terms).toContain("team_name:Ops: EMEA");
+  });
+
   test("a filter cannot be mistaken for a paging parameter", () => {
     // What breaks if this is deleted: a grid over anything with a column called limit or
     // cursor sends a filter that reads as paging. The failure is a page size set to whatever
-    // somebody typed into a filter box, and it looks like a rendering bug. The prefix costs
-    // nothing and the collision cannot be predicted from here.
+    // somebody typed into a filter box, and it looks like a rendering bug. The prefix this
+    // module used to carry is gone and the property is not: every term travels inside the
+    // declared parameter, so a column named `limit` cannot collide with the limit however it
+    // is spelled.
     const query = queryOf(
       pageQuery({ limit: 25, cursor: "OPAQUE-1", filters: { limit: "9", cursor: "x" } }),
     );
     expect(query.get(LIMIT_PARAMETER)).toBe("25");
     expect(query.get(CURSOR_PARAMETER)).toBe("OPAQUE-1");
-    expect(query.get(filterParameter("limit"))).toBe("9");
-    expect(query.get(filterParameter("cursor"))).toBe("x");
+    expect(termsOf(query).sort()).toEqual(["cursor:x", "limit:9"]);
   });
 
-  test("a blank filter is not a filter", () => {
-    // What breaks if this is deleted: clearing a filter box sends an empty value, and an
-    // API that reads it as "match the empty string" answers with nothing. The reader clears
-    // a filter and the list disappears, which reads as a permission problem.
-    const query = queryOf(pageQuery({ limit: 25, cursor: null, filters: { owner: "   " } }));
-    expect(query.has(filterParameter("owner"))).toBe(false);
+  test("two filters travel as two terms rather than as the last one typed", () => {
+    // What breaks if this is deleted: `set` in place of `append`. The parameter is repeated
+    // once per term, so setting it keeps only the column somebody touched last, and the grid
+    // answers a narrower question than the boxes on the screen are asking. Every row it shows
+    // is a real match, which is what makes it invisible: the reader sees rows matching one
+    // filter and believes they match both.
+    const query = queryOf(
+      pageQuery({ limit: 25, cursor: null, filters: { owner: "Ada", team: "Ops" } }),
+    );
+
+    expect(termsOf(query)).toEqual(["owner:Ada", "team:Ops"]);
+  });
+
+  test("a blank filter is not a filter and a filled one is never dropped", () => {
+    // What breaks if this is deleted: two opposite failures that look like one rule. An empty
+    // box sent as a term asks the API to match the empty string and answers with nothing, so
+    // clearing a filter empties the list and reads as a permission problem. And a filled box
+    // dropped for being too long, or for being one more than the route takes, is a filter
+    // that silently did nothing, which is the failure this module refuses: a refused term is
+    // visible and a discarded one is not.
+    const blank = queryOf(pageQuery({ limit: 25, cursor: null, filters: { owner: "   " } }));
+    expect(termsOf(blank)).toEqual([]);
+
+    const tooLong = "x".repeat(MAX_FILTER_TERM_LENGTH * 2);
+    const overLong = queryOf(
+      pageQuery({ limit: 25, cursor: null, filters: { owner: tooLong } }),
+    );
+    expect(termsOf(overLong)).toEqual([filterTerm("owner", tooLong)]);
+
+    const many = Object.fromEntries(
+      Array.from({ length: MAX_FILTERS + 4 }, (_, index) => [`c${index}`, "v"]),
+    );
+    const overMany = queryOf(pageQuery({ limit: 25, cursor: null, filters: many }));
+    expect(termsOf(overMany)).toHaveLength(MAX_FILTERS + 4);
+  });
+
+  test("a filter box holds only what fits in a term, so the column takes its share first", () => {
+    // What breaks if this is deleted: the bound is spent on the value alone and a term built
+    // from a long column name goes over the route's limit anyway. The budget is the term
+    // length less the column and the separator, which is why it is computed per column rather
+    // than being one number for every box on the screen.
+    expect(filterValueBudget("owner") + "owner:".length).toBe(MAX_FILTER_TERM_LENGTH);
+    expect(filterValueBudget("a".repeat(MAX_FILTER_TERM_LENGTH * 2))).toBe(0);
+  });
+
+  test("a column name the route's grammar refuses is not one this console asks about", () => {
+    // What breaks if this is deleted: a grid over a source whose field names are not the
+    // lowercase form the route accepts offers a filter box that can only ever produce a 422.
+    // This is a grammar question and never a permission one: which columns a caller may
+    // filter on is answered by the compiled projection, in the API, and a second list here
+    // would be the wrong list. See `A_FILTER_IS_A_QUESTION_ABOUT_A_COLUMNS_VALUES`.
+    const declared = new RegExp(backendFilterGrammar().termPattern);
+
+    for (const column of ["owner", "contract.value", "team_name", "a".repeat(120)]) {
+      expect(filterableColumn(column)).toBe(true);
+      expect(declared.test(filterTerm(column, "v"))).toBe(true);
+    }
+    for (const column of ["Owner", "9lives", "", "has space", "a".repeat(121)]) {
+      expect(filterableColumn(column)).toBe(false);
+      expect(declared.test(filterTerm(column, "v"))).toBe(false);
+    }
   });
 
   test("the same request produces the same query however it was typed", () => {
@@ -349,7 +462,7 @@ describe("the hook that asks", () => {
     await waitFor(() => expect(result.current.rows).toEqual([{ id: "c" }]));
 
     const third = queryOf(api.urls[2] as string);
-    expect(third.get(filterParameter("owner"))).toBe("Ada");
+    expect(termsOf(third)).toEqual([filterTerm("owner", "Ada")]);
     expect(third.has(CURSOR_PARAMETER)).toBe(false);
     expect(result.current.canGoBack).toBe(false);
   });

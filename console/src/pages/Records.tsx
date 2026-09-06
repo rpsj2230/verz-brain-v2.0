@@ -109,6 +109,8 @@ function RecordRows({ entity, limit }: { readonly entity: string; readonly limit
       canGoBack={page.canGoBack}
       onNext={page.showNext}
       onPrevious={page.showPrevious}
+      filters={page.filters}
+      onFilterChange={page.setFilter}
     />
   );
 }

@@ -58,7 +58,7 @@ import {
 import type { ApiFailure } from "../api/errors";
 import { Lock } from "../ui/Lock";
 import { Notice } from "../ui/Notice";
-import { lockedCellKey } from "./paging";
+import { filterValueBudget, lockedCellKey } from "./paging";
 
 /**
  * Written down because a footer count is the single most natural addition to a table and
@@ -190,6 +190,11 @@ export function DataTable<T extends RowData>({
                         type="text"
                         className="grid__filter"
                         aria-label={`Filter by ${label}`}
+                        // The term the route accepts, less what the column name and the
+                        // separator take. Spent here rather than on the way out, because a
+                        // term trimmed as it is sent asks a different question and answers it
+                        // convincingly; one a person cannot finish typing is visible.
+                        maxLength={filterValueBudget(header.column.id)}
                         value={filters[header.column.id] ?? ""}
                         onChange={(event) => {
                           onFilterChange?.(header.column.id, event.target.value);

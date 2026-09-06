@@ -37,9 +37,15 @@
  * ones discloses the difference by subtraction.
  *
  * **There is no endpoint that sends any of this.** Nothing under `/api/v1` returns a graph, so
- * the field names below are this console's proposal rather than an agreement. That is the same
- * position `filterParameter` in `paging.ts` is in, and it is written down for the same reason:
- * a console and an API that disagree here fail as a graph that silently renders nothing.
+ * the field names below are this console's proposal rather than an agreement, and it is
+ * written down because a console and an API that disagree here fail as a graph that silently
+ * renders nothing.
+ *
+ * `paging.ts` was in this position too and no longer is, which is the reason to keep saying
+ * so. Its filter parameter carried a spelling no route declared for the life of the module,
+ * and the note recording that nothing could check it stood beside it the whole time. What
+ * fixed it was a route declaring the grammar and a test reading the declaration out of the
+ * Python source. Until an endpoint returns a graph, the names below are still a guess.
  *
  * Task ids: M32.5.2.3
  */

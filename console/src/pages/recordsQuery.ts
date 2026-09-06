@@ -29,12 +29,13 @@
  * quiet version of this failure: nothing looks wrong, and the one thing the screen exists
  * to show is missing.
  *
- * **No column carries a filter, and that is about the API rather than about the grid.**
- * `GET /api/v1/records/{entity}` declares one query parameter, `limit`. A filter box here
- * would send `filter.owner`, FastAPI would ignore it, and the grid would answer with
- * unfiltered rows and no sign that anything was ignored. `paging.ts` names that as the
- * worst failure available, because the grid still returns rows, and this is the file that
- * has to not commit it. See `A_FILTER_THE_API_IGNORES_IS_WORSE_THAN_NO_FILTER`.
+ * **A column carries a filter because the route declares one, and for no other reason.**
+ * `GET /api/v1/records/{entity}` declares `limit`, `cursor` and a repeatable `filter` taking
+ * `column:value`. Until 2026-09-06 it declared only `limit`, no column here carried a filter
+ * label, and this docstring said so: a box would have sent `filter.owner`, FastAPI would have
+ * discarded it without a word, and the grid would have shown unfiltered rows with nothing
+ * saying anything was ignored. The route closed that, so the box is offered. See
+ * `A_FILTER_IS_A_QUESTION_THE_SERVER_ANSWERS`.
  *
  * Task ids: M32.5.2.1, M32.5.2.2
  */
@@ -42,7 +43,7 @@
 import type { RJSFSchema, UiSchema } from "@rjsf/utils";
 import { valueCell } from "../components/cells";
 import type { GridColumn } from "../components/DataTable";
-import { DEFAULT_PAGE_SIZE, fieldOfLockedCell } from "../components/paging";
+import { DEFAULT_PAGE_SIZE, fieldOfLockedCell, filterableColumn } from "../components/paging";
 
 /**
  * Written down because a dropdown of entities is the first thing anybody will ask for, and
@@ -57,15 +58,28 @@ export const THE_CONSOLE_DOES_NOT_KNOW_WHAT_ENTITIES_EXIST =
   "before anybody asked.";
 
 /**
- * Written down because a filter box is the most obvious thing a grid is missing, and
- * because adding one against this route produces a screen that lies quietly.
+ * Written down because filtering in the browser is one line shorter than filtering on the
+ * server and looks like the same feature.
  */
-export const A_FILTER_THE_API_IGNORES_IS_WORSE_THAN_NO_FILTER =
-  "No column carries a filterLabel, because the records route declares limit and nothing " +
-  "else. A filter box would send filter.<column>, the route would ignore it, and the grid " +
-  "would show every row it was already showing while a person read it as the matching ones. " +
-  "A control that does nothing is worse than an absent one here: the reader cannot tell it " +
-  "from a filter that matched everything, or from one the API refused.";
+export const A_FILTER_IS_A_QUESTION_THE_SERVER_ANSWERS =
+  "A filter box sends a term to the route and renders whatever comes back. It never narrows " +
+  "the rows already on the page, and the difference is the whole of it: a browser-side " +
+  "filter searches the rows this caller was given, which cannot reach a row the API withheld " +
+  "and looks exactly like a filter that did. The route answers a filter against the compiled " +
+  "projection, so a term naming a column this caller may not read is answered as one naming " +
+  "a column that does not exist, and that answer is the product rather than an apology.";
+
+/**
+ * Written down because a column that cannot be filtered still looks like one that can, and
+ * the difference here is grammar rather than permission.
+ */
+export const WHICH_COLUMNS_MAY_BE_FILTERED_IS_NOT_THIS_CONSOLES_QUESTION =
+  "A column gets a box when its name builds a term the route's declared grammar admits, and " +
+  "that is the only test applied here. Whether this caller may filter on it is answered by " +
+  "the compiled projection, in the API, where the same bound decides what may be selected. " +
+  "brain.api_routes refused to hold a second list for the same reason: the entity's " +
+  "classification names every column the entity has rather than the ones this caller " +
+  "reaches, so checking against one would admit precisely the filter the projection refuses.";
 
 /** The path parameter's name, and the field the query form collects it in. */
 export const ENTITY_FIELD = "entity";
@@ -229,8 +243,14 @@ export function columnNamesFor(
  * library and a field named `a.b` would silently read a nested object that is not there.
  * Field names cannot contain a dot today; the reader should not have to know that.
  *
- * No column carries `meta.filterLabel`. See
- * `A_FILTER_THE_API_IGNORES_IS_WORSE_THAN_NO_FILTER`.
+ * **A column gets `meta.filterLabel` when the route's grammar admits its name**, which is
+ * what gives it a filter box, and the label is the field name for the same reason the header
+ * is. Nothing here asks whether this caller may filter on the column: see
+ * `WHICH_COLUMNS_MAY_BE_FILTERED_IS_NOT_THIS_CONSOLES_QUESTION`.
+ *
+ * A locked column gets one too. The lock is per record and per field, so a column withheld on
+ * one row is readable on another, and withholding the box on that basis would make the grid's
+ * controls a map of one row's permissions drawn across every row.
  */
 export function columnsFor(
   rows: readonly RecordRow[],
@@ -241,6 +261,7 @@ export function columnsFor(
     header: name,
     accessorFn: (row: RecordRow) => row[name],
     cell: valueCell,
+    ...(filterableColumn(name) ? { meta: { filterLabel: name } } : {}),
   }));
 }
 
