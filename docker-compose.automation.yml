@@ -1,0 +1,148 @@
+# The automation canvas, deployed as a sandbox rather than as a member of the stack.
+#
+# `brain.ops.automation` is the boundary this file has to build. Its opening paragraph is
+# the whole design: the canvas runs flows a client's own staff assemble, so the code inside
+# it is written by somebody outside this repository and is treated as hostile. No database
+# URL, no vault token, no provider key, and an egress allowlist rather than an open network.
+#
+# **Everything below is that policy expressed as a deployment, and the two are compared by
+# `tests/unit/test_automation_deployment.py`.** A boundary that exists only as a Python
+# constant is a boundary nothing enforces, which is the same argument `ops/wiring.py` makes
+# about memory limits and the same gap that left the tool registry unbuilt until yesterday.
+#
+# **Its own network, and that is the load-bearing line in this file.** `automation` is
+# `internal: true`, so nothing on it reaches the internet at all. The canvas therefore
+# cannot call `api.xero.com` directly however its flows are written; it reaches a source
+# only through the egress proxy, which is the one place `EGRESS_ALLOWLIST` is applied. An
+# allowlist checked inside the sandbox is an allowlist the sandbox can edit.
+#
+# **It is not on the application's network either.** Putting it there would let a flow reach
+# `db:5432` and `cache:6379` by hostname, and the credentials being absent is then the only
+# thing standing between an assembled flow and the database. Two defences are better and the
+# network one is the one that holds when somebody adds an environment variable in a hurry.
+#
+# **It keeps its own database and is given no credential to ours.** Activepieces needs
+# somewhere to store flows. That is `automation-db`, on the internal network, with a password
+# that exists only for it. The application's `POSTGRES_PASSWORD` is deliberately not
+# interpolated anywhere in this file, and a test asserts that it is not: an environment
+# variable is one line, and one line is how a sandbox stops being one.
+#
+# **Off unless somebody said otherwise.** `brain.ops.automation.enabled_for` refuses a
+# non-boolean because `"false"` is truthy in Python, in JavaScript and in the YAML a compose
+# environment section produces. This file is a separate compose file rather than a service
+# with a profile flag for the same reason: not composing it is unambiguous, and a client who
+# has not been asked has not agreed.
+#
+# **Not claimed: M32.6.1.3.** The custom piece that calls our tool API, so the gate still
+# runs, is TypeScript in the Activepieces plugin format and does not exist. Without it this
+# container can talk to the allowlisted sources and cannot talk to us at all, which is the
+# safe half of the arrangement and not the useful half.
+#
+# Task ids: M32.6.1.1
+
+services:
+  activepieces:
+    image: activepieces/activepieces:0.39.5
+    restart: unless-stopped
+    depends_on:
+      automation-db:
+        condition: service_healthy
+    networks:
+      # One network, internal, no default. A second entry here is how it reaches the stack.
+      - automation
+    environment:
+      AP_ENGINE_EXECUTABLE_PATH: /usr/src/app/dist/packages/engine/main.js
+      AP_ENVIRONMENT: prod
+      AP_EXECUTION_MODE: SANDBOX_CODE_ONLY
+      AP_FRONTEND_URL: ${AUTOMATION_PUBLIC_URL}
+      # Its own store, on the internal network. Never the application's.
+      AP_POSTGRES_HOST: automation-db
+      AP_POSTGRES_PORT: "5432"
+      AP_POSTGRES_DATABASE: activepieces
+      AP_POSTGRES_USERNAME: activepieces
+      AP_POSTGRES_PASSWORD: ${AUTOMATION_DB_PASSWORD}
+      AP_QUEUE_MODE: MEMORY
+      AP_ENCRYPTION_KEY: ${AUTOMATION_ENCRYPTION_KEY}
+      AP_JWT_SECRET: ${AUTOMATION_JWT_SECRET}
+      # Every outbound request goes through the proxy, which is where the allowlist lives.
+      # Set here rather than trusted to the flow author, and the internal network means a
+      # flow that unsets them reaches nothing rather than reaching everything.
+      HTTP_PROXY: http://automation-egress:3128
+      HTTPS_PROXY: http://automation-egress:3128
+      NO_PROXY: automation-db,automation-egress,localhost,127.0.0.1
+      AP_TELEMETRY_ENABLED: "false"
+    expose:
+      - "80"
+    deploy:
+      resources:
+        limits:
+          # Matches the `activepieces` component in `brain.ops.wiring`, which is where the
+          # budget is decided and what every profile's arithmetic is computed from.
+          memory: 512M
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/api/v1/flags"]
+      interval: 20s
+      timeout: 5s
+      retries: 10
+      start_period: 90s
+
+  # The only route out. `EGRESS_ALLOWLIST` in `brain.ops.automation` is the source of truth
+  # and `ops/automation/egress.conf` is generated from it; a test holds the two equal.
+  #
+  # Exact hostnames, never suffixes. `automation.py` records why at length: a suffix check
+  # admits `notapi.lark.com`, because that string genuinely ends with `api.lark.com`, so any
+  # host somebody can register whose name ends in the right characters is allowed through.
+  automation-egress:
+    image: ubuntu/squid:6.10-24.04_edge
+    restart: unless-stopped
+    networks:
+      - automation
+      - egress
+    volumes:
+      - ./ops/automation/egress.conf:/etc/squid/squid.conf:ro
+    expose:
+      - "3128"
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+    healthcheck:
+      test: ["CMD-SHELL", "squid -k check || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  automation-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    networks:
+      - automation
+    environment:
+      POSTGRES_DB: activepieces
+      POSTGRES_USER: activepieces
+      POSTGRES_PASSWORD: ${AUTOMATION_DB_PASSWORD}
+    volumes:
+      - automation-db:/var/lib/postgresql/data
+    expose:
+      - "5432"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U activepieces -d activepieces"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+networks:
+  # No internet. A flow that resolves a hostname on this network gets nowhere, whatever it
+  # was told to call, which is what makes the proxy the only route rather than the polite one.
+  automation:
+    internal: true
+  # The proxy alone sits on both. This is the only service in the file that can reach out.
+  egress:
+
+volumes:
+  automation-db:
