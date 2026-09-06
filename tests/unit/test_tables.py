@@ -56,6 +56,7 @@ import brain.tables as tables
 # is what stops that happening again.
 import brain.tables.routing as routing_tables
 from brain.audit.ledger import SUBJECT_KINDS, AuditAction
+from brain.core.department import SLUG_PATTERN
 from brain.core.entitlement import CAPABILITY_RE, VERBS
 from brain.core.envelope import TOOL_NAME_PATTERN
 from brain.core.field_policy import Classification
@@ -78,6 +79,7 @@ MIGRATION_CHAT = VERSIONS / "0005_chat.py"
 MIGRATION_DIRECTORY = VERSIONS / "0006_directory_role_grant.py"
 MIGRATION_PROJECTION = VERSIONS / "0008_projection.py"
 MIGRATION_SEARCH = VERSIONS / "0009_search.py"
+MIGRATION_AGENT = VERSIONS / "0014_agent.py"
 
 #: The seven tables 0002 built, in the order it builds them. Written out here rather than
 #: read from `brain.tables.TABLES_IN_DEPENDENCY_ORDER`, which now covers all eighteen: a
@@ -124,6 +126,13 @@ PROJECTION_TABLES: tuple[str, ...] = ("proj.record",)
 #: reasoning about how it is searched rather than in this package with the other models.
 KNOWLEDGE_TABLES: tuple[str, ...] = ("know.chunk",)
 
+#: And the one 0014 adds: a configured agent, with the audience it is seen through and the
+#: ceiling it runs under in separate columns. The properties that matter about it are in
+#: `tests/unit/test_agent_tables.py`, which asks the same question of it that every other
+#: migration is asked here: does it build what the model declares, and does it drop what it
+#: builds.
+AGENT_TABLES: tuple[str, ...] = ("agent.agent",)
+
 ALL_TABLES = (
     CORE_TABLES
     + RESOLVER_TABLES
@@ -132,6 +141,7 @@ ALL_TABLES = (
     + DIRECTORY_TABLES
     + PROJECTION_TABLES
     + KNOWLEDGE_TABLES
+    + AGENT_TABLES
 )
 
 
@@ -817,6 +827,7 @@ def test_the_migration_creates_exactly_the_tables_the_models_declare() -> None:
     directory = migration_module(MIGRATION_DIRECTORY)
     projection = migration_module(MIGRATION_PROJECTION)
     search = migration_module(MIGRATION_SEARCH)
+    agent = migration_module(MIGRATION_AGENT)
     assert core.TABLES == CORE_TABLES
     assert resolver.TABLES == RESOLVER_TABLES
     assert registry.TABLES == REGISTRY_TABLES
@@ -824,6 +835,7 @@ def test_the_migration_creates_exactly_the_tables_the_models_declare() -> None:
     assert directory.TABLES == DIRECTORY_TABLES
     assert projection.TABLES == PROJECTION_TABLES
     assert search.TABLES == KNOWLEDGE_TABLES
+    assert agent.TABLES == AGENT_TABLES
     # The package tuple is the migrations end to end. Stated as an equality rather than as a
     # set comparison, because the order is what a downgrade depends on.
     end_to_end = (
@@ -834,6 +846,7 @@ def test_the_migration_creates_exactly_the_tables_the_models_declare() -> None:
         + tuple(directory.TABLES)
         + tuple(projection.TABLES)
         + tuple(search.TABLES)
+        + tuple(agent.TABLES)
     )
     assert end_to_end == tables.TABLES_IN_DEPENDENCY_ORDER
     # Every table has a migration and every migration has a model. The union is the check
@@ -846,6 +859,7 @@ def test_the_migration_creates_exactly_the_tables_the_models_declare() -> None:
         set(directory.TABLES),
         set(projection.TABLES),
         set(search.TABLES),
+        set(agent.TABLES),
     )
     assert set().union(*every) == set(metadata.tables)
     assert sum(len(s) for s in every) == len(set().union(*every)), "a table is created twice"
@@ -1585,3 +1599,105 @@ def test_nothing_0004_runs_needs_a_superuser() -> None:
     emitted = registry_sql("upgrade").upper() + registry_sql("downgrade").upper()
     for forbidden in ("SUPERUSER", "BYPASSRLS", "SET ROLE", "SECURITY DEFINER"):
         assert forbidden not in emitted, f"the migration runs {forbidden}"
+
+
+# ------------------------------------------- the slug grammar, as PostgreSQL receives it
+#: Every table whose slug grammar is built from `brain.core.department.SLUG_PATTERN`, and
+#: the column each constraint tests.
+#:
+#: `gate.department` appears twice on purpose. It carries `scope_slug_grammar` beside
+#: `slug_grammar` and both were written from the same f-string, so a fix taking only the
+#: three obvious `slug_grammar` constraints would have left this table refusing every row for
+#: exactly the reason it was meant to stop refusing them.
+SLUG_CONSTRAINED: tuple[tuple[str, str], ...] = (
+    ("scope", "slug"),
+    ("department", "slug"),
+    ("department", "scope_slug"),
+    ("team", "slug"),
+)
+
+
+@pytest.mark.parametrize(("table_name", "column"), SLUG_CONSTRAINED)
+def test_the_slug_grammar_reaches_postgresql_as_the_pattern_python_enforces(
+    table_name: str, column: str
+) -> None:
+    """**Four deployed constraints carried a regular expression nobody wrote.**
+
+    `CheckConstraint` parses its argument as `text()`, and `text()` reads `:name` as a bind
+    parameter. `SLUG_PATTERN` contains one colon, in `(?:`, so `f"slug ~ '{SLUG_PATTERN}'"`
+    compiled to `slug ~ '^[a-z][a-z0-9]*(?NULL[a-z0-9]+)*$'`. Nothing warns. The DDL simply
+    says something else.
+
+    Measured against PostgreSQL 18.6 rather than reasoned about: a CHECK is not evaluated
+    when the table is created, so 0003 applied cleanly and the first INSERT failed with
+    `ERROR: invalid regular expression: quantifier operand invalid`. These three tables could
+    not take a row.
+
+    **Asserted on the compiled DDL, and that distinction is the whole test.**
+    `str(constraint.sqltext)` prints `:_` back whether or not the colon was escaped, because
+    `text()` normalises the escape at construction, so a test reading it passes for both
+    forms. `tests/unit/test_agent_tables.py` shipped that version first and a mutation found
+    it. Only compilation turns an unbound parameter into NULL.
+
+    Compared against `brain.core.department.SLUG_PATTERN`, another module's constant, so this
+    cannot pass by agreeing with itself either.
+
+    Delete this and the escape reads as a stray backslash somebody would tidy away, and the
+    model-versus-migration comparison keeps passing because it compares two copies of the
+    same mistake."""
+    ddl = squash(str(CreateTable(table(f"gate.{table_name}")).compile(dialect=DIALECT)))
+
+    assert f"{column} ~ '{SLUG_PATTERN}'" in ddl, ddl
+    assert "(?NULL" not in ddl, "a bind parameter ate the non-capturing group"
+
+
+def test_no_check_constraint_anywhere_carries_an_unbound_parameter() -> None:
+    """The general form, because the four above are the ones that were found rather than the
+    ones that can exist. Any pattern with a colon in it has the same failure available, and
+    the next one will be written by somebody following the shape of its neighbours.
+
+    `NULL` appearing inside a quoted regex is the signature: a bind parameter that nothing
+    bound, rendered into the DDL. It is checked over every registered table rather than a
+    list, so a new table is covered on the day it is added and not the day somebody remembers
+    to extend a tuple.
+
+    Deliberately narrow: `IS NULL` in a check expression is ordinary and common, so this looks
+    only inside the quoted pattern of a regex comparison. A broader search would report
+    `know.chunk` and `gate.capability_registry`, which are correct, and an advisory that cries
+    wolf is one people stop reading.
+
+    Delete this and the fifth instance of this bug ships the way the first four did."""
+    offenders: list[str] = []
+    for table in metadata.sorted_tables:
+        for line in str(CreateTable(table).compile(dialect=DIALECT)).splitlines():
+            statement = line.strip().rstrip(",")
+            if "CHECK" not in statement or "~" not in statement:
+                continue
+            for pattern in re.findall(r"~ '([^']*)'", statement):
+                if "NULL" in pattern:
+                    offenders.append(f"{table.schema}.{table.name}: {statement[:90]}")
+
+    assert not offenders, "a check constraint carries an unbound parameter: " + "; ".join(offenders)
+
+
+def test_the_downgrade_restores_the_broken_pattern_because_that_is_what_shipped() -> None:
+    """0015's downgrade puts the mangled regex back, and that is correct rather than a
+    mistake left in.
+
+    A downgrade exists so a schema can be returned to what a previous revision actually
+    built. 0003 built the broken constraint; a downgrade that restored a working one would
+    step to a schema that has never existed, and the next person to bisect a migration
+    history would be reading fiction.
+
+    The two patterns differ by a single backslash and the broken one looks like the correct
+    one with a typo, which is why the constant is named
+    `SLUG_SQL_PATTERN_AS_0003_SHIPPED_IT` and why this test exists: somebody tidying that
+    file would otherwise "fix" it.
+
+    Delete this and the downgrade silently becomes a step to a schema nobody ever ran."""
+    down = squash(rendered("downgrade", VERSIONS / "0015_slug_grammar.py"))
+    up = squash(rendered("upgrade", VERSIONS / "0015_slug_grammar.py"))
+
+    assert "(?NULL" in down, "the downgrade no longer restores what 0003 shipped"
+    assert SLUG_PATTERN in up, "the upgrade no longer installs the real pattern"
+    assert "(?NULL" not in up, "the upgrade still writes the mangled pattern"

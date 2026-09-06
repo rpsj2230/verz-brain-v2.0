@@ -168,6 +168,41 @@ PREDICATE_SHAPE = "jsonb_typeof(predicate) = 'object' AND NOT (predicate ? 'clau
 #: `Field(min_length=2, max_length=60, pattern=SLUG_PATTERN)`.
 SLUG_CHARS = 60
 
+#: Why the grammar is built here rather than interpolated at each constraint.
+#:
+#: **This shipped wrong in four constraints and nothing noticed for the life of the table.**
+#: `CheckConstraint` parses its argument as `text()`, and `text()` reads `:name` as a bind
+#: parameter. `SLUG_PATTERN` contains one colon, in `(?:`, so `f"slug ~ '{SLUG_PATTERN}'"`
+#: compiled to `slug ~ '^[a-z][a-z0-9]*(?NULL[a-z0-9]+)*$'`: the non-capturing group became a
+#: null bind, and what reached PostgreSQL was a different regular expression from the one
+#: Python enforces. There is no warning at any point. The DDL simply says something else.
+#:
+#: **It is not a quieter grammar, it is a broken one.** Measured against PostgreSQL 18.6:
+#: `(?N` is not a valid ARE construct, a CHECK is not evaluated when the table is created, so
+#: `0003` applied cleanly and the first `INSERT` into `gate.scope`, `gate.department` or
+#: `gate.team` failed with `ERROR: invalid regular expression: quantifier operand invalid`.
+#: Those three tables could not take a row.
+#:
+#: `0003` copied the same unescaped text, so the model and the migration agreed with each
+#: other and both disagreed with `SLUG_PATTERN`, which is why the model-versus-migration
+#: comparison in `tests/unit/test_tables.py` passed: it was comparing two copies of one
+#: mistake. `0015` corrects the deployed constraints and `test_the_slug_grammar_reaches_
+#: postgresql_as_the_pattern_python_enforces` asserts on the **compiled** DDL, because
+#: `text()` normalises the escape at construction and prints the marker back either way.
+#:
+#: Written once here rather than escaped at four call sites, so a fifth constraint cannot be
+#: added in the broken form by somebody following the pattern of its neighbours.
+_ESCAPED_COLON = "\\:"
+
+#: `SLUG_PATTERN` in the form a check constraint can carry. See `_ESCAPED_COLON`.
+SLUG_SQL_PATTERN = SLUG_PATTERN.replace(":", _ESCAPED_COLON)
+
+
+def _slug_grammar(column: str = "slug") -> str:
+    """The grammar clause for one column, escaped so it survives `text()`."""
+    return f"{column} ~ '{SLUG_SQL_PATTERN}'"
+
+
 #: `Department.name` and `Team.name` are `Field(max_length=120)`; `ScopeRecord.label` too.
 LABEL_CHARS = 120
 
@@ -563,7 +598,7 @@ class ScopeRow(TimestampMixin, SoftDeleteMixin, Base):
     )
 
     __table_args__ = (
-        CheckConstraint(f"slug ~ '{SLUG_PATTERN}'", name="slug_grammar"),
+        CheckConstraint(_slug_grammar(), name="slug_grammar"),
         CheckConstraint("length(slug) >= 2", name="slug_long_enough"),
         CheckConstraint(PREDICATE_SHAPE, name="predicate_shape"),
         # `ScopeRecord.model_post_init` refuses a department scope that restricts nothing,
@@ -630,9 +665,9 @@ class DepartmentRow(TimestampMixin, SoftDeleteMixin, Base):
     scope_slug: Mapped[str] = mapped_column(String(SLUG_CHARS), nullable=False, index=True)
 
     __table_args__ = (
-        CheckConstraint(f"slug ~ '{SLUG_PATTERN}'", name="slug_grammar"),
+        CheckConstraint(_slug_grammar(), name="slug_grammar"),
         CheckConstraint("length(slug) >= 2", name="slug_long_enough"),
-        CheckConstraint(f"scope_slug ~ '{SLUG_PATTERN}'", name="scope_slug_grammar"),
+        CheckConstraint(_slug_grammar("scope_slug"), name="scope_slug_grammar"),
         CheckConstraint("length(btrim(name)) > 0", name="name_present"),
         Index(
             "uq_department_company_id_slug_live",
@@ -682,7 +717,7 @@ class TeamRow(TimestampMixin, SoftDeleteMixin, Base):
     name: Mapped[str] = mapped_column(String(LABEL_CHARS), nullable=False)
 
     __table_args__ = (
-        CheckConstraint(f"slug ~ '{SLUG_PATTERN}'", name="slug_grammar"),
+        CheckConstraint(_slug_grammar(), name="slug_grammar"),
         CheckConstraint("length(slug) >= 2", name="slug_long_enough"),
         CheckConstraint("length(btrim(name)) > 0", name="name_present"),
         Index(
