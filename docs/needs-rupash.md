@@ -10,7 +10,9 @@ sized from measurement now; it needs three secrets I will not create on your beh
 
 **31 is decided: Option A.** The parsing and name-recognition models go behind the same
 inference server that embedding already assumes, so every Brain container stays small. Work
-has started; see 31 for what that changes.
+has started, and sizing it turned up one correction worth reading: three models resident need
+about 3 GB, which is more than removing your other project frees. Nothing is blocked on you
+today and there is no image to deploy yet. See 31.
 
 **29 is answered and done.** Yes, `https://brain.194.233.66.89.sslip.io` is exactly the right
 address and it is now registered. Read 29: there is one thing to know about what happens when
@@ -90,6 +92,43 @@ our own image. The Brain sends a document or a piece of text over the network an
 what was extracted. The inference server needs its own memory, which is why this waited on 25,
 and 25 is now answered: removing your other project frees about 2.4 GB, comfortably more than
 this needs.
+
+**Correction, 2026-09-06, after sizing it: 2.4 GB is not comfortably more than this needs.**
+The sentence above was written before anybody added the three models up, and the arithmetic
+says otherwise. Nothing about the decision changes; what changes is that it has a price, and
+the price is bigger than the room 25 frees.
+
+| what has to be resident | how much | where the figure comes from |
+|---|---|---|
+| Qwen3-Embedding-0.6B, for embedding | 1,152 MB | 0.6 billion parameters at 2 bytes each, which is the precision the published weights are in |
+| GLiNER, for the names patterns cannot see | 832 MB | about 0.21 billion parameters at 4 bytes each |
+| Docling's layout and table models, for parsing | 512 MB | a judgement. Docling publishes no single parameter count and we have never installed it |
+| Python, PyTorch, the tokenisers and the web server | 512 MB | a judgement, and the figure most likely to be wrong |
+| **the container** | **3,072 MB** | the four above, plus 64 MB for one request at a time |
+
+**None of those five numbers has been measured**, and that is stated rather than glossed:
+there is no such server on this machine and no weights downloaded, so there is nothing here
+to measure. The first two are arithmetic from published parameter counts, which is a floor
+rather than a result. The third and fourth are judgements.
+
+What it does to the budget: the `standard` profile now wants 3,328 MB more than it has, where
+before the inference server it wanted 256 MB more. Removing your other project frees 2,402 MB,
+so **roughly 926 MB short even after that is done**. Sizing the container smaller to make the
+sum work would produce a container that is killed with three models half loaded, which on a
+shared machine is somebody else's outage rather than ours.
+
+Three ways out, none urgent, because there is no image to deploy yet:
+
+1. **A second machine.** The cleanest, and it also answers the trace ledger in 25.
+2. **A smaller embedding model.** Qwen3-Embedding-0.6B is the largest of the three by some
+   way. A smaller one costs answer quality on retrieval and I can measure how much before you
+   decide.
+3. **Int8 weights.** Roughly halves the two computed figures. It costs some accuracy, and for
+   GLiNER specifically it can move where a detected name starts and ends by a character, which
+   matters because a half-redacted name identifies a person as well as a whole one does.
+
+Nothing is blocked on you today. This is here so the number is on the record before somebody
+tries to deploy it and finds out on the machine.
 
 The original analysis is kept below because the measurements are what made the choice.
 

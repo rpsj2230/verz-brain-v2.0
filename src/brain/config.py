@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from brain.ops.inference import inference_config_conflicts
 from brain.ops.wiring import DEFAULT_PROFILE, assert_known_profile, trace_config_conflicts
 
 #: Settings that must be non-empty, by environment. Cumulative: staging inherits
@@ -134,6 +135,20 @@ def check(env: str, values: dict[str, str]) -> list[ConfigProblem]:
                 setting="profile",
                 problem=conflict,
                 fix="unset the trace destination, or deploy standard or full",
+            )
+        )
+
+    # The same flag refusing the same shape of mistake about a heavier destination. A trace
+    # host receives metadata about a request; an inference address receives the text of the
+    # client's own documents, and an install that deploys no inference server has no host of
+    # its own for that text to go to. Checked here for the same reason as the line above:
+    # here is before the port is bound, and this is the last moment anything can stop it.
+    for conflict in inference_config_conflicts(profile, values):
+        problems.append(
+            ConfigProblem(
+                setting="profile",
+                problem=conflict,
+                fix="unset the inference address, or deploy a profile that runs one",
             )
         )
 

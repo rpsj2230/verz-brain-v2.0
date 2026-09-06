@@ -50,7 +50,10 @@ sized for a file somebody outside this company chose. A batch is sized against a
 `queue_name_for` derives a queue from the traffic class and refuses per-task queues, embedding
 work is `TrafficClass.SYSTEM` like the rest of the housekeeping, and both workers drain
 `system`. So either of them can be handed an embedding batch, and `embed_batch_gaps` is asked
-unconditionally rather than behind a component name.
+unconditionally rather than behind a component name. `brain.ops.inference.inference_gaps` is
+asked on the same terms and for the same reason, from the far end of that batch: it compares
+the largest batch the planner will build against the largest request the inference server
+will accept, and a container that may be handed a batch is a container that may find out.
 
 **It exits rather than loops.** There is no queue driver installed, so the run mode prints
 `NO_DRIVER_IS_INSTALLED` and exits. A worker that started anyway would poll an empty queue
@@ -96,6 +99,7 @@ from brain.knowledge.parse_budget import (
     parse_worker_gaps,
 )
 from brain.ops.checkpoints import connection_refusals
+from brain.ops.inference import inference_gaps
 from brain.ops.queue import (
     DRIVER_SCHEMA,
     FALLBACK_POLL_SECONDS,
@@ -319,6 +323,12 @@ def preflight(env: Mapping[str, str]) -> tuple[str, ...]:
     # `SYSTEM` like every other piece of housekeeping, and both workers drain `system`, so
     # either of them may be handed an embedding batch and both have to be able to hold one.
     findings.extend(embed_batch_gaps())
+    # The other end of the same batch, and asked of every container for the same reason. A
+    # batch that fits the slot and does not fit what the inference server will accept is
+    # refused after the planner has built it, and the two figures are edited in two files by
+    # two people: `MIB_PER_SLOT` is the queue's and knows nothing about models, and the
+    # server's ceiling is what is left of a container after three sets of weights.
+    findings.extend(inference_gaps())
     if worker_component == PARSE_WORKER_COMPONENT:
         # Only the parse worker, because only the parse worker is sized for a parse. Asked
         # about `brain-worker` these checks refuse, correctly: 48 MiB of slot cannot hold the

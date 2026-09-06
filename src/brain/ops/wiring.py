@@ -48,12 +48,14 @@ component whose readiness nobody wrote down gets checked for liveness by default
 how a half-connected instance stays in rotation answering from whatever it can still
 reach. `Component` refuses to be constructed without it.
 
-**What this module concludes, and it is not comfortable.** The full profile does not fit on
-this host. Langfuse needs ClickHouse, ClickHouse's practical floor is a gigabyte, and the
-existing stack has already committed 3712 MiB of roughly 6400. `budget_breaches("full")`
-reports the overrun rather than the numbers being quietly rounded until they agree. The
-answer is a second host or a hosted trace ledger, and that is a decision for Rupash, not
-something to resolve by editing a constant here.
+**What this module concludes, and it is not comfortable.** Neither `standard` nor `full`
+fits on this host. Langfuse needs ClickHouse, ClickHouse's practical floor is a gigabyte,
+the identity provider was measured at 768, the inference server has to hold three models
+resident, and the existing stack has already committed 3712 MiB of roughly 6400.
+`budget_breaches` reports each overrun rather than the numbers being quietly rounded until
+they agree. The answer is a second host, a hosted trace ledger, or smaller weights on the
+inference server, and all three are decisions for Rupash rather than something to resolve
+by editing a constant here.
 
 **The profile is a flag that refuses, not a word in a settings file.** `components_for`
 answers what a profile deploys, and that was the whole of it until a lite install could
@@ -263,6 +265,36 @@ COMPONENTS: Final[tuple[Component, ...]] = (
         profiles=frozenset({"standard", "full"}),
         wiring=Wiring.NONE,
         ready_when="the analyser returns a detection for a known-positive probe string",
+    ),
+    Component(
+        # The one process that loads a model, and it is not this image. Item 31 of
+        # `docs/needs-rupash.md` was decided on 2026-09-06 as Option A: parsing, embedding
+        # and entity recognition all go behind one service, because the alternative was
+        # 83 further packages and roughly 1.5 GB installed inside a container budgeted 512.
+        #
+        # **The figure is the largest in this file and it is arithmetic, not a measurement.**
+        # `brain.ops.inference.SERVED_MODELS` derives the weights from published parameter
+        # counts at a stated precision and adds a runtime reserve that is a judgement; the
+        # sum is what this limit has to hold before it holds a single request.
+        # `inference_gaps` compares the two ends and `budget_breaches` reports what it does
+        # to the profile, which is the point rather than the problem: sizing it to what is
+        # left over would produce a container that is OOM-killed the first time three models
+        # are resident at once, and on a shared host that is somebody else's outage.
+        #
+        # `Wiring.NONE` is load-bearing rather than incidental. This service is handed the
+        # text of documents that have already passed the permission layer, and it has no
+        # connection string to this system's database, so nothing about a response can name
+        # a row that was never sent to it. See
+        # `brain.ops.inference.THE_INFERENCE_SERVER_IS_DOWNSTREAM_OF_THE_GATE`.
+        name="inference-server",
+        memory_mib=3072,
+        profiles=frozenset({"standard", "full"}),
+        wiring=Wiring.NONE,
+        ready_when=(
+            "every model in brain.ops.inference.SERVED_MODELS answers a probe of its own; a "
+            "server that has loaded one of three refuses two thirds of what it is asked "
+            "while presenting a listening socket"
+        ),
     ),
     Component(
         name="langfuse-web",

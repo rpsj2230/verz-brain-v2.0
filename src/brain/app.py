@@ -80,6 +80,12 @@ class Settings(BaseSettings):
     langfuse_host: str = ""
     langfuse_public_key: str = ""
     langfuse_secret_key: str = ""
+    #: Where text goes to have a model read it. Read here for the same reason the three
+    #: above are, and with a heavier consequence: `brain.config.check` refuses it being set
+    #: on a profile that deploys no inference server, because a span is metadata about a
+    #: request and this address receives the text of the document itself. See
+    #: `brain.ops.inference.inference_config_conflicts`.
+    inference_url: str = ""
     #: Which system the built-in row tools read from, and therefore the first half of every
     #: tool name in the catalogue. `RowTool` refuses an empty source, because two systems'
     #: record ids collide by coincidence of integers, so this carries a real default rather

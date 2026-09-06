@@ -1,0 +1,179 @@
+# The inference server: the one process in this system that loads a machine-learning model.
+#
+# **This is item 31 of `docs/needs-rupash.md` as a deployment.** Decided 2026-09-06, Option A:
+# parsing, embedding and entity recognition live in a service of their own and the Brain asks
+# it over the network. The measurement that decided it is the reason this file exists rather
+# than three lines in `Dockerfile`: `docling` alone pulls 83 further packages including torch,
+# 678 MB compressed and about 1.5 GB installed, into a container budgeted 512 MiB. Three
+# models in three Brain containers would be three copies of that. This is the one copy.
+#
+# ---------------------------------------------------------------------------------------
+# Two caps, as everywhere else here, and the second one is not obvious for a model server.
+#
+# | cap | value | enforced by | what it does not cover |
+# | --- | --- | --- | --- |
+# | cgroup limit | 3072M | the kernel, by killing the container | nothing; it is the backstop |
+# | request ceiling | 64 MiB, one request at a time | the server, before a model is called | a request under the ceiling whose activations are not |
+#
+# `docker-compose.langfuse.yml` pairs every cgroup limit with a ceiling in the runtime's own
+# units, `GOMEMLIMIT` for Go and `--max-old-space-size` for Node, and this service has none to
+# set for two reasons rather than one. It is Python, and `RLIMIT_AS` bounds address space
+# rather than heap, so a process given its container's limit fails on an ordinary import;
+# `brain.knowledge.parse_budget` argues that at length and nothing here changes it. The second
+# reason is specific to a model server and is the more interesting one: **the dominant term is
+# not the heap, it is the weights**, which are mapped once and stay resident for the life of
+# the process. A heap ceiling set above them caps nothing at all, and one set below them
+# refuses to load. So the second cap is a decision taken before the work, and its number is
+# what is left of the container once the weights and the runtime are accounted for.
+#
+# `brain.ops.inference` holds that arithmetic and `inference_gaps` is what compares the two
+# ends, so the 64 above is derived rather than typed:
+#
+#     3072 limit - 2496 weights - 512 runtime = 64 MiB, for one request at a time
+#
+# One request at a time falls out of the sum rather than being chosen beside it, exactly as
+# `PARSES_AT_ONCE` does: the ceiling is the whole of the remainder, so a second concurrent
+# request would be allowed all of it again and the container has no second copy.
+#
+# **None of those three figures has been measured, and that is stated rather than implied.**
+# The weights are arithmetic from published parameter counts at a precision this file names,
+# which is a floor and not a result; the runtime reserve is a judgement in the same register
+# as `PARSE_EXPANSION`, with nothing behind it. There is no such server on this host and no
+# weights pulled, so there is nothing here to measure yet. `ServedModel` refuses to hold a
+# figure without prose saying where it came from, which is how that stays true.
+#
+# The one cap that *is* in the runtime's own units is the thread count, and it is here because
+# it is the only other thing that scales. `OMP_NUM_THREADS` bounds the intra-op pool that torch
+# and onnxruntime size from the host's core count rather than from the cgroup, which is the same
+# mistake ClickHouse makes with `/proc/meminfo`; each of those threads carries a workspace, so
+# an unbounded pool on an eight-core host is eight workspaces inside a budget written for one.
+# `MALLOC_ARENA_MAX` is the allocator's half of the same problem and matters more here than on
+# the parse worker, because inference allocates and frees in large blocks and that is exactly
+# the pattern glibc's arenas retain.
+#
+# ---------------------------------------------------------------------------------------
+# The network is the permission boundary, and it is the load-bearing part of this file.
+#
+# Everything sent here has already passed the permission layer: it is the text of a chunk
+# whose row already carries the permissions `chunk_document` copied onto it. Three properties
+# follow, and each is structural rather than a convention.
+#
+# It is on an internal network, so the text of a client's documents has no route off this
+# host. It is given no connection string to the Brain's database, which `brain.ops.wiring`
+# records as `Wiring.NONE` and `inference_gaps` refuses to let drift, so it cannot read a row
+# nobody sent it. And it is `expose` rather than `ports`, so nothing outside this compose
+# project can hand it text or read a response.
+#
+# What it decides is what a piece of text looks like. It is never an authorisation boundary,
+# in either direction, which is the same sentence `brain.ops.pii` opens with about a detector.
+#
+# **Nothing joins this network from the Brain's side yet, and that is the part of the wiring
+# that is not built.** The worker is what would send a batch, and `docker-compose.worker.yml`
+# deliberately does not name `inference` today: a service referring to a network that is only
+# defined in this file fails to start whenever this file is not composed alongside it, so the
+# entry belongs on the commit that also gives the worker something to send. That commit is the
+# one that implements `EmbeddingService`, which
+# `brain.knowledge.embed_queue.NOTHING_IMPLEMENTS_THE_EMBEDDING_SERVICE` says nothing does.
+# The same shape as `docker-compose.parse-worker.yml`, which says plainly that nothing routes
+# a parse to it: an unfinished route stated is worth more than a route that looks complete.
+#
+# ---------------------------------------------------------------------------------------
+# **There is no image, and this file says so rather than defaulting to one.**
+# `INFERENCE_IMAGE` is required with `:?` rather than given a `:-` default, for the reason
+# `docker-compose.keycloak.yml` requires its admin password: a default here would be a
+# container that starts, serves something nobody chose, and is discovered by the answers
+# getting quietly worse. No published image serves Qwen3 embeddings, Docling and GLiNER
+# together, so this one has to be built, and building it is the rest of M7.3.3, M7.2.1 and
+# M32.2.1.2 rather than a step in deploying this file.
+#
+# **It has never been started**, and on this host it cannot be: `brain.ops.wiring.budget_breaches`
+# reports `standard` as 3328 MiB over with this component in it. That is the finding rather
+# than the problem. Sizing the container to what is left over would produce numbers that add
+# up and a container that is OOM-killed with three models half loaded, which on a shared host
+# is somebody else's outage. The three ways out are a second host, a smaller embedding model,
+# or int8 weights, and all three are decisions with a cost that belongs to Rupash.
+#
+# Task ids: none. M7.3.3 is not claimed: the contract and the sizing are written and nothing
+# has ever embedded anything, and a compose file that has never run is a design, which is the
+# same refusal `docker-compose.langfuse.yml` makes about M32.1.1.1.
+
+services:
+  inference-server:
+    # Required, never defaulted. See the header: there is no published image that serves
+    # these three models together, so this names one that has to be built.
+    image: ${INFERENCE_IMAGE:?set INFERENCE_IMAGE; no image is published for this service yet}
+    restart: unless-stopped
+    # The profiles `brain.ops.wiring` gives the `inference-server` component. Held equal by
+    # test, in both directions.
+    profiles: ["standard", "full"]
+    networks:
+      # One network, internal, no default entry. A second entry here is a route off the host
+      # for the text of every document this company has uploaded.
+      - inference
+    environment:
+      # The second cap, in the units this server takes. Derived in `brain.ops.inference`;
+      # see the table in the header for what it is and what it is not.
+      INFERENCE_MAX_REQUEST_BYTES: "67108864"
+      INFERENCE_REQUESTS_AT_ONCE: "1"
+      # Which models are resident. The names are `brain.ops.inference.SERVED_MODELS` and the
+      # weights total those declare is what the limit below was computed from, so a fourth
+      # model added here without being declared there is memory no budget accounted for.
+      INFERENCE_EMBEDDING_MODEL: qwen3-embedding-0.6b
+      INFERENCE_ENTITY_MODEL: gliner
+      INFERENCE_PARSING_MODEL: docling-layout-and-tableformer
+      # Weights are loaded from a volume rather than fetched at start. A server that pulls
+      # from a model hub on boot needs a route out, which is the one thing the network above
+      # is there to deny, and it would also make a restart depend on somebody else's uptime.
+      INFERENCE_MODEL_DIR: /models
+      HF_HUB_OFFLINE: "1"
+      # The only ceiling here that is in the runtime's own units. torch and onnxruntime size
+      # their intra-op pools from the host's core count rather than from the cgroup, and each
+      # thread carries a workspace, so an unbounded pool is one workspace per core inside a
+      # budget written for one request.
+      OMP_NUM_THREADS: "2"
+      # glibc hands a threaded process up to eight arenas per core and never returns them, so
+      # resident memory climbs to a plateau set by the host rather than by the container.
+      # It matters more here than on the parse worker: inference allocates and frees in large
+      # blocks, which is exactly the pattern arenas retain.
+      MALLOC_ARENA_MAX: "2"
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      # Read-only. A server that could write here would let a model be replaced without a
+      # deploy, and a vector space that changes under a stable name is the model change
+      # `brain.knowledge.embedding` says has no symptom.
+      - inference-models:/models:ro
+    expose:
+      - "8080"
+    healthcheck:
+      # Readiness, not liveness, and per model rather than per process. `brain.ops.wiring`
+      # says what ready means for this component: every model answers a probe of its own. A
+      # server that has loaded one of three presents a listening socket and refuses two thirds
+      # of what it is asked, and a TCP connect cannot tell those apart.
+      #
+      # The module named here lives in the image that does not exist yet. Writing the check as
+      # a TCP connect in the meantime would leave the wrong check in place on the day the
+      # image arrives, which is how liveness ends up wearing readiness' clothes for good.
+      test: ["CMD", "python", "-m", "inference_server.ready"]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+      start_period: 180s
+    deploy:
+      resources:
+        limits:
+          # Matches the `inference-server` component in `brain.ops.wiring`, which is where the
+          # budget is decided and what every profile's arithmetic is computed from.
+          memory: 3072M
+
+networks:
+  # No internet, and nothing else on this host. The text of a client's documents crosses this
+  # network and must not cross any other; a model server that could reach out is a model
+  # server that could be pointed at a hosted API by one environment variable.
+  inference:
+    internal: true
+
+volumes:
+  # The weights, mounted read-only above. A named volume rather than a bind mount so the
+  # models survive a redeploy: they are gigabytes, and a restart that refetches them needs
+  # the route out this file exists to deny.
+  inference-models:

@@ -143,6 +143,7 @@ def test_the_baseline_matches_the_compose_file_it_claims_to_describe() -> None:
         "docker-compose.worker.yml",
         "docker-compose.parse-worker.yml",
         "docker-compose.keycloak.yml",
+        "docker-compose.inference.yml",
     ],
 )
 def test_every_deployed_service_carries_an_explicit_memory_limit(compose: str) -> None:
@@ -165,46 +166,71 @@ def test_the_lite_profile_adds_nothing_and_therefore_always_fits() -> None:
     assert budget_breaches("lite") == ()
 
 
-def test_the_standard_profile_is_over_by_exactly_the_identity_provider() -> None:
-    """**This asserted that standard fits, and it stopped being true when Keycloak was
-    declared.** That is a finding rather than a regression, and the number is measured rather
-    than chosen: a throwaway Keycloak 26.0.8 on this host was OOM-killed at a 512 MiB cgroup
-    (exit 137, `OOMKilled=true`) and ran at 477 MiB steady under 768. Shrinking it to fit the
-    budget would be the "undersize a component on purpose and discover it under load" failure
-    this file exists to prevent.
+def test_the_standard_profile_is_over_by_the_identity_provider_and_the_inference_server() -> None:
+    """**This has now been wrong twice in the same direction, and both times that was the
+    finding rather than a regression.**
 
-    The identity provider is not optional. Without it nobody signs in, so a profile that
-    omits it deploys a permission-aware system with the permissions turned off. The overrun
-    is therefore a fact about the budget, and the budget's headroom is about to change:
-    Rupash is removing his other project from this host, which frees a measured 2,402 MiB
-    against an overrun of 256.
+    It first asserted that standard fits. That stopped being true when Keycloak was declared,
+    and the overrun was exactly 256 MiB: a throwaway Keycloak 26.0.8 on this host was
+    OOM-killed at a 512 MiB cgroup (exit 137, `OOMKilled=true`) and ran at 477 MiB steady
+    under 768, so the figure was measured rather than chosen.
 
-    **The guard keeps its teeth by being exact.** One breach, naming keycloak, of exactly
-    256 MiB. Any other component pushing standard further still fails here, which is what the
-    previous assertion was for; what is no longer asserted is a total that is currently
-    false.
+    It then asserted 256, and that stopped being true when the inference server was declared.
+    Item 31 of `docs/needs-rupash.md` decided on 2026-09-06 that parsing, embedding and
+    entity recognition go behind one service, and `brain.ops.inference.SERVED_MODELS` puts
+    2496 MiB of weights and a 512 MiB runtime inside a 3072 MiB container. **That figure is
+    arithmetic from published parameter counts and is not a measurement**, which the module
+    says at length and which is the honest state of it: there is no such server on this host
+    to measure.
+
+    Neither component is optional and neither may be shrunk to fit. Without the identity
+    provider nobody signs in, so a profile omitting it deploys a permission-aware system with
+    the permissions turned off. Without the inference server nothing is ever embedded, so the
+    vector leg never exists. And sizing either to what is left over is the "undersize a
+    component on purpose and discover it under load" failure this file exists to prevent,
+    which on a shared host is a neighbour's outage rather than ours.
+
+    **The overrun now survives the host being freed, which is the part worth reading twice.**
+    Item 25 measured 2,402 MiB coming back when Rupash removes his other project. Against
+    3328 that leaves roughly 926 MiB still short, so this is no longer a decision that
+    resolves itself by waiting: it is a second host, a smaller embedding model, or int8
+    weights, and each of those has a cost that is not ours to accept.
+
+    **The guard keeps its teeth by being exact.** One breach, naming the largest single
+    component, of exactly 3328 MiB. Any further growth in standard fails here, which is what
+    the previous two versions of this assertion were for.
 
     Delete this and the overrun stops being visible anywhere, which means it is discovered by
     deploying it."""
     breaches = budget_breaches("standard")
 
     assert len(breaches) == 1, breaches
-    assert "keycloak" in breaches[0]
-    assert "over by 256 MiB" in breaches[0], (
-        "the standard overrun is no longer exactly the identity provider; something else "
-        "has grown and this test is the only place that would have said so"
+    assert "inference-server" in breaches[0]
+    assert "over by 3328 MiB" in breaches[0], (
+        "the standard overrun has moved; something has grown or shrunk and this test is the "
+        "only place that would have said so"
     )
+    assert wave_two_mib("standard") - spendable_mib() == 3328
 
 
 def test_the_full_profile_does_not_fit_and_names_the_component_that_does_not() -> None:
     """The finding, not a bug. Langfuse needs ClickHouse, its practical floor is a
     gigabyte, and the deployed stack has already committed most of the host. Delete this
     and the overrun stops being visible anywhere, which means it is discovered by
-    deploying it."""
+    deploying it.
+
+    **The component named has changed and the change is the point.** This asserted
+    `langfuse-clickhouse` while a gigabyte was the largest single thing in the profile;
+    the inference server holds three models resident and is three times that, so it is now
+    what an operator would be pointed at first. Asserting the name rather than only the
+    overrun is what makes that visible: the message exists to say where to look, and a test
+    that checked only "over by" would have kept passing while pointing at the wrong
+    container."""
     breaches = budget_breaches("full")
     assert len(breaches) == 1
-    assert "langfuse-clickhouse" in breaches[0]
+    assert "inference-server" in breaches[0]
     assert "over by" in breaches[0]
+    assert max(components_for("full"), key=lambda c: c.memory_mib).name == "inference-server"
 
 
 def test_the_budget_leaves_the_host_something_to_be_fixed_from() -> None:
