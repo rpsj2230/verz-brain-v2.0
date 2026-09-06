@@ -537,9 +537,13 @@ def test_the_declared_columns_the_projection_and_the_policy_agree() -> None:
     for entity in ENTITIES:
         for column in selected_columns(entity):
             assert policy.governs(entity, column)
-    assert policy.rule_for(ENTITY_CLIENT, "contract_value").classification is (
-        Classification.RESTRICTED
-    )
+    # Bound and asserted present rather than dereferenced inline. `rule_for` returns None
+    # for an unclassified field, so `.classification` on the result is exactly the
+    # `AttributeError` this test exists to prove cannot happen, raised from the test instead
+    # of reported by it.
+    contract_value = policy.rule_for(ENTITY_CLIENT, "contract_value")
+    assert contract_value is not None, "the money column is not classified at all"
+    assert contract_value.classification is Classification.RESTRICTED
 
 
 # ------------------------------------------------- absent, refused, unreachable (M11.5.5)
@@ -654,9 +658,7 @@ def test_the_only_recorded_laravel_exchange_is_a_failure_and_it_is_not_trusted()
     assert len(recorded) == 1
     failure = recorded[0]
     assert failure.status == 500
-    reply = interpret(
-        a_read(), ViewReply(app_status=failure.status), fetched_at=NOW.isoformat()
-    )
+    reply = interpret(a_read(), ViewReply(app_status=failure.status), fetched_at=NOW.isoformat())
     assert reply.outcome is LaravelOutcome.UNREACHABLE
     assert reply.rows is None
     assert reply.reason is FailureReason.TRANSPORT
@@ -745,9 +747,7 @@ def test_a_fetch_addressed_to_another_entity_never_reaches_the_database() -> Non
     Delete this and a mis-wired tool reads the wrong view and nobody can see it in the
     output."""
     reader = Reader(ViewReply(rows=(client_row(),)))
-    fetch = connector_fetch(
-        connection(), ENTITY_CLIENT, reader=reader, fetched_at=NOW.isoformat()
-    )
+    fetch = connector_fetch(connection(), ENTITY_CLIENT, reader=reader, fetched_at=NOW.isoformat())
     with pytest.raises(LaravelError, match="was asked for 'user'"):
         fetch(FetchRequest(entity=ENTITY_USER))
     assert reader.reads == []
@@ -760,9 +760,7 @@ def test_a_fetch_returns_the_rows_the_view_handed_over() -> None:
 
     Delete this and every guard in this file is satisfied by a fetch that never reads."""
     reader = Reader(ViewReply(rows=(client_row(),)))
-    fetch = connector_fetch(
-        connection(), ENTITY_CLIENT, reader=reader, fetched_at=NOW.isoformat()
-    )
+    fetch = connector_fetch(connection(), ENTITY_CLIENT, reader=reader, fetched_at=NOW.isoformat())
     result = fetch(FetchRequest(entity=ENTITY_CLIENT, limit=10))
     assert result.source == CONNECTOR_NAME
     assert [r.id for r in result.records] == ["4471"]
@@ -778,9 +776,7 @@ def test_a_failed_read_raises_rather_than_returning_an_empty_result() -> None:
 
     Delete this and an outage is answered with an empty list by the shortest possible edit."""
     reader = Reader(ViewReply(fault=DatabaseFault.UNAVAILABLE))
-    fetch = connector_fetch(
-        connection(), ENTITY_CLIENT, reader=reader, fetched_at=NOW.isoformat()
-    )
+    fetch = connector_fetch(connection(), ENTITY_CLIENT, reader=reader, fetched_at=NOW.isoformat())
     with pytest.raises(LaravelDegraded) as raised:
         fetch(FetchRequest(entity=ENTITY_CLIENT))
     assert raised.value.read_outcome is LaravelOutcome.UNREACHABLE
