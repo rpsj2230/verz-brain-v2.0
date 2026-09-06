@@ -1,0 +1,40 @@
+{
+  "_comment": [
+    "Who may reach the S3 gateway, and what they may do there.",
+    "",
+    "This file is mounted read-only into the seaweedfs container. A process that could",
+    "rewrite its own access control has none, and an object store holding every asset,",
+    "export and backup in the system is the wrong place to find that out.",
+    "",
+    "ONE IDENTITY, AND IT IS NOT ADMIN. The application reads and writes objects; it never",
+    "needs to create or delete a bucket, because buckets are created once by provision.sh",
+    "and their number is a decision in brain.ops.storage rather than something a running",
+    "process chooses. So the actions here are Read, Write and List and deliberately not",
+    "Admin: a compromised application key can corrupt objects, which is bad and is what",
+    "versioning on the backups bucket is for, and it cannot delete the bucket they live in.",
+    "",
+    "THE ANONYMOUS IDENTITY IS ABSENT ON PURPOSE. SeaweedFS grants public access by naming",
+    "an identity called 'anonymous', and every bucket in brain.ops.storage carries",
+    "public_read=False. There is no anonymous block below, so there is nothing to set to",
+    "true by accident and nothing for a reviewer to misread as disabled.",
+    "",
+    "THE CREDENTIAL HERE IS A PLACEHOLDER AND MUST BE REPLACED AT DEPLOY TIME.",
+    "M32.3.1.4 issues these from OpenBao, and ops/openbao/credential-slots.md is where the",
+    "slot is described. A literal key checked into a repository is a key that has leaked,",
+    "so this value is deliberately one nothing would mistake for real.",
+    "",
+    "Task ids: M32.3.1.1"
+  ],
+  "identities": [
+    {
+      "name": "brain-application",
+      "credentials": [
+        {
+          "accessKey": "REPLACE_AT_DEPLOY_FROM_OPENBAO",
+          "secretKey": "REPLACE_AT_DEPLOY_FROM_OPENBAO"
+        }
+      ],
+      "actions": ["Read", "Write", "List"]
+    }
+  ]
+}

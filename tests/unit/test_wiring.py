@@ -129,7 +129,17 @@ def test_the_baseline_matches_the_compose_file_it_claims_to_describe() -> None:
 
 
 @pytest.mark.parametrize(
-    "compose", ["docker-compose.yml", "docker-compose.lite.yml", "docker-compose.staging.yml"]
+    "compose",
+    [
+        "docker-compose.yml",
+        "docker-compose.lite.yml",
+        "docker-compose.staging.yml",
+        # The two written since, and they are in this list rather than trusted to their own
+        # test files for the reason the rule exists: an unlimited container is a neighbour's
+        # outage, and the file that gets one added is whichever file somebody edits next.
+        "docker-compose.langfuse.yml",
+        "docker-compose.objectstore.yml",
+    ],
 )
 def test_every_deployed_service_carries_an_explicit_memory_limit(compose: str) -> None:
     """The rule applied to what is actually deployed, not only to what is planned. A

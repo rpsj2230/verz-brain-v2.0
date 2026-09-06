@@ -1,0 +1,97 @@
+# The object store, and the one place its buckets are actually created.
+#
+# `brain.ops.storage` declares four buckets, what each holds, how long it keeps things and
+# whether it is versioned. Until this file that declaration was a Python constant: correct,
+# argued, and describing nothing that existed. A retention policy no store has ever been
+# told is a policy in the same sense that an unread runbook is a procedure.
+#
+# **Two services, and the split is not cosmetic.** `seaweedfs` serves S3 and keeps serving
+# it; `seaweedfs-init` runs once, creates the buckets with the lifetimes
+# `brain.ops.storage.BUCKETS` declares, and exits. The alternative is an entrypoint wrapper
+# on the server that creates buckets before starting, which makes every restart a
+# provisioning run and hides a failed provisioning inside a healthy-looking server.
+#
+# The init container exits when it succeeds, and `docker-compose.yml`'s own header records
+# what that costs on Coolify: a completed one-shot displays as a red "Exited" beside healthy
+# services, which is why the application's migrations moved into its own startup. The same
+# trade is made differently here on purpose. Migrations must run before the app takes
+# traffic on every deploy; buckets are created once and are then a fact about a volume, so a
+# one-shot that has finished is the honest shape and `restart: "no"` says so.
+#
+# **Every bucket's lifetime comes from the Python, never from a number typed here.**
+# `ops/seaweedfs/provision.sh` reads nothing at runtime, so the values below are generated
+# and then checked: `tests/unit/test_object_store.py` compares this file and that script
+# against `BUCKETS` and fails when they drift. Two copies of four numbers is only safe while
+# something compares them, which is the argument `ops/wiring.py` already makes about memory
+# limits and the reason its own numbers are checked against a compose file.
+#
+# **Sizing.** 256 MiB, matching the `seaweedfs` component in `brain.ops.wiring`, which is
+# where the budget for it is decided. `GOMEMLIMIT` is set below it for the reason the trace
+# ledger's compose file explains at length: a cgroup limit is enforced by killing the
+# process, and a Go service that has not been told its own ceiling discovers it by being
+# killed and restarting with a cold index.
+#
+# **Not published to the host.** `expose` rather than `ports`. The S3 gateway holds every
+# asset, export and backup this system has, and the host has neighbours.
+#
+# Task ids: M32.3.1.1
+
+services:
+  seaweedfs:
+    image: chrislusf/seaweedfs:3.80
+    restart: unless-stopped
+    environment:
+      # Below the cgroup limit on purpose: the collector works harder as the heap
+      # approaches it rather than the kernel killing the process. The 64 MiB difference is
+      # the Go runtime's non-heap, which GOMEMLIMIT does not count and the cgroup does.
+      GOMEMLIMIT: "192MiB"
+    command:
+      [
+        "server",
+        "-dir=/data",
+        "-s3",
+        "-s3.port=8333",
+        "-s3.config=/etc/seaweedfs/s3.json",
+        "-master.volumeSizeLimitMB=1024",
+        "-volume.index=leveldb",
+      ]
+    volumes:
+      - seaweedfs:/data
+      # Read-only. The identities file names who may reach the S3 gateway, and a process
+      # that could rewrite its own access control is one that has none.
+      - ./ops/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
+    expose:
+      - "8333"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    healthcheck:
+      # The S3 gateway, not the master. The master answers while the volume server is still
+      # registering, and in that window a bucket listing returns empty rather than failing,
+      # which a caller reads as "there are no objects" rather than as "ask again".
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8333/status"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # Runs once. Creates the buckets and sets the lifetimes, then exits.
+  seaweedfs-init:
+    image: chrislusf/seaweedfs:3.80
+    restart: "no"
+    depends_on:
+      seaweedfs:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "/opt/provision.sh"]
+    environment:
+      WEED_MASTER: "seaweedfs:9333"
+    volumes:
+      - ./ops/seaweedfs/provision.sh:/opt/provision.sh:ro
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+
+volumes:
+  seaweedfs:
