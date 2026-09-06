@@ -20,6 +20,7 @@
     "api:generate": "npm run api:schema && npm run api:types"
   },
   "dependencies": {
+    "@tanstack/react-table": "9.2.4",
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "react-router-dom": "6.30.6"

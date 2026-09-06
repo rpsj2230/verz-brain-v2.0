@@ -63,6 +63,46 @@
   --lock-fg: #5b6570;
   --lock-border: #d8dce1;
 
+  /*
+   * SEMANTIC TONE, WHICH IS NOT THE ACCENT.
+   *
+   * Four tones and no more: neutral, positive, caution, critical. They say how a person
+   * should read a state, and they are a separate axis from `--accent`, which says which
+   * thing on the page is interactive. Colouring a state with the accent hue makes a
+   * healthy connector look like a link and makes the one clickable thing on the page
+   * indistinguishable from a label; `tests/status-primitives.test.tsx` asserts that no
+   * tone value equals the accent's in any of the three blocks.
+   *
+   * **No tone means "refused", and there is no fifth one to add.** A tone that a caller
+   * could pick from a redaction reason would be `.lock--out-of-scope` with a new spelling:
+   * the reason a field was withheld is the part that discloses, and `render_lock` takes no
+   * arguments so that no path exists from a reason to a rendering. The console's half of
+   * that is `ui/Lock.tsx` taking no props and these four names being about the health of a
+   * thing rather than about anybody's permission to see it.
+   *
+   * Deliberately not reusing the lock's tokens for the neutral tone, although the values
+   * coincide today. Sharing them would mean that restyling a chip restyles the lock, and
+   * the lock is the one appearance in this console that must not move by accident.
+   *
+   * The hues are chosen by inspection and have not been measured. Nothing here has been
+   * painted in a browser; see the contrast note in README.md.
+   */
+  --tone-neutral-bg: #eceef1;
+  --tone-neutral-fg: #4a545e;
+  --tone-neutral-border: #d3d8de;
+
+  --tone-positive-bg: #e3f4ec;
+  --tone-positive-fg: #12633f;
+  --tone-positive-border: #b6dfcb;
+
+  --tone-caution-bg: #fdf1dc;
+  --tone-caution-fg: #7a4b05;
+  --tone-caution-border: #efd9a8;
+
+  --tone-critical-bg: #fbe6e5;
+  --tone-critical-fg: #96231f;
+  --tone-critical-border: #f0bfbc;
+
   /* ---------------------------------------------------------------- everything else */
   --font-sans:
     system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
@@ -106,6 +146,22 @@
     --lock-bg: #1e242b;
     --lock-fg: #9aa5b1;
     --lock-border: #2b333c;
+
+    --tone-neutral-bg: #1e242b;
+    --tone-neutral-fg: #a7b2be;
+    --tone-neutral-border: #333c46;
+
+    --tone-positive-bg: #12291f;
+    --tone-positive-fg: #74d3a5;
+    --tone-positive-border: #1f4634;
+
+    --tone-caution-bg: #2c2313;
+    --tone-caution-fg: #e2b563;
+    --tone-caution-border: #4a3a1c;
+
+    --tone-critical-bg: #2d1a1a;
+    --tone-critical-fg: #f0a09b;
+    --tone-critical-border: #4d2926;
   }
 }
 
@@ -127,4 +183,20 @@
   --lock-bg: #1e242b;
   --lock-fg: #9aa5b1;
   --lock-border: #2b333c;
+
+  --tone-neutral-bg: #1e242b;
+  --tone-neutral-fg: #a7b2be;
+  --tone-neutral-border: #333c46;
+
+  --tone-positive-bg: #12291f;
+  --tone-positive-fg: #74d3a5;
+  --tone-positive-border: #1f4634;
+
+  --tone-caution-bg: #2c2313;
+  --tone-caution-fg: #e2b563;
+  --tone-caution-border: #4a3a1c;
+
+  --tone-critical-bg: #2d1a1a;
+  --tone-critical-fg: #f0a09b;
+  --tone-critical-border: #4d2926;
 }

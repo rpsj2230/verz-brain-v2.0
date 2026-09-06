@@ -236,6 +236,74 @@ code {
   letter-spacing: 0.01em;
 }
 
+/* ------------------------------------------------- chips, badges and their tones */
+
+/*
+ * A chip and a badge are the same shape and differ only in whether a tone is painted on
+ * top. They are separate classes rather than one class with a modifier because they are
+ * separate rules: `.chip` may never gain a colour that depends on its text, and `.badge`
+ * gets its colour from one of exactly four tone classes and from nowhere else.
+ *
+ * THERE IS NO `.badge--denied`, no `.badge--restricted` and no `.chip--out-of-scope`, and
+ * there must never be one. A tone says how urgent a state is; it never says who was
+ * allowed to see it. The reason a field was withheld is the part that discloses, which is
+ * why `ui/Lock.tsx` takes no props, why `.lock` above has no modifiers, and why the tone
+ * classes below are named after loudness rather than after a cause. This comment names the
+ * forbidden spellings in order to forbid them, so `tests/status-primitives.test.tsx`
+ * parses this file into rules rather than searching it for text: a substring search would
+ * be satisfied by this paragraph with every real rule deleted.
+ */
+.chip,
+.badge {
+  display: inline-block;
+  padding: 0 var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  font-size: var(--text-sm);
+  font-style: normal;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.chip {
+  background: var(--tone-neutral-bg);
+  border-color: var(--tone-neutral-border);
+  color: var(--tone-neutral-fg);
+}
+
+/*
+ * The state word is presented capitalised and stored uncapitalised. The DOM keeps the
+ * API's own spelling, so a screen reader, a copied screenshot and a support conversation
+ * all quote the word the API used rather than one the console improved.
+ */
+.badge {
+  text-transform: capitalize;
+}
+
+.tone--neutral {
+  background: var(--tone-neutral-bg);
+  border-color: var(--tone-neutral-border);
+  color: var(--tone-neutral-fg);
+}
+
+.tone--positive {
+  background: var(--tone-positive-bg);
+  border-color: var(--tone-positive-border);
+  color: var(--tone-positive-fg);
+}
+
+.tone--caution {
+  background: var(--tone-caution-bg);
+  border-color: var(--tone-caution-border);
+  color: var(--tone-caution-fg);
+}
+
+.tone--critical {
+  background: var(--tone-critical-bg);
+  border-color: var(--tone-critical-border);
+  color: var(--tone-critical-fg);
+}
+
 .fields {
   margin: 0;
 }
@@ -255,6 +323,76 @@ code {
 
 .fields__row dd {
   margin: 0;
+}
+
+/* ------------------------------------------------------------------ grids */
+
+/*
+ * A grid shows one page of rows and says nothing about rows it was not given. There is no
+ * rule here for a total, a page number or a range, because there is no element to style:
+ * `components/DataTable.tsx` renders none of them, and a count beside a list filtered by
+ * what somebody may see discloses the rest by subtraction.
+ *
+ * There is deliberately no rule that tints a row or a cell by anything about it. A row
+ * highlighted because a field on it was withheld would be the lock's reason painted across
+ * the whole record, which is `.lock--out-of-scope` with a wider selector.
+ */
+.grid {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.grid__table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+.grid__caption {
+  text-align: left;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  padding-bottom: var(--space-2);
+}
+
+.grid__table th,
+.grid__table td {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.grid__table th {
+  font-weight: 600;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.grid__filters td {
+  padding-top: var(--space-1);
+  padding-bottom: var(--space-2);
+}
+
+.grid__filter {
+  width: 100%;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.grid__empty,
+.grid__busy {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.grid__pager {
+  display: flex;
+  gap: var(--space-2);
 }
 
 /* ------------------------------------------------------------------ notices */
