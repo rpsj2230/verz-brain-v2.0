@@ -6,11 +6,12 @@ and dark theme driven by tokens.
 
 Task ids: M32.5.1.1, M32.5.1.2, M32.5.1.3, M32.5.1.4.
 
-**Nothing in this directory has been built, installed or opened in a browser.** There was
-no Node toolchain on the machine it was written on, and installing one was out of scope.
-Every file here has been reasoned about and none of it has been executed. The sections at
-the end say exactly what that leaves unverified and what a reviewer has to check before
-any of it is trusted. Read those before you read anything else as a claim.
+**This has been installed, generated, typechecked, built and tested. It has still never
+been opened in a browser.** `npm install`, `npm run api:generate`, `npm run typecheck`,
+`npm run check:boundaries`, `npm run build` and `npm test` all run clean, on Node 24. What
+no check in this directory can reach is the rendering itself: no page has been painted, no
+colour contrast measured, and no sign-in performed against a real Keycloak. The sections at
+the end say exactly what that leaves unverified and what a reviewer still has to check.
 
 A note on spelling, so the inconsistency does not read as carelessness: prose is British,
 and protocol identifiers are spelled the way the protocol spells them. `authorization_code`
@@ -65,7 +66,8 @@ even though typing the same thing into PowerShell 5.1 would be a parser error. I
 the halves by hand, run them as two commands.
 
 Other scripts: `npm run build` (typecheck then bundle), `npm run typecheck`,
-`npm run preview`, `npm run check:boundaries`.
+`npm run preview`, `npm run check:boundaries`, `npm test` (`npm run test:watch` while
+working).
 
 **`npm run build` fails until you have generated the schema at least once.** The error is
 `Cannot find module './generated/schema'` from `src/api/schema.ts`, and that file's comment
@@ -327,9 +329,11 @@ screen.
 
 ## What is NOT done
 
-- **No tests.** Adding a test runner would mean pinning another toolchain I could not
-  install or run, and an unrunnable test suite is worse than none: it claims coverage that
-  has never executed. The tests that should exist are listed below.
+- **No browser has run any of this.** The suite below runs under jsdom, which parses CSS
+  and matches selectors but does not evaluate a media query or compute a colour from a
+  custom property. So "an explicit light choice wins on a dark machine" is checked as a
+  fact about the rule and the selector, not as a painted page, and nothing here measures
+  contrast or catches a layout that collapses.
 - **No CI job, and `.github/` was not touched.** Whether this repository grows a JavaScript
   pipeline is a decision that has not been made, and making it by adding a workflow file
   would be making it quietly.
@@ -362,40 +366,35 @@ screen.
 
 ## What is unverified
 
-Everything that would require running something. Specifically:
+Everything that needs a browser or a live identity provider. The list is shorter than it
+was; items 1, 2, 4 and 5 of the original eight are now verified and are recorded above.
 
-1. **No install, no build, no typecheck, no browser.** The TypeScript here has never been
-   compiled. Expect to fix compile errors on the first `npm run typecheck`, and treat any
-   claim in a comment about what a type does as a claim, not a fact.
-2. **Every version in `package.json` is an exact pin that has not been checked against the
-   registry.** The major and minor lines are chosen deliberately; the patch numbers are
-   from memory. If `npm install` cannot resolve one, correct it rather than loosening the
-   constraint to a range.
-3. **React 19 with `react-router-dom` 6.30 is an untested pairing.** The router APIs used
-   here (`createBrowserRouter`, `RouterProvider`, `Outlet`, `NavLink`, `useNavigate`,
-   `useSearchParams`) are identical in React Router 7, which supports React 19 explicitly.
-   If the pairing fights, upgrading the router is the smaller change.
-4. **`scripts/check-boundaries.mjs` has never been executed.** Its rules were verified by
-   grepping this source by hand and all seven pass, but the script itself has not run. Treat
-   a failure on the first run as a bug in the script until shown otherwise.
-5. **`scripts/export-openapi.py` has never been executed.** It imports `brain.app`,
-   `brain.openapi` and `brain.core.redaction` and calls only documented functions, but I did
-   not run the Python environment.
-6. **No sign-in has ever been performed.** The flow is written against the realm file and
-   the Keycloak 26 behaviour described in it. It has not touched a real identity provider,
-   and it cannot until the redirect URIs are registered.
-7. **Colour contrast is estimated, not measured.** The palettes look comfortably above the
+1. **No sign-in has ever been performed against a real Keycloak.** The flow is exercised
+   end to end in the suite against a stand-in provider that behaves the way the realm file
+   describes, which checks this console's half of the conversation and nothing about
+   Keycloak's. It cannot be checked for real until the redirect URIs are registered.
+2. **No page has been painted.** jsdom parses the stylesheets and matches selectors, so
+   the theme's rules are checked as rules, but it evaluates no media query and computes no
+   colour. A stylesheet that is structurally correct and visually broken passes everything
+   here.
+3. **Colour contrast is estimated, not measured.** The palettes look comfortably above the
    AA threshold by inspection. Nobody has run a contrast checker over them.
-8. **No accessibility audit.** There is a skip link, a labelled navigation landmark, a
+4. **No accessibility audit.** There is a skip link, a labelled navigation landmark, a
    radio group with a legend, visible focus rings, `prefers-reduced-motion`, and current
-   state marked by more than colour. None of it has been through a screen reader.
+   state marked by more than colour. The suite checks the skip link is first and that the
+   current section is marked by `aria-current` rather than only by colour. None of it has
+   been through a screen reader.
+5. **The cross-tab refresh race is not fixed and is not tested.** Two tabs cannot await
+   each other's promise, and a test with one module graph cannot reproduce two tabs. See
+   the section above for the two ways to fix it.
 
 ---
 
 ## What a reviewer must check before this is trusted
 
-1. `npm install`, `npm run api:generate`, `npm run typecheck`, `npm run build`. Fix what
-   fails and assume it will.
+1. `npm install`, `npm run api:generate`, `npm run typecheck`, `npm run build`, `npm test`.
+   All of these pass as committed; a failure means something in your environment differs,
+   most likely the Node version.
 2. `npm run check:boundaries`, and read the rules while doing it. A rule nobody can justify
    is one the next person deletes to make a build pass.
 3. That the client id in `src/auth/constants.ts` is still the realm's, and that
@@ -412,27 +411,53 @@ Everything that would require running something. Specifically:
 
 ---
 
-## Tests that should exist
+## The tests
 
-Named as property sentences, in the style the Python side uses. Each would need a runner
-that is not installed here, and each says what breaks without it.
+Vitest, `@testing-library/react` and jsdom, all pinned exactly. `npm test` runs them;
+`tests/` holds them, one file per property group, and they are named as property sentences
+with a docstring saying what breaks if each is deleted, in the style the Python side uses.
 
-- `test_the_lock_component_accepts_no_props` : the mechanism, not the rendering. A lock that
-  can vary by field or reason is a side channel, and the signature is what makes varying it
-  impossible rather than merely unusual.
-- `test_the_lock_text_matches_the_backend_constant` : the export script checks this today,
-  which means it is only checked when somebody regenerates. A test would check it always.
-- `test_a_404_renders_the_api_message_and_adds_nothing` : the sympathetic wording that
-  distinguishes denied from absent is the most natural mistake in this codebase.
-- `test_a_callback_with_a_mismatched_state_is_refused` : the CSRF check on the flow.
-- `test_the_pkce_verifier_is_deleted_when_it_is_read` : single use, so a code cannot be
-  redeemed twice.
-- `test_two_concurrent_refreshes_make_one_request` : with `refreshTokenMaxReuse` 0, a second
-  concurrent refresh signs the person out.
-- `test_a_returnto_that_leaves_the_origin_is_replaced_with_the_root` : open redirect.
-- `test_sign_in_stops_after_the_attempt_limit` : a permanent failure must produce a message
-  and not a loop between two hosts.
-- `test_an_explicit_light_choice_wins_on_a_machine_set_to_dark` : the `:not([data-theme])`
-  guard is easy to drop, and the toggle then works in one direction only.
-- `test_the_navigation_is_identical_for_every_session` : the positive statement of the rule
-  that this console does not decide what exists.
+They are not typechecked, which matches the Python side, where `mypy` runs over `src` and
+not over `tests`. `tsconfig.json` therefore still covers `src` only, and the decision
+recorded in it about not pulling Node's types into the application's typecheck stands.
+
+**The ten tests this section used to ask for all exist.** They are spread across the files
+below and several grew siblings, because a guard tested only by its refusals is satisfied
+by a function that refuses everything.
+
+| File | What it holds |
+| --- | --- |
+| `tests/lock.test.tsx` | The lock is identical in every context, takes no props, says what the backend says, and its class has no modifiers. |
+| `tests/theme.test.ts` | Three states, the `:not([data-theme="light"])` guard, every token defined on the bare `:root`, and the two dark blocks in step. |
+| `tests/auth-realm.test.ts` | Every constant in `src/auth/constants.ts` against `ops/keycloak/realm-export.json`. |
+| `tests/auth-pkce.test.ts` | The S256 challenge against the RFC 7636 vector, single use, and the attempt window. |
+| `tests/auth-session.test.ts` | No token in any store, `state` verified, single-flight refresh, the return-address guard, the loop guard, sign-out. |
+| `tests/api-errors.test.tsx` | The fallback sentences against `brain.core.errors`, and that nothing is added to a 404 on the way to the screen. |
+| `tests/api-client.test.ts` | The bearer token, no cookies, no allow-list, a refusal as a value, and what a 401 does. |
+| `tests/shell-navigation.test.tsx` | The navigation is identical for every session, on every page, and names nobody. |
+| `tests/routing.test.tsx` | Deep links, the console's own 404, and the two routes that must stay outside the guard. |
+| `tests/config.test.tsx` | The issuer rules, and that a misconfigured console names the variable on the screen. |
+| `tests/startup.test.ts` | `src/main.tsx`, which nothing else reaches: the theme applied before the first render, and the contract with `index.html`. |
+
+**Several constants are checked against the thing they are a copy of, not against
+themselves.** That is the point of `tests/support/python.ts` and the realm parsing in
+`tests/auth-realm.test.ts`: a test that imports `LOCK_TEXT` and compares it with
+`LOCK_TEXT` is green for every value the constant could hold. The lock text and the failure
+sentences come out of the Python source, the client id and the registered paths out of the
+realm export, the PKCE vector out of RFC 7636, and the default API base out of
+`.env.example`.
+
+**Stylesheets are parsed rather than searched.** Both style files name the thing they
+forbid in a comment in order to forbid it, so a substring search for
+`:root:not([data-theme="light"])` or for `.lock--out-of-scope` would be satisfied by the
+comment with the real rule gone. `tests/support/css.ts` strips comments and reads rules,
+and the theme test hands the selector it found to the browser's own matcher.
+
+**Fifty-one mutations were run against this suite and fifty were caught by a specifically
+named test.** The one survivor is `end={section.to === "/"}` in `src/layout/Shell.tsx`
+changed to `end={false}`: measured against react-router-dom 6.30, a prefix match on `/`
+requires a `/` at the boundary, so the two spellings mark exactly the same link current at
+every address this console has. The expression is defensive against a router upgrade that
+changes that rule, and the test that would fail the moment it changed is
+`the current section is marked by more than a colour`. Changing `end` for the *other*
+sections is not equivalent and is caught.

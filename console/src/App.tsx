@@ -19,7 +19,12 @@
  * on a page that does not exist. The README says this again where a deployer will see it.
  */
 
-import { createBrowserRouter, Link, RouterProvider } from "react-router-dom";
+import {
+  createBrowserRouter,
+  Link,
+  RouterProvider,
+  type RouteObject,
+} from "react-router-dom";
 import { CALLBACK_PATH, SIGNED_OUT_PATH } from "./auth/constants";
 import { RequireSession } from "./auth/RequireSession";
 import { CallbackRoute, SignedOutRoute } from "./auth/routes";
@@ -69,7 +74,16 @@ function ConfigurationProblems() {
   );
 }
 
-const router = createBrowserRouter([
+/**
+ * The routes themselves, separated from the router that mounts them.
+ *
+ * The table is data and the browser router is one binding of it. Exporting the data means
+ * a test can mount the same table on a memory router and ask what a given address renders,
+ * which is the only way to check that a deep link resolves and that an unknown one reaches
+ * the console's own not-found page. A test that declared its own copy of this table would
+ * be testing the copy.
+ */
+export const routes: RouteObject[] = [
   { path: CALLBACK_PATH, element: <CallbackRoute />, errorElement: <RouteError /> },
   { path: SIGNED_OUT_PATH, element: <SignedOutRoute />, errorElement: <RouteError /> },
   {
@@ -86,7 +100,9 @@ const router = createBrowserRouter([
       { path: "*", element: <NotFound /> },
     ],
   },
-]);
+];
+
+const router = createBrowserRouter(routes);
 
 export function App() {
   if (configProblems.length > 0) {
