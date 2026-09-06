@@ -94,6 +94,18 @@ CHANNEL_VERBS: dict[Channel, frozenset[str]] = {
     # was added to, where the sender is anybody a member chose to invite.
     # See `brain.channels.telegram.THE_HEADER_AUTHENTICATES_TELEGRAM_AND_NOT_THE_PERSON`.
     Channel.TELEGRAM: frozenset({"read"}),
+    # Read alone, and this one is the closest call on the list. Teams sits behind the tenant
+    # identity provider exactly as Lark does, so the person really is signed in as themselves,
+    # which is a stronger position than Slack's workspace membership. What is missing is the
+    # part `Assurance` is about: nothing in an inbound activity is evidence about that session.
+    # The token on the request is signed by Microsoft and says the activity came from the Bot
+    # Framework, not that the named person authenticated here, and there is no second factor
+    # anywhere in it. A tenant also contains guests and shared channels with people from other
+    # companies, so being addressable in Teams is not evidence of being staff. An Adaptive Card
+    # `Action.Submit` arrives as an ordinary message activity carrying a `value`, pressable by
+    # anybody who can see the card, which is everybody in the conversation it was posted to.
+    # See `brain.channels.teams.A_PRESS_HERE_COULD_NEVER_BE_AN_APPROVAL`.
+    Channel.TEAMS: frozenset({"read"}),
 }
 
 #: The verbs each assurance level may carry.
@@ -125,6 +137,7 @@ def verbs_for_channel(channel: Channel) -> frozenset[str]:
             | Channel.WIDGET
             | Channel.SLACK
             | Channel.TELEGRAM
+            | Channel.TEAMS
         ):
             return CHANNEL_VERBS[channel]
         case _:

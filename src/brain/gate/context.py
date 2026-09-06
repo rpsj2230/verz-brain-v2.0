@@ -60,6 +60,13 @@ class Channel(enum.StrEnum):
     #: identity provider's own client and Slack is a workspace whose membership is
     #: maintained beside the directory. See `brain.channels.slack`.
     SLACK = "slack"
+    #: A Microsoft Teams tenant, reached over a Bot Framework webhook. Separate from SLACK
+    #: although both are work chat, because an inbound Teams activity is authenticated by a
+    #: JWT Microsoft signed rather than by a secret shared with one workspace, and one bot
+    #: registration is addressable by every tenant that installs it. Which tenant an activity
+    #: came from is therefore a fact this channel carries and no other one has to.
+    #: See `brain.channels.teams`.
+    TEAMS = "teams"
 
 
 class TrafficClass(enum.StrEnum):
@@ -102,6 +109,10 @@ def traffic_class_for(channel: Channel) -> TrafficClass:
             # are on WhatsApp. Queueing a Telegram answer would leave a person waiting on a
             # notification that arrives after they have put the phone down.
             | Channel.TELEGRAM
+            # Teams is a chat window somebody is typing in, so the same argument as Slack.
+            # The Bot Framework also expects the webhook to answer within seconds, which
+            # means queueing here is not a slower answer but no answer at all.
+            | Channel.TEAMS
         ):
             return TrafficClass.HUMAN_INTERACTIVE
         case Channel.EMAIL:
