@@ -8,8 +8,12 @@ Task ids: M0.6.5, M38.4.1.1
 
 from __future__ import annotations
 
+import pkgutil
+from pathlib import Path
+
 import pytest
 
+import brain.connectors
 from tests.fixtures.cassettes import (
     CASSETTES,
     Source,
@@ -19,6 +23,45 @@ from tests.fixtures.cassettes import (
 )
 
 pytestmark = pytest.mark.invariant
+
+REPO = Path(__file__).resolve().parents[2]
+CONNECTORS_DIR = Path(brain.connectors.__file__).parent
+
+#: Modules in `brain.connectors` that are framework rather than a connector to one source.
+#: Named rather than inferred, so a real connector that stops looking like one is a
+#: discovery failure somebody sees rather than a silent exemption.
+NOT_A_CONNECTOR = frozenset(
+    {
+        "__init__",
+        "contract",
+        "manifest",
+        "projection",
+        "registry",
+        "rest",
+        "transports",
+        "throttle",
+        "federation",
+        "backfill",
+        "change_signal",
+    }
+)
+
+
+def _connectors() -> list[tuple[str, Path]]:
+    """Every source connector and the test file that should drive it against the cassettes."""
+    found: list[tuple[str, Path]] = []
+    for info in pkgutil.iter_modules([str(CONNECTORS_DIR)]):
+        if info.name in NOT_A_CONNECTOR:
+            continue
+        found.append((info.name, REPO / "tests" / "unit" / f"test_{info.name}.py"))
+    return found
+
+
+def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
+    """Parametrise the contract test over whatever connectors exist right now."""
+    if "connector_and_tests" in metafunc.fixturenames:
+        found = _connectors()
+        metafunc.parametrize("connector_and_tests", found, ids=[name for name, _ in found])
 
 
 def test_every_source_has_at_least_one_recording() -> None:
@@ -114,6 +157,36 @@ def test_the_recordings_and_the_operational_ceilings_agree_about_what_can_be_rai
         f"{disagreements}"
     )
     assert operational, "no operational ceilings were read, so this compared nothing"
+
+
+def test_every_connector_that_exists_is_tested_against_the_recordings(
+    connector_and_tests: tuple[str, Path],
+) -> None:
+    """**The contract test, stated as a rule rather than left to each author (M38.4.1.2).**
+
+    A connector is written against these recordings so it can exist before anybody has
+    credentials. That only means anything if its tests actually drive them: a connector whose
+    tests hand it hand-built dictionaries has been checked against what its author imagined
+    the source returns, which is exactly the mock the cassettes were recorded to replace.
+
+    Freshdesk and Xero both did this unprompted, and that is the point at which it should
+    stop depending on each author remembering. Discovered rather than listed, so a connector
+    joins the rule by existing.
+
+    Delete this and the third connector's tests can build their own fixtures, and it will
+    look identical in review to the two that did not."""
+    module, test_file = connector_and_tests
+
+    assert test_file.exists(), (
+        f"brain.connectors.{module} has no test file, so nothing checks it against the "
+        "recordings it was supposed to be written from"
+    )
+    text = test_file.read_text(encoding="utf-8")
+
+    assert "cassettes" in text, (
+        f"{test_file.name} never mentions the cassettes, so this connector is tested against "
+        "fixtures its own author wrote rather than against the recorded shape"
+    )
 
 
 def test_the_source_excluded_from_that_comparison_really_is_measuring_something_else() -> None:
