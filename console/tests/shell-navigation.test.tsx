@@ -79,10 +79,10 @@ describe("the navigation", () => {
     // marked and that mark is the one thing that should differ.
     await loadConsole();
     const onOverview = targets(await navigationAt("/"));
-    const onActivity = targets(await navigationAt("/activity"));
+    const onRecords = targets(await navigationAt("/records"));
 
     expect(onOverview.length).toBeGreaterThan(1);
-    expect(onActivity).toEqual(onOverview);
+    expect(onRecords).toEqual(onOverview);
   });
 
   test("the current section is marked by more than a colour", async () => {
@@ -91,27 +91,29 @@ describe("the navigation", () => {
     // shades. This is the accessibility half of the same list.
     await loadConsole();
     const holder = document.createElement("div");
-    holder.innerHTML = await navigationAt("/activity");
+    holder.innerHTML = await navigationAt("/records");
     const current = [...holder.querySelectorAll("a")].filter(
       (link) => link.getAttribute("aria-current") === "page",
     );
 
-    expect(current.map((link) => link.textContent)).toEqual(["Activity"]);
+    expect(current.map((link) => link.textContent)).toEqual(["Records"]);
   });
 
   test("a section stays current at an address inside it", async () => {
     // What breaks if this is deleted: `end` on the section links. With exact matching
     // everywhere, opening anything nested under a section unmarks that section, so the
     // person is somewhere the menu says they are not. The root entry is the one that needs
-    // exact matching, because a prefix match on "/" would otherwise mark it everywhere.
+    // exact matching, because a prefix match on "/" would otherwise mark it everywhere. The
+    // address below is a real one: the entity is a path segment on the records route, so
+    // this is where a person spends most of their time rather than an invented depth.
     await loadConsole();
     const holder = document.createElement("div");
-    holder.innerHTML = await navigationAt("/activity/something-nested");
+    holder.innerHTML = await navigationAt("/records/clients");
     const current = [...holder.querySelectorAll("a")].filter(
       (link) => link.getAttribute("aria-current") === "page",
     );
 
-    expect(current.map((link) => link.textContent)).toEqual(["Activity"]);
+    expect(current.map((link) => link.textContent)).toEqual(["Records"]);
   });
 
   test("the header says nothing about who is signed in", async () => {

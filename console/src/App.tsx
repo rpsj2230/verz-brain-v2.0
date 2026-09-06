@@ -17,8 +17,22 @@
  * unknown path rather than a 404. Without that, a deep link fails and, worse, so does
  * `/auth/callback`, which means sign-in completes at the identity provider and then lands
  * on a page that does not exist. The README says this again where a deployer will see it.
+ *
+ * **The records route is loaded on demand, and this is the one place that decision is
+ * expressed.** It is the only route that mounts the table library and the form library, and
+ * those weigh 608 kB against an application of 267 kB. Loaded eagerly they are in the first
+ * response for everybody, including a person who only ever opens the overview, and the
+ * download happens before the sign-in redirect has even been decided. A static import here
+ * is therefore the change that undoes the split: `tests/bundle-split.test.ts` walks the
+ * static import graph from `main.tsx` and fails when either library is reachable without a
+ * dynamic import. The measurement is in the README.
+ *
+ * Rejected: splitting every route. `Overview` and `NotFound` reach nothing the shell does
+ * not already reach, so a chunk for either buys a round trip and saves no bytes. A split is
+ * worth what it removes from the entry, and these remove nothing.
  */
 
+import { lazy } from "react";
 import {
   createBrowserRouter,
   Link,
@@ -30,10 +44,21 @@ import { RequireSession } from "./auth/RequireSession";
 import { CallbackRoute, SignedOutRoute } from "./auth/routes";
 import { configProblems } from "./config";
 import { Shell } from "./layout/Shell";
-import { Activity } from "./pages/Activity";
 import { NotFound } from "./pages/NotFound";
 import { Overview } from "./pages/Overview";
 import { Notice } from "./ui/Notice";
+
+/**
+ * The records screen, fetched when somebody asks for it.
+ *
+ * Written as a dynamic import with a named export rather than a default one, because every
+ * module in this console exports by name and a single default export here would be the one
+ * exception a reader has to notice. `Shell` supplies the boundary this suspends against, so
+ * the frame and the navigation paint before the chunk arrives: a menu that waited for a
+ * page's code would be a menu whose contents depended on a network request, which is the
+ * shape the navigation is not allowed to have.
+ */
+const Records = lazy(async () => ({ default: (await import("./pages/Records")).Records }));
 
 /**
  * Shown when a page throws while rendering.
@@ -96,7 +121,12 @@ export const routes: RouteObject[] = [
     errorElement: <RouteError />,
     children: [
       { index: true, element: <Overview /> },
-      { path: "activity", element: <Activity /> },
+      // Two paths and one component. The entity is a path segment rather than a query
+      // parameter because it is what the screen is about, and the same screen with none
+      // named is where somebody arrives from the menu: it has the form and no grid, because
+      // there is no question to ask yet.
+      { path: "records", element: <Records /> },
+      { path: "records/:entity", element: <Records /> },
       { path: "*", element: <NotFound /> },
     ],
   },

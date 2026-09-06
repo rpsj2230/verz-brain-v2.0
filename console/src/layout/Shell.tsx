@@ -22,8 +22,16 @@
  *
  * The skip link is first in the DOM on purpose. Without one, reaching the page content
  * from the keyboard means tabbing through every navigation item on every page.
+ *
+ * **The suspense boundary is around the page and not around the frame.** A route whose code
+ * arrives on demand has to suspend somewhere, and putting the boundary outside the header
+ * would mean the navigation itself waited for a network response. A menu that appears late
+ * is a menu whose contents could in principle depend on what came back, and this file's
+ * whole claim is that they cannot: the list is a constant, it renders before anything is
+ * fetched, and it is the same list whether the page inside it ever loads or not.
  */
 
+import { Suspense } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import { ThemeControl } from "../theme/ThemeControl";
 import { signOut } from "../auth/session";
@@ -31,7 +39,7 @@ import { signOut } from "../auth/session";
 /** Every section, for everyone. See the note above before adding a condition to this. */
 const SECTIONS: readonly { to: string; label: string }[] = [
   { to: "/", label: "Overview" },
-  { to: "/activity", label: "Activity" },
+  { to: "/records", label: "Records" },
 ];
 
 export function Shell() {
@@ -77,7 +85,15 @@ export function Shell() {
         </nav>
 
         <main id="main" className="shell__main">
-          <Outlet />
+          <Suspense
+            fallback={
+              <p className="note" role="status">
+                Loading.
+              </p>
+            }
+          >
+            <Outlet />
+          </Suspense>
         </main>
       </div>
     </div>

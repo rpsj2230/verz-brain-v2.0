@@ -1,8 +1,9 @@
 # The console
 
 The browser application. React and Vite, a typed client generated from the API's own
-OpenAPI document, sign-in through Keycloak with authorisation code and PKCE, and a light
-and dark theme driven by tokens.
+OpenAPI document, sign-in through Keycloak with authorisation code and PKCE, a light and
+dark theme driven by tokens, and two screens: the overview, which renders
+`GET /api/v1/me`, and the records grid, which renders `GET /api/v1/records/{entity}`.
 
 Task ids: M32.5.1.1, M32.5.1.2, M32.5.1.3, M32.5.1.4, M32.5.2.1, M32.5.2.2, M32.5.2.3,
 M32.5.2.4.
@@ -287,6 +288,11 @@ on a shared machine is not a sign-out at all.
 `createBrowserRouter` with three top-level routes: the callback, the signed-out page, and
 everything else behind `RequireSession` inside the shell.
 
+Inside the shell there are three: the overview at `/`, the records screen at `/records` and
+`/records/{entity}`, and the console's own not-found page. The records screen is the only one
+loaded on demand, because it is the only one that reaches the table and form libraries, and
+what that saves is measured further down.
+
 The two sign-in routes sit outside the guard, and both would be bugs inside it: the
 callback is where a session comes from, so guarding it is a loop, and the signed-out page
 exists because there is no session, so guarding it would sign the person back in and undo
@@ -304,6 +310,89 @@ dev server proxies `/api` to reproduce the same shape locally rather than making
 laptop the only place cross-origin behaviour is ever exercised. Splitting the two in a
 deployment means changing `BRAIN_CORS_ORIGINS` on the API **and** `webOrigins` in the
 realm, neither of which fails loudly on its own.
+
+**The navigation is identical for every session, and that is a rule rather than an
+omission.** Reading roles out of the token and hiding sections would be one line and would
+put a permission model in the browser, and a menu that shrinks is itself a disclosure: a
+person who sees two sections and a person who sees three have learned something about each
+other. `tests/shell-navigation.test.tsx` mounts the navigation with no session and with two
+different ones and asserts the markup is one string.
+
+---
+
+## The screens
+
+Two, and each shows what one route answered.
+
+### Overview, at `/`
+
+`GET /api/v1/me`, rendered as the caller's own facts and nothing else. No name is read out of
+a token anywhere in this console, so this page is the only thing that knows who is signed in,
+and it knows because it asked.
+
+The fields it renders are checked against `brain.api_routes.CallerView` in the Python source
+rather than against a list here, so a field added to that model fails a test instead of
+arriving and being dropped. Four of the values are short closed-vocabulary words and render
+through `Chip`, which has one appearance and no tone; nothing on the page turns a value into
+a colour or into a sentence. `assurance` is the one somebody will want to explain, because it
+is the fact a person can act on, and a sentence about signing in again with a second factor
+would be a mapping from a value to a meaning written in a browser and out of step with the
+API within a release.
+
+A null `primary_department` contributes nothing at all: no row, no label, no dash. And there
+is no lock on this page. `/me` sends no `locked`, so a lock here could only have been derived
+from a null, which would be the console asserting a refusal nobody made in the one appearance
+that is supposed to mean something exact.
+
+The lock sample that used to be on this page is gone, as its own comment asked.
+
+### Records, at `/records` and `/records/{entity}`
+
+`GET /api/v1/records/{entity}`, through the grid, with the query asked through a generated
+form. The address is the whole of the state, so a link can be shared and the colleague who
+opens it gets the same question asked with their own grants.
+
+- **The entity is typed, never chosen from a list.** There is no catalogue route, and a list
+  in the console would publish the guess it was built from. The route answers an unclassified
+  entity, an unregistered one, an ambiguous one and one whose rows this caller reaches no
+  column of with one 404 and one sentence, precisely so an installation cannot be mapped by
+  trying names, and this screen must not undo that by being helpful about spelling.
+- **A withheld field still gets a column.** This is the half that fails silently:
+  `brain.core.redaction` deletes a withheld key from the record and reports the field in
+  `locked`, so a column list derived from the rows alone has nowhere to render the lock, and
+  the one thing the screen exists to show disappears with nothing looking wrong. Columns are
+  the keys that arrived plus the fields that were locked, sorted, so the order is a function
+  of the names and not of the order a source returned its columns in.
+- **Two callers sent different fields each get a packed grid.** No column is reserved for a
+  field that did not arrive. The sharpest placeholder is not an element, it is a space, and
+  `graph.ts` makes the same argument at length about rows on a canvas.
+- **No column offers a filter**, because the route declares one query parameter and it is
+  `limit`. A filter box would send `filter.owner`, FastAPI would drop it without a word, and
+  the grid would show unfiltered rows to somebody reading them as the matching ones.
+  `tests/records-page.test.tsx` reads the declared parameter names out of the API's own
+  OpenAPI document and asserts the console sends nothing else.
+- **The limit is the one control a person has**, and its bounds are the route's. They are
+  checked against `brain.knowledge.rows.MAX_ROW_LIMIT` and against the generated document, so
+  the form cannot offer a number the route refuses. A number outside them in a hand-edited
+  address is treated as unstated rather than clamped: answering a different question from the
+  one in the address is the failure this console is arranged against, in miniature.
+
+**What a person cannot tell on this screen, and it is a gap rather than a rule.**
+`RecordPage` carries `truncated`, which says there is more without saying how much more, and
+`readPage` in `paging.ts` keeps two fields and drops it. So twenty-five rows of a larger set
+look like the whole of it, and the pager's Next button is disabled because the route sends no
+cursor. What a person has instead is the limit, which they can raise to five hundred.
+Carrying `truncated` through the envelope, the hook and the grid is the fix; it is three
+modules and their tests, and it is not a change to make in the commit that first mounts any
+of them.
+
+**Mounting a form forces the Content-Security-Policy question that the section on generated
+forms parks.** `@rjsf/validator-ajv8` compiles each schema with `new Function`, so under the
+policy proposed further down the validation throws and stops. Nothing is decided here either,
+because the decision still belongs with whoever writes the policy, but it is no longer
+hypothetical: there is a form on a page now, and the cheapest answer remains dropping
+client-side validation, because the console is not a trust boundary and the API validates
+what it is sent whatever this form believed.
 
 ---
 
@@ -337,11 +426,13 @@ screen.
 
 ## The component layer
 
-Four leaves, in `src/components/` and `src/ui/`. **None of them is mounted on a page**, which
-is deliberate and is the same decision the overview page records: a screen filled with
-invented rows, an invented schema or an invented run would make the console look further
-along than it is, and somebody would screenshot it. Every one of them is exercised by the
-suite instead.
+Four leaves, in `src/components/` and `src/ui/`. **Two of them are now mounted, on the pages
+described in the next section, and two are not.** The grid, the generated form and the chip
+are on `/records` and `/`, against the two routes the API actually serves. The canvas is not,
+and the badge and status primitives are not, because nothing under `/api/v1` returns a graph
+or a state word, and a screen filled with an invented run would make this console look
+further along than it is. Everything unmounted is exercised by the suite and by nothing else,
+which is stated again in "What is NOT done" so that nobody has to infer it.
 
 The rule they all serve is the one the redaction module states twice, once for records and
 once for fields, and the two halves are different rules that keep getting collapsed into one:
@@ -460,6 +551,47 @@ the answer is a route-level split, which is a change to `App.tsx` at the point s
 the screen rather than something to do speculatively now. The throwaway entry and its config
 were deleted; they are recorded here because the numbers are the point, not the files.
 
+### What the split actually saved
+
+Measured on 2026-09-06, after the records screen was mounted. Every row is `npm run build`
+over the real application rather than over a throwaway entry, so these are totals and the
+table above is not.
+
+| Build | Entry chunk | Gzipped | Loaded on demand |
+| --- | --- | --- | --- |
+| Before: nothing mounted | 267.01 kB | 85.74 kB | none |
+| After: records route split | 270.44 kB | 86.99 kB | 444.73 kB (148.78 kB gzipped) |
+| Measured and reverted: records route imported eagerly | 716.96 kB | 236.22 kB | none |
+| Measured and reverted: records route split, query form removed | 270.42 kB | 86.98 kB | 37.71 kB (12.34 kB gzipped) |
+
+The split leaves the first response 3.43 kB larger than it was with no screens at all, and
+the alternative was 449.95 kB larger. Vite prints its own 500 kB warning on the eager build,
+which is the shape of the argument in one line. The `Records` chunk arrives when somebody
+opens the section, and the shell paints before it does: the suspense boundary is inside
+`Shell`, around the outlet, so the header and the navigation never wait for a network
+response. A menu that waited would be a menu whose contents could in principle depend on what
+came back.
+
+**The last row is the one to argue with.** The grid and the whole records page are 37.71 kB;
+the generated query form is the other 407 kB, for two fields. That is the honest cost of
+mounting `@rjsf/core` on a two-input form, and it is written here rather than left in a build
+log because the decision should be reversible by whoever disagrees. The case for keeping it:
+it is the leaf the library was chosen for, the form's bounds come from the route's own
+document and are checked against it, and the split means nobody pays for it until they open
+the section. The case against: the schema is assembled by this console rather than sent by
+the API, so the property that justifies a form library, that nobody read this form before it
+rendered, is not actually present on this screen; and the ajv validator needs `unsafe-eval`,
+which is a security decision nobody has taken yet. Replacing it with two hand-written inputs
+is a change to one file, and `tests/records-page.test.tsx` would keep the bounds honest
+either way, because it checks the constants against the Python module and the OpenAPI
+document rather than against the form.
+
+**The split is checked as a property of the source, not as a number in a build log.**
+`tests/bundle-split.test.ts` walks the static import graph from `src/main.tsx`, does not
+follow `import()`, and fails when `@rjsf/core`, `@rjsf/validator-ajv8`, `@tanstack/react-table`
+or `@xyflow/react` is reachable. A static import of the records page is the change that
+undoes all of this, it is one line, and it is the line that test exists to refuse.
+
 `TraceGraph` imports the one empty-page sentence from `DataTable.tsx` rather than spelling it
 again, because two spellings of one sentence is two sentences and the second is the one
 somebody later makes more helpful. That import costs nothing: an entry importing only that
@@ -489,11 +621,19 @@ constant builds to 0.17 kB, so the grid is tree-shaken away.
   and because React Flow positions every node with an inline `style` attribute, which a CSP
   covers, and that **the policy as written stops a generated form's validation from running
   at all**. See the ajv note in the component layer section.
-- **No screens.** Two routes, one of which says it is not built yet. The grid, the generated
-  form and the canvas all exist and none of them is on a page, so nothing in `dist/` contains
-  TanStack Table, react-jsonschema-form or React Flow: the application bundle is built from
-  the modules `main.tsx` reaches, and it reaches none of them. What that leaves unverified is
-  in the next section.
+- **No canvas on any page.** `GraphCanvas` and `TraceGraph` are built, tested and mounted
+  nowhere, and that is a decision rather than an oversight: nothing under `/api/v1` returns a
+  graph, so the only thing to draw would be a run this console invented, and an invented run
+  on a screen is the thing somebody screenshots. `@xyflow/react` is therefore in no chunk of
+  `dist/` at all. The same goes for `Badge` and `Status`: the only state vocabulary the API
+  has is `HealthState`, which appears on `/health/ready`, and that route is outside the
+  versioned prefix, is unauthenticated, and answers with the names of this installation's
+  dependencies. Putting it on a signed-in screen is a decision about what an operator's
+  facts are worth to a reader, and nobody has made it.
+- **The Activity page is gone.** It was a route that said it was not built yet, which was
+  honest while it was the only way for the navigation to have two entries. Now that a second
+  section answers a real route, a placeholder holding a slot in the menu is worse than no
+  page: every address in this console now shows something the API said.
 - **No procedure canvas.** M32.5.2.3 is the drawing surface, and `GraphCanvas` is it. The
   canvas as a thing somebody authors on, with five node kinds, scope predicates as the only
   conditional grammar, no code node and a SKILL.md coming out of the other end, is a
@@ -502,19 +642,24 @@ constant builds to 0.17 kB, so the grid is tree-shaken away.
 - **No form composer.** M32.5.2.2 is the library and the rules a generated form obeys.
   The seven-section agent manifest form, the AI co-author proposing diffs, and draft and
   version handling are a different leaf and none of them is built.
-- **No display of who is signed in.** The header says nothing about the person, because the
-  only way to know without asking the API is to read the token. When an endpoint exists that
-  says who the caller is, that is where the name comes from.
-- **No `/api/v1` call is made by anything a person can reach.** `useServerPage.ts` is the
-  one caller of `src/api/client.ts`, and nothing on a page uses it, so no request leaves this
-  console at run time. The generated form and the canvas do not fetch at all: they take a
-  schema and a graph as values, because there is no route that returns either.
+- **The header still says nothing about who is signed in.** The name is on the overview,
+  where it came from `GET /api/v1/me`, and it is not in the corner of every page. Putting it
+  in the header would mean the shell fetching on every route or holding the answer past the
+  moment it was true, and neither is worth a name in a corner. `tests/shell-navigation.test.tsx`
+  asserts the header carries no token material, and that stands.
+- **No form is submitted to anything.** The one form on a page collects a query and turns it
+  into an address. `SchemaForm`'s `onSubmit` hands back a record with the withheld names
+  stripped, and nothing sends one anywhere, because no route accepts a write.
 - **No error reporting, no analytics, no telemetry.**
 - **`vite.config.ts` is not typechecked**, deliberately: including it would mean adding
   `@types/node` and a second tsconfig. A mistake in it surfaces when the build fails rather
   than when `npm run typecheck` does.
-- **The lock sample on the overview page is temporary.** It exists so the lock can be seen
-  in both themes before any record renders. Delete it when a real record renders anywhere.
+- **Nobody has seen the lock in a browser, and there is now nowhere to look.** The sample
+  panel on the overview page has been deleted, as its own comment asked, because a real
+  record renders on `/records/{entity}`. The catch is that the deployed application registers
+  no row tool, so every entity answers 404 and no lock will render anywhere until one is
+  wired. What the suite proves is that the markup in a grid cell is byte-identical to a
+  standalone lock; what nobody has done is look at one on a screen.
 
 ---
 
@@ -541,14 +686,20 @@ was; items 1, 2, 4 and 5 of the original eight are now verified and are recorded
 5. **The cross-tab refresh race is not fixed and is not tested.** Two tabs cannot await
    each other's promise, and a test with one module graph cannot reproduce two tabs. See
    the section above for the two ways to fix it.
-6. **Nothing in the component layer has spoken to a route.** `GET /api/v1/records/{entity}`
-   exists and is what the grid's page shape was written against, and it answers 404 for every
-   entity on the deployed application because no row tool is registered. There is no endpoint
-   at all that returns a JSON Schema for a form or a graph for a run, so `formShape` and
-   `readGraph` are checked against shapes this console proposes. The names in them are the
-   part that has to be agreed with whoever writes those endpoints, and the failure mode of
-   disagreeing is quiet: a form with no fields, or a canvas with nothing on it, either of
-   which reads as a permission problem.
+6. **No row has ever come back from a real route.** The grid is mounted on
+   `GET /api/v1/records/{entity}` and the request it sends is checked against the route's own
+   OpenAPI document, but the deployed application registers no row tool, so every entity
+   answers 404 for everybody. That is the correct answer for an install with no data plane and
+   it is indistinguishable from a refusal, which is the property that matters; what it is not
+   is a row on a screen. Everything about how a payload renders, including which fields lock,
+   is checked against stand-in bodies in the shape `RecordPage` serialises.
+   There is still no endpoint that returns a JSON Schema for a form or a graph for a run. The
+   records query form is generated from a schema this console assembles out of the route's own
+   parameters, with the bounds checked against the route, so `formShape` runs over a real
+   document and never over one carrying a lock. `readGraph` is checked against a shape this
+   console proposes and against nothing else, and the failure mode of disagreeing with
+   whoever writes that endpoint is quiet: a canvas with nothing on it reads as a permission
+   problem.
 7. **Nothing on the canvas has been positioned by a browser.** jsdom runs no layout and has
    no `ResizeObserver`, so `tests/setup.ts` supplies one that observes nothing. React Flow
    therefore measures every node as having no size, renders them hidden, and draws no edges
@@ -562,8 +713,21 @@ was; items 1, 2, 4 and 5 of the original eight are now verified and are recorded
    has. The labels are real text and the group is labelled, and that is the whole of what can
    be claimed. A run that has to be readable without sight most likely wants the same trace
    rendered as a list beside it, and that is a decision rather than an omission.
-9. **No form has been submitted to anything.** `onSubmit` hands its caller a record with the
-   withheld names stripped, and no call site sends one anywhere.
+9. **No form has been submitted to anything but an address.** `onSubmit` hands its caller a
+   record with the withheld names stripped, and the one call site turns a query into a link.
+   Nothing writes.
+10. **The screens have been mounted and never opened.** The pages are exercised through the
+    real route table against a stand-in API, in jsdom, which paints nothing. That a grid with
+    fifteen columns is readable, that the query form's two fields sit where somebody expects
+    them, and that a lock is legible beside a value are all unchecked.
+11. **`npm audit` is clean at high and reports two moderate advisories against react-router**,
+    both of which cover every version from 6.0.0 to 7.17.0 and are fixed only by the 7.x
+    major. One of them, GHSA-wrjc-x8rr-h8h6, is an open redirect through a backslash reaching
+    `<Link>` and `useNavigate`, and the records screen is the first place in this console
+    where something a person typed reaches `navigate`. Every address it builds is a constant
+    `/records/` prefix and one encoded segment, which is asserted against a set of hostile
+    entity names; what has not been done is the upgrade, and the second advisory concerns SSR
+    hydration, which this application does not do.
 
 ---
 
@@ -620,6 +784,9 @@ by a function that refuses everything.
 | `tests/status-primitives.test.tsx` | The chip, the badge and the tone table, and that no other module turns a value into a colour. |
 | `tests/schema-form.test.tsx` | A generated form: the lock in place of a withheld field, the value that is never written back, the field the API did not send, and the credential nobody collects. |
 | `tests/trace-graph.test.tsx` | The canvas: the dangling edge, the packed layout, the absent step with no placeholder, and the read-only surface. |
+| `tests/overview-page.test.tsx` | The caller's own facts against `CallerView` in the Python source, absence contributing nothing, no invented lock, and a failure in the API's own words. |
+| `tests/records-page.test.tsx` | The request against the route's declared parameters, the column a withheld field still gets, the chrome that does not change with the number of rows, and the bounds against `brain.knowledge.rows`. |
+| `tests/bundle-split.test.ts` | The static import graph from `main.tsx`, and the four libraries that must not be in it. |
 
 **Several constants are checked against the thing they are a copy of, not against
 themselves.** That is the point of `tests/support/python.ts` and the realm parsing in
@@ -634,6 +801,13 @@ forbid in a comment in order to forbid it, so a substring search for
 `:root:not([data-theme="light"])` or for `.lock--out-of-scope` would be satisfied by the
 comment with the real rule gone. `tests/support/css.ts` strips comments and reads rules,
 and the theme test hands the selector it found to the browser's own matcher.
+
+**The request is checked against the API's own document, not against a spelling here.**
+`tests/support/openapi.ts` reads `src/api/generated/openapi.internal.json`, which
+`scripts/export-openapi.py` produces straight out of `create_app`. The query parameters the
+console sends and the bounds its form offers are both compared with it, because a type is
+erased at build time and a console that sent a parameter no route declares would compile,
+build and ship, with a filter that silently does nothing at the other end.
 
 **Parsing extends to the component layer, for the same reason.** `Badge.tsx` writes out
 `tone={ok ? "positive" : "critical"}` as the shape to refuse and `Status.tsx` writes out

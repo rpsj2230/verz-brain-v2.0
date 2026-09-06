@@ -89,6 +89,30 @@ export function backendModelFields(modulePath: string, className: string): strin
   return fields;
 }
 
+/**
+ * The bounds the row plane puts on a page size, from the module that enforces them.
+ *
+ * The console's query form offers a number, and a form that offers a number the route
+ * refuses spends a round trip producing `HTTPValidationError`, which is not `ErrorBody` and
+ * therefore reaches a person as the least useful sentence this console has. Read from
+ * `brain.knowledge.rows` rather than from the console's own constants, because two copies of
+ * a bound compared with each other are green for every value they could hold.
+ */
+export function backendRowLimits(): { max: number; fallback: number } {
+  const source = readRepoFile("src/brain/knowledge/rows.py");
+  return {
+    max: Number(extractOne(source, /^MAX_ROW_LIMIT: Final = (\d+)$/m, "MAX_ROW_LIMIT")),
+    fallback: Number(
+      extractOne(source, /^DEFAULT_ROW_LIMIT: Final = (\d+)$/m, "DEFAULT_ROW_LIMIT"),
+    ),
+  };
+}
+
+/** The caller's own facts, as `brain.api_routes.CallerView` declares them. */
+export function backendCallerViewFields(): string[] {
+  return backendModelFields("src/brain/api_routes.py", "CallerView");
+}
+
 /** The envelope every list endpoint returns. `brain.api.Page`. */
 export function backendPageFields(): string[] {
   return backendModelFields("src/brain/api.py", "Page");

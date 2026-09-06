@@ -170,6 +170,23 @@ export function pageQuery(request: PageRequest): string {
 }
 
 /**
+ * What joins a record id to a field name in a locked-cell key.
+ *
+ * **A character neither half can contain, so the join is reversible.** A record id matches
+ * `_RECORD_ID_RE` in `brain.core.redaction`, which is `[A-Za-z0-9_.@-]`, and a field name
+ * matches `_NAME_RE`, which is `[a-z][a-z0-9_]*`. A separator either of them could hold
+ * would make `contract value` and `contract` plus `value` the same key, and a grid would
+ * then lock a cell nobody withheld or fail to lock one somebody did.
+ *
+ * Written as an escape rather than as the character itself, and that is a repair rather
+ * than a preference. It was a literal NUL byte in this file until 2026-09-06: the same
+ * value, and not the same thing to work with. `grep`, `file` and everything else that stops
+ * at a NUL reported this module as binary, so the one module holding the lock lookup was
+ * the one module nobody could search.
+ */
+export const LOCKED_CELL_SEPARATOR = "\u0000";
+
+/**
  * How a locked cell is named, so a set of them can be looked up while rendering.
  *
  * Two parts joined rather than a nested map, because a lookup during render should be one
@@ -177,7 +194,26 @@ export function pageQuery(request: PageRequest): string {
  * name both come from the API.
  */
 export function lockedCellKey(recordId: string, field: string): string {
-  return `${recordId} ${field}`;
+  return `${recordId}${LOCKED_CELL_SEPARATOR}${field}`;
+}
+
+/**
+ * The field name inside a key `lockedCellKey` built. Its inverse, and beside it.
+ *
+ * **A grid whose columns are not known in advance cannot do without this**, because of the
+ * half of the lock rule that is easiest to miss: `brain.core.redaction` deletes a withheld
+ * key from the record rather than blanking it, and reports it separately in `locked`. So a
+ * column list derived only from the keys that arrived has no column for a withheld field,
+ * and the lock the API took the trouble to send renders nowhere at all. The lock is the
+ * product rather than an apology, so the field name has to come back out of the key.
+ *
+ * A key with no separator in it yields the empty string rather than the whole key. A column
+ * named after a whole key would be a column headed with somebody's record id, which is one
+ * row's fact printed across every row.
+ */
+export function fieldOfLockedCell(key: string): string {
+  const gap = key.indexOf(LOCKED_CELL_SEPARATOR);
+  return gap === -1 ? "" : key.slice(gap + LOCKED_CELL_SEPARATOR.length);
 }
 
 /**

@@ -10,14 +10,29 @@
  * exists precisely because there is no session, so guarding it would sign the person
  * straight back in and undo what they just did.
  *
+ * **A page may arrive after its address does.** The records route is code-split, so mounting
+ * it renders the shell's suspense fallback first and the heading a moment later. Every
+ * heading is therefore waited for rather than read once: a test that read it synchronously
+ * would find the empty string, and "the empty string is not the not-found page" is a check
+ * that passes for a route that never resolves at all.
+ *
  * Task ids: M32.5.1.2
  */
 
 import { RouterProvider, createMemoryRouter } from "react-router-dom";
 import { render, waitFor } from "@testing-library/react";
-import { describe, expect, test } from "vitest";
+import { beforeAll, describe, expect, test } from "vitest";
 import { NOT_FOUND_MESSAGE } from "../src/api/errors";
 import { loadConsole, signIn, type LoadedConsole } from "./support/auth";
+
+/**
+ * Transform the split route once, before anything is timed. See the same note in
+ * `tests/records-page.test.tsx`: the first mount of that chunk is the first time the form
+ * and table libraries are transformed, which is seconds and is not what is being measured.
+ */
+beforeAll(async () => {
+  await import("../src/pages/Records");
+}, 60_000);
 
 /** Mount the application's own route table at one address. */
 async function mountAt(path: string): Promise<HTMLElement> {
@@ -28,6 +43,17 @@ async function mountAt(path: string): Promise<HTMLElement> {
 
 function headingOf(container: HTMLElement): string {
   return container.querySelector("h1")?.textContent ?? "";
+}
+
+/** The heading an address settles on, once a split route's code has arrived. */
+async function headingAt(path: string): Promise<string> {
+  const container = await mountAt(path);
+  await waitFor(() => {
+    if (!container.querySelector("h1")) {
+      throw new Error(`${path} rendered no heading`);
+    }
+  });
+  return headingOf(container);
 }
 
 async function signedIn(): Promise<LoadedConsole> {
@@ -42,7 +68,7 @@ describe("addresses behind the guard", () => {
     // the frame and an empty main region, which reads as a page that failed to load rather
     // than as a missing route.
     await signedIn();
-    expect(headingOf(await mountAt("/"))).toBe("Overview");
+    expect(await headingAt("/")).toBe("Overview");
   });
 
   test("a deep link resolves to its page", async () => {
@@ -51,7 +77,16 @@ describe("addresses behind the guard", () => {
     // how the callback returns somebody to where they were, so a table that only matches
     // from the root breaks both.
     await signedIn();
-    expect(headingOf(await mountAt("/activity"))).toBe("Activity");
+    expect(await headingAt("/records")).toBe("Records");
+  });
+
+  test("a deep link carrying a path parameter resolves to its page", async () => {
+    // What breaks if this is deleted: the address stops being the state. The entity is a
+    // path segment on this route, so this is the case a person actually shares with a
+    // colleague, and a table that matched only the bare section would send them to a screen
+    // with no question asked on it and no sign that anything was dropped.
+    await signedIn();
+    expect(await headingAt("/records/clients")).toBe("Records");
   });
 
   test("every section in the navigation resolves to a page", async () => {
@@ -64,8 +99,12 @@ describe("addresses behind the guard", () => {
     expect(hrefs.length).toBeGreaterThan(1);
 
     for (const href of hrefs) {
-      const page = await mountAt(href ?? "/");
-      expect(headingOf(page), `${String(href)} does not resolve`).not.toBe("No such page");
+      const heading = await headingAt(href ?? "/");
+      expect(heading, `${String(href)} does not resolve`).not.toBe("No such page");
+      // And it resolved to something rather than to nothing: a split route that never
+      // finished loading would leave the heading empty, which is not the not-found page
+      // either and would satisfy the line above for ever.
+      expect(heading, `${String(href)} renders no heading`).not.toBe("");
     }
   });
 
@@ -96,12 +135,16 @@ describe("addresses behind the guard", () => {
     // sure a token exists before a page tries to use one; without it the console shows
     // refusals instead of a sign-in prompt.
     const loaded = await loadConsole();
-    const container = await mountAt("/activity");
+    const container = await mountAt("/records");
 
     await waitFor(() => {
       expect(loaded.location.assign).toHaveBeenCalled();
     });
     expect(container.textContent).toContain("Signing you in");
+    // And the page's own code was never asked for. The guard sits outside the suspense
+    // boundary, so a person with no session does not download a screen they are not going
+    // to be shown.
+    expect(container.querySelector("h1")).toBeNull();
     expect(loaded.location.lastAssigned().searchParams.get("response_type")).toBe("code");
   });
 });

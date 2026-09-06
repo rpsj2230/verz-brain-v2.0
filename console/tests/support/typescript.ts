@@ -21,8 +21,8 @@
  * which is the failure this whole directory is arranged to avoid.
  */
 
-import { readdirSync, readFileSync } from "node:fs";
-import { join, relative } from "node:path";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { dirname, join, relative, resolve } from "node:path";
 import ts from "typescript";
 import { CONSOLE_ROOT } from "./repo";
 
@@ -235,6 +235,125 @@ export function callOptionsOf(
     return options;
   }
   throw new Error(`No call to ${callee} in ${source.fileName}; the check has gone stale.`);
+}
+
+/** The package a module specifier belongs to, scope included. */
+export function packageOf(specifier: string): string {
+  const parts = specifier.split("/");
+  if (specifier.startsWith("@")) {
+    return parts.slice(0, 2).join("/");
+  }
+  return parts[0] ?? specifier;
+}
+
+/**
+ * Where a relative specifier resolves to, in the spellings a bundler tries.
+ *
+ * Throws when nothing matches, and that is the important half. A resolver that returned
+ * null for a module it could not find would silently prune the graph at exactly the point a
+ * refactor moved a file, and the check built on it would report a smaller graph and pass.
+ */
+function resolveRelative(fromFile: string, specifier: string): string {
+  const base = resolve(CONSOLE_ROOT, dirname(fromFile), specifier);
+  const candidates = [base, `${base}.ts`, `${base}.tsx`, join(base, "index.ts"), join(base, "index.tsx")];
+  for (const candidate of candidates) {
+    if (existsSync(candidate) && !isDirectory(candidate)) {
+      return relative(CONSOLE_ROOT, candidate).split("\\").join("/");
+    }
+  }
+  throw new Error(
+    `${fromFile} imports ${specifier}, which resolves to nothing on disk. The import graph ` +
+      "cannot be walked past this point, so anything checked against it is incomplete.",
+  );
+}
+
+/** Whether a path is a directory. `existsSync` alone would accept the folder itself. */
+function isDirectory(path: string): boolean {
+  try {
+    readdirSync(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** What one module reaches without a dynamic import: other files, and packages. */
+export interface ImportGraph {
+  /** Every hand-written module reachable by static import, forward-slashed. */
+  readonly files: readonly string[];
+  /** Every bare specifier reached, as its package name. */
+  readonly packages: readonly string[];
+}
+
+/**
+ * What an entry module pulls in through static imports only.
+ *
+ * **`import()` expressions are deliberately not followed**, because they are the split
+ * points: a module reached only through one lands in its own chunk and is not in the entry.
+ * This is the only way to state "that library is not in the first response" as a property
+ * of the source rather than as a number in a build log that nobody reads twice.
+ *
+ * Type-only imports are skipped, both the `import type` form and individual `type` members
+ * inside a named import list. `verbatimModuleSyntax` is on in this project, so a type import
+ * is written as one and is erased: counting it would mean the graph reported a runtime
+ * dependency on a module that contributes no runtime code at all, which is exactly what
+ * `src/api/schema.ts` does with the generated file.
+ */
+export function staticImportGraph(entry: string): ImportGraph {
+  const files: string[] = [];
+  const packages = new Set<string>();
+  const seen = new Set<string>();
+
+  const visit = (path: string): void => {
+    if (seen.has(path)) {
+      return;
+    }
+    seen.add(path);
+    files.push(path);
+    if (!path.endsWith(".ts") && !path.endsWith(".tsx")) {
+      // A stylesheet or an asset. It is part of the graph and has no imports to read.
+      return;
+    }
+    const source = parseConsoleSource(path);
+    for (const statement of source.statements) {
+      let specifier: string | undefined;
+      if (ts.isImportDeclaration(statement) && !statement.importClause?.isTypeOnly) {
+        const bindings = statement.importClause?.namedBindings;
+        const everyMemberIsAType =
+          bindings !== undefined &&
+          ts.isNamedImports(bindings) &&
+          bindings.elements.length > 0 &&
+          bindings.elements.every((element) => element.isTypeOnly);
+        if (!everyMemberIsAType && ts.isStringLiteral(statement.moduleSpecifier)) {
+          specifier = statement.moduleSpecifier.text;
+        }
+      } else if (
+        ts.isExportDeclaration(statement) &&
+        !statement.isTypeOnly &&
+        statement.moduleSpecifier &&
+        ts.isStringLiteral(statement.moduleSpecifier)
+      ) {
+        specifier = statement.moduleSpecifier.text;
+      }
+      if (specifier === undefined) {
+        continue;
+      }
+      if (specifier.startsWith(".")) {
+        visit(resolveRelative(path, specifier));
+      } else {
+        packages.add(packageOf(specifier));
+      }
+    }
+  };
+
+  visit(entry);
+  if (files.length < 2) {
+    throw new Error(
+      `${entry} reaches nothing. Either the entry moved or the walk stopped immediately, ` +
+        "and a graph of one file satisfies every check written against it.",
+    );
+  }
+  return { files, packages: [...packages] };
 }
 
 /**
