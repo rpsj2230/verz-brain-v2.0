@@ -163,8 +163,20 @@ class TimeoutMiddleware:
             )
 
 
-#: Attached to every route so the generated schema documents one shape rather than
-#: FastAPI's default per-route guess.
+#: What every route under `API_PREFIX` must declare, so the generated schema documents one
+#: shape rather than FastAPI's default per-route guess.
+#:
+#: **Attached to nothing today, and the previous comment said "attached to every route".**
+#: There are no routes under `API_PREFIX` at all, so the sentence was true only in the
+#: vacuous sense and read as a description of the deployed application. It is stated as an
+#: obligation on routes rather than a claim about them until there are some.
+#:
+#: The health endpoints deliberately do not use it: they answer with `Health` and a 503 from
+#: `/health/ready` means "a dependency is unreachable", which is a different thing from the
+#: 503 here and would be a worse schema for saying so in the same words.
+#:
+#: `test_a_route_under_the_api_prefix_declares_the_common_error_shape` fails the day the
+#: first route appears without it, rather than passing quietly over an empty list.
 COMMON_RESPONSES: dict[int | str, dict[str, Any]] = {
     404: {
         "model": ErrorBody,

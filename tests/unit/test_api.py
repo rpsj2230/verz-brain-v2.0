@@ -181,3 +181,35 @@ def test_the_deadline_sits_inside_the_tracing_middleware() -> None:
     assert positions["trace"] < positions[TimeoutMiddleware.__name__], (
         f"the deadline is outside tracing, so a timed-out response has no id: {names}"
     )
+
+
+def test_a_route_under_the_api_prefix_declares_the_common_error_shape() -> None:
+    """**A forcing function, written while there is nothing to force.** `COMMON_RESPONSES`
+    described itself as "attached to every route" and was attached to none, because there are
+    no routes under `API_PREFIX` yet. The sentence was true vacuously and read as a
+    description of the deployed application.
+
+    A test that walks an empty list and passes is the shape this repository keeps finding, so
+    the emptiness is asserted rather than assumed. The day somebody mounts the first API
+    route, the first assertion fails and they have to come here, which is the point: the
+    generated OpenAPI is what the console's typed client is built from, and a route that
+    documents no error shape gives the console nothing to handle failures against.
+
+    Delete this and the first route lands with FastAPI's default per-route guess, which
+    describes a validation error and not this system's taxonomy, and the console's error
+    handling is typed against a shape the server never sends."""
+    app: FastAPI = create_app(Settings(env="development"))
+    api_routes = [r for r in app.routes if str(getattr(r, "path", "")).startswith(API_PREFIX)]
+
+    if not api_routes:
+        assert API_PREFIX not in {getattr(r, "path", "") for r in app.routes}, (
+            "a route now exists under the API prefix; give it COMMON_RESPONSES and rewrite "
+            "this test to assert over the real routes"
+        )
+        return
+
+    for route in api_routes:
+        declared = getattr(route, "responses", {})
+        missing = sorted(set(COMMON_RESPONSES) - set(declared))
+        where = getattr(route, "path", route)
+        assert not missing, f"{where} documents no shape for {missing}"
