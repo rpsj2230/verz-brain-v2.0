@@ -387,6 +387,12 @@ class ParseCause(enum.StrEnum):
     #: A PDF with no text layer. It is not broken; it is a photograph of a document, and the
     #: remedy is the OCR path rather than a re-upload.
     NO_TEXT_LAYER = "no_text_layer"
+    #: The OCR path ran and what came back is too unsure to index. Separate from
+    #: `NO_TEXT_LAYER` because the remedy is the one thing that member's wording rules out: it
+    #: tells the uploader the scanned-document path is what this file needs, and by the time
+    #: this cause is produced that path has already run and answered badly. Added with
+    #: `brain.knowledge.parse_ocr`, which is the only place that reaches it.
+    ILLEGIBLE = "illegible"
     TIMED_OUT = "timed_out"
     #: The parse worker hit its memory ceiling. Named separately from a timeout because the
     #: remedy differs: a smaller document, not a second attempt.
@@ -413,6 +419,10 @@ CAUSE_TEXT: Final[dict[ParseCause, str]] = {
     ParseCause.NO_TEXT_LAYER: (
         "the file is a scan with no text in it. "
         "It needs the scanned-document path rather than a re-upload."
+    ),
+    ParseCause.ILLEGIBLE: (
+        "the file is a scan and too little of it could be read to be worth searching. "
+        "Upload a clearer scan, or a copy that has text in it rather than a photograph."
     ),
     ParseCause.TIMED_OUT: (
         "the file took longer to read than the parser is allowed. Upload it again, and if it "
