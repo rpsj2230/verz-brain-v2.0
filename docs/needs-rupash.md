@@ -2,9 +2,11 @@
 
 Decisions and access I cannot resolve alone. Served at `/build/needs-rupash`.
 
-**2 items are open: 32 and 33.** 32 is three passwords, and it is what stands between the
+**3 items are open: 32, 33 and 34.** 32 is three passwords, and it is what stands between the
 console and a working sign-in. 33 is one sentence from you about what "shadow-pinned thirty
-days" means, and it decides a safety property rather than a feature. Answering 29 turned up that there is no
+days" means, and it decides a safety property rather than a feature. 34 is new today and it
+blocks local embedding: the model we chose produces vectors of one width and the corpus column
+holds another, and which of the two moves is a decision with a cost. Answering 29 turned up that there is no
 Keycloak deployed at all, which is the real reason nobody can sign in. It is written and
 sized from measurement now; it needs three secrets I will not create on your behalf.
 
@@ -40,6 +42,42 @@ in.
 ---
 
 # Open
+
+## 34. The embedding model is 1024 dimensions and the corpus column is 1536 - which moves?
+
+**This blocks local embedding, and it is a schema decision rather than a setting.**
+
+The knowledge corpus stores a vector per chunk in a column declared `VECTOR(1536)`. That width
+was chosen for a hosted model, `text-embedding-3-small`, before item 31 decided that embedding
+would run locally behind the inference server. The model that decision names,
+Qwen3-Embedding-0.6B, produces 1024 dimensions. Its published truncation only shortens a
+vector, so no setting on the far side turns 1024 into 1536.
+
+**Nothing is quietly wrong in the meantime.** The width is part of the column's type, so
+PostgreSQL refuses a vector of the wrong size on insert rather than storing something
+meaningless, and the code now reports the disagreement in words before anything is sent. The
+figure of 1024 is from the published model card and has not been verified here, because no
+weights have been pulled on this host; if it is wrong, the check reads the real width off the
+server's own response rather than believing what we asked for.
+
+Three ways out, and the cost is different in each.
+
+- **Narrow the column to 1024 and re-embed.** A migration that alters the column and rebuilds
+  the vector index, plus a re-embed of every chunk. Today that second cost is nearly nothing,
+  because no chunk has ever been embedded. It stops being nearly nothing the moment the first
+  real document is ingested, which is the argument for deciding this now rather than later.
+- **Serve a wider local model.** The larger models in the same family are wider still, and
+  pgvector will index at most 2,000 dimensions whatever it will store, so this route means a
+  different family rather than a bigger Qwen3.
+- **Keep the column at 1536 and keep embedding hosted.** Honest, and it gives back the reason
+  item 31 chose to run models locally in the first place.
+
+**What I need is one sentence saying which.** I have not picked for you, and the reason is that
+it interacts with 25 and 31: the inference container is still about 3.3 GB over what this host
+has, and "a smaller embedding model" was already one of the three ways out of that. Choosing a
+column width before choosing the model would spend the same migration twice.
+
+---
 
 ## 33. "Shadow-pinned thirty days" - which of the two things does it mean?
 
