@@ -2,13 +2,15 @@
 
 Decisions and access I cannot resolve alone. Served at `/build/needs-rupash`.
 
-**4 items are open: 24, 25, 26 and 28.** 28 is new and it is the only one with a live
-cost: production is restarting roughly every three minutes and I can tell you exactly why,
-but the fix is a change to your Coolify configuration. The other three block nothing. 24 is a disclosure trade-off that starts to
+**4 items are open: 24, 25, 26 and 28.** 28 is the only one with a live cost, and it is now
+one command rather than a configuration puzzle: production is being recreated every three
+minutes by an old deploy timer of mine that I replaced but never switched off. The
+diagnosis on this page was wrong until this morning and is corrected there, along with the
+command. The other three block nothing. 24 is a disclosure trade-off that starts to
 matter when people with narrow permissions begin using the system, which is wave 4. 25 is a
-measured capacity limit that needs a decision before wave 4 rather than during it. 26 is a
-product question about the website widget, and the machinery around it is being built
-either way.
+measured capacity limit that needs a decision before wave 4 rather than during it, and its
+own arithmetic has been re-measured and corrected too. 26 is a product question about the
+website widget, and the machinery around it is being built either way.
 
 Everything else on this page is decided. It is kept as a record: each item states what the
 problem was, what was built, and why, so the reasoning outlives the conversation it happened
@@ -18,45 +20,60 @@ in.
 
 # Open
 
-## 28. Production restarts every few minutes, and the cause is one redundant service
+## 28. Production restarts every few minutes, and it is a leftover timer of mine
 
-**Nothing is broken and nothing is lost.** The app is healthy, it is serving the right
-commit, and every restart passes its health check. But it is being recreated roughly every
-three minutes, which drops in-flight requests and is not a state to leave a system in.
+**Corrected on 2026-09-06. The earlier diagnosis on this page was wrong, and it was wrong
+because I checked one of two things that could have caused it.** What follows replaces it.
 
-**What is happening, measured rather than guessed.** Your Coolify stack defines a `migrate`
-service: a one-shot container that applies database migrations and then exits. It exits with
-status 0, which is success. Coolify reads any exited container in a project as a service that
-needs repair, and heals it by bringing the whole project up again, which recreates the `app`
-container underneath it. Then the one-shot exits again, and the cycle repeats.
+**Nothing is broken and nothing is lost.** The app is healthy and serving the right commit,
+and every recreate passes its health check within about eight seconds. But it is being
+recreated every three minutes and is briefly unreachable each time, which drops in-flight
+requests.
 
-I confirmed each link rather than inferring the chain: `migrate` carries `restart: 'no'`, so
-Docker itself is not restarting it; the app container shows a restart count of zero with a
-`StartedAt` that moves every few minutes, which is recreation and not restart; and my own
-deploy timer logged no deploys across the same window, so it is not me.
+**The cause: there are two deploy timers on your server, and the old one redeploys
+unconditionally.**
 
-**The fix is one deletion, and it is safe.** The `migrate` service is redundant. The
-application already applies migrations itself at startup, before it reports ready, under an
-advisory lock so that two replicas cannot race each other. That is in `brain/app.py` and you
-can see it in the container's own log: `migrations up to date` appears on every boot. So the
-one-shot is doing the same work a second time and buying nothing.
+| Timer | Interval | Behaviour |
+|---|---|---|
+| `brain-autodeploy.timer` | 2 min | Correct. Compares the pulled image against the running one and does nothing when they match. |
+| `brain-deploy.timer` | 3 min | **The problem.** Pulls and recreates the container every single run, whether or not anything changed. |
 
-Removing the `migrate` service from Coolify's stored compose ends the loop, because there is
-then no permanently-exited container for Coolify to keep healing.
+`brain-deploy` is the older script, the one with the redeploy-loop bug. I rewrote it as
+`brain-autodeploy` and installed that. **I never disabled the old timer,** so both have been
+running side by side ever since, and the old one has been recreating production every three
+minutes.
 
-**Why I have not done it.** That file is your infrastructure configuration rather than this
-repository's, and editing it changes how your server brings the stack up. It is also the file
-the memory note about Coolify resolving `${VAR:-default}` at save time is about, so an edit
-made carelessly can change more than the line it touches. It is yours to make.
+**How I know, rather than inferring it.** The recreate is logged by the process that did it.
+At 08:28:39 `brain-deploy.service` started; at 08:28:42 it logged `pulling` and `deploying`;
+at 08:28:42 to 08:28:44 it logged `Recreate`, `Recreated`, `Starting`, `Started` against the
+app container; Docker's own event stream shows the matching create/kill/die/destroy/start
+burst at 08:28:43. Across the same window `brain-autodeploy` ran twice, at 08:27:07 and
+08:29:17, and deployed nothing both times.
 
-**What I did do.** My deploy script now recreates only `app` and no longer touches `migrate`,
-so it stops adding to the churn. That does not fix it: Coolify heals the exited container
-whether or not my script goes near it.
+**Why the previous answer was wrong.** It blamed Coolify healing an exited one-shot `migrate`
+container, and its evidence line said "my own deploy timer logged no deploys across the same
+window, so it is not me". That check was real, and it looked at `brain-autodeploy`. It never
+occurred to me to ask whether there was a second timer. There was, it was also mine, and it
+was the one doing it. The `migrate` service is not involved: the current compose has no
+`migrate` service at all.
 
-**How to do it, when you want to.** Open the Brain service in Coolify, edit the compose, delete
-the whole `migrate:` block, and save. Then check the app comes up and the log still says
-`migrations up to date`. If you would rather I prepared the exact edit for you to review
-first, say so and I will write it out line by line.
+**The fix is one command, and it is reversible.**
+
+```
+sudo systemctl disable --now brain-deploy.timer
+```
+
+`brain-autodeploy.timer` already does the job properly and is unaffected. It deployed
+tonight's work correctly seven times, most recently `db2a227`, healthy in eight seconds. If
+anything goes wrong, `sudo systemctl enable --now brain-deploy.timer` puts the old one back.
+
+**Why I have not run it.** Changing systemd units on your production host is outside what I
+am permitted to do unattended, and the guard that stopped me is the right guard. It is one
+command and the diagnosis above is measured, so it should take you a minute.
+
+**Worth doing afterwards, and not urgent:** remove `/usr/local/bin/brain-deploy` as well, so
+the next person reading `/usr/local/bin` does not find two scripts that look
+interchangeable and re-enable the wrong one.
 
 ---
 
