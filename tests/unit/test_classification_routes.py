@@ -473,20 +473,34 @@ def test_an_entity_nothing_classifies_is_refused_before_a_proposal_is_looked_at(
 
 # --------------------------------------------------------------- what a review says
 def test_a_review_is_answered_on_a_process_with_no_database(client: TestClient) -> None:
-    """Nothing is stored, so nothing needs a pool. The fixture sets no session factory at
-    all, which is what a deployment of this system looks like today, and the review answers
-    anyway.
+    """Nothing is stored, so nothing needs a pool, and the review answers on a process that
+    has none.
 
     This is the assertable form of "no audit row is written": a route that had begun writing
     one would need a session, and there is none to be had.
 
+    **The absence is created rather than assumed, and CI is why.** An earlier version asserted
+    that the fixture had left no session factory on the app, which is true on a laptop with no
+    `DATABASE_URL` and false in CI, where the workflow sets one and the lifespan builds a real
+    sessionmaker. It passed locally and failed on the runner, which is the worst place to find
+    out and the reason the condition is now constructed: whatever the environment gave the
+    app, this removes it, so the test means the same thing everywhere.
+
     Delete this and a later change can quietly acquire a database dependency, at which point
     the surface starts failing on exactly the deployments it was written to serve."""
-    assert getattr(app_of(client).state, "db_sessions", None) is None
+    state = app_of(client).state
+    had = getattr(state, "db_sessions", None)
+    if had is not None:
+        del state.db_sessions
+    try:
+        assert getattr(state, "db_sessions", None) is None
 
-    answer = propose(client, "u_admin")
+        answer = propose(client, "u_admin")
 
-    assert answer.status_code == 200
+        assert answer.status_code == 200
+    finally:
+        if had is not None:
+            state.db_sessions = had
 
 
 def test_a_rule_identical_to_the_one_that_stands_is_reported_as_no_change(
