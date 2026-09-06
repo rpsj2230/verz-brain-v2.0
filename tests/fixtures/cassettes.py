@@ -55,7 +55,18 @@ class RateLimit:
 
 
 RATE_LIMITS: tuple[RateLimit, ...] = (
-    RateLimit(Source.XERO, 5_000, "day per tenant", "Also 60/minute. Resets 00:00 NZT.", True),
+    RateLimit(
+        Source.XERO,
+        5_000,
+        "day per tenant",
+        "Also 60/minute. Resets 00:00 NZT. Not raisable, and this file said it was until "
+        "2026-09-06: the ceiling sits on the client's tenant and is shared with every other "
+        "integration they run, so no plan we can buy moves it and the only lever is asking "
+        "for less. `brain.ops.limits.SOURCE_CEILINGS` had the correct value and the argument "
+        "for it the whole time; the two records simply disagreed, and the disagreement was "
+        "found by a connector being written against both at once.",
+        False,
+    ),
     RateLimit(
         Source.LARK_BASE,
         100,
