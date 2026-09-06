@@ -11,7 +11,7 @@ the fake. Where a case turns on wildcard coverage or on expiry, it is built from
 `Capability` and the real `not_after`, because those are the two places the composition is
 easy to get subtly wrong.
 
-Task ids: M16.1.1, M16.1.4, M16.1.5
+Task ids: M16.1.1, M16.1.4, M16.1.5, M16.4.1, M16.4.4
 """
 
 from __future__ import annotations

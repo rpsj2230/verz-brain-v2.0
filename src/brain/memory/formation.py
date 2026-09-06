@@ -47,7 +47,16 @@ below the floor stops being recalled and stays on the record, because the reason
 mattering is worth being able to look up, and because a system that deleted what it stopped
 trusting would have no way to show somebody why it changed its mind.
 
-Task ids: M16.1.1, M16.1.4, M16.1.5
+**Two of M16.4's leaves are here rather than in `correction.py`, and that is not an accident
+of where they were written.** Time decay reducing confidence below the retrieval threshold is
+`confidence_now` and `RECALL_FLOOR`, and entitlement expiry is `may_recall` going through
+`scope_for`, which refuses a principal past their bound. Both are properties of recall itself:
+they decide whether a memory is reached at all, on every read, with nothing recorded anywhere.
+`correction.py` handles the other two, where something positively contradicts a memory and a
+record is written about it. Putting decay beside supersession would suggest they work the same
+way, and they do not: one is arithmetic on the clock and the other is a row.
+
+Task ids: M16.1.1, M16.1.4, M16.1.5, M16.4.1, M16.4.4
 """
 
 from __future__ import annotations
