@@ -72,6 +72,12 @@ from brain.tables.identity import (
 )
 from brain.tables.memory import AdaptiveMemoryRow, PersistentMemoryRow
 from brain.tables.projection import ProjectedRecordRow
+from brain.tables.resolution import (
+    CanonicalEntityRow,
+    EntityAliasRow,
+    EntityIdentifierRow,
+    EntityLinkRow,
+)
 from brain.tables.routing import ModelAttemptRow, RoutingRungRow, RoutingTierRow
 from brain.tables.template import TemplateInstanceRow, TemplateVersionRow
 from brain.tables.upgrade import UpgradeDeclineRow
@@ -137,6 +143,16 @@ TABLES_IN_DEPENDENCY_ORDER: tuple[str, ...] = (
     # question shape depend on a record having been fetched, which is backwards. A rule for a
     # source nothing has projected yet is a rule that matches and answers nothing.
     "gate.fast_path_rule",
+    # 0020_entity_resolution. `er.canonical` first, because the other three carry a foreign
+    # key into it and it carries one into itself: `merged_into` is a self-reference, which is
+    # what makes an issued id impossible to forward into nothing. None of the four keys into
+    # `proj.record`, deliberately: a link is a statement about a source record and
+    # `proj.record` is a bounded cache of one, so a key would make the resolution graph
+    # depend on a cache having been filled. 0019 refuses the same key for the same reason.
+    "er.canonical",
+    "er.alias",
+    "er.identifier",
+    "er.link",
 )
 
 __all__ = [
@@ -144,6 +160,7 @@ __all__ = [
     "AdaptiveMemoryRow",
     "AgentRow",
     "AuditEntryRow",
+    "CanonicalEntityRow",
     "CapabilityGrantRow",
     "CapabilityPackAssignmentRow",
     "CapabilityPackRow",
@@ -151,6 +168,9 @@ __all__ = [
     "ConversationRow",
     "DepartmentRow",
     "DirectoryRoleGrantRow",
+    "EntityAliasRow",
+    "EntityIdentifierRow",
+    "EntityLinkRow",
     "FastPathRuleRow",
     "FieldPolicyRow",
     "GrantsVersionRow",

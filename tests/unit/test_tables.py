@@ -84,6 +84,7 @@ MIGRATION_TEMPLATE = VERSIONS / "0016_template.py"
 MIGRATION_DECLINE = VERSIONS / "0017_upgrade_decline.py"
 MIGRATION_MEMORY = VERSIONS / "0018_memory_stores.py"
 MIGRATION_FAST_PATH = VERSIONS / "0019_fast_path_rule.py"
+MIGRATION_RESOLUTION = VERSIONS / "0020_entity_resolution.py"
 
 #: The seven tables 0002 built, in the order it builds them. Written out here rather than
 #: read from `brain.tables.TABLES_IN_DEPENDENCY_ORDER`, which covers every table in the
@@ -166,6 +167,18 @@ MEMORY_TABLES: tuple[str, ...] = ("mem.persistent", "mem.adaptive")
 #: `tests/unit/test_fast_lane.py`.
 FAST_PATH_TABLES: tuple[str, ...] = ("gate.fast_path_rule",)
 
+#: And the four 0020 adds: the canonical model entity resolution decides against.
+#: `er.canonical` first, because the other three point at it and it points at itself - the
+#: forwarding pointer is a self-referencing key, which is what makes an issued id impossible
+#: to forward into a row that is not there. Their own properties, including the four that keep
+#: a merge from widening anybody's reach, are in `tests/unit/test_resolution_tables.py`.
+RESOLUTION_TABLES: tuple[str, ...] = (
+    "er.canonical",
+    "er.alias",
+    "er.identifier",
+    "er.link",
+)
+
 ALL_TABLES = (
     CORE_TABLES
     + RESOLVER_TABLES
@@ -179,6 +192,7 @@ ALL_TABLES = (
     + DECLINE_TABLES
     + MEMORY_TABLES
     + FAST_PATH_TABLES
+    + RESOLUTION_TABLES
 )
 
 
@@ -869,6 +883,7 @@ def test_the_migration_creates_exactly_the_tables_the_models_declare() -> None:
     decline = migration_module(MIGRATION_DECLINE)
     memory = migration_module(MIGRATION_MEMORY)
     fast_path = migration_module(MIGRATION_FAST_PATH)
+    resolution = migration_module(MIGRATION_RESOLUTION)
     assert core.TABLES == CORE_TABLES
     assert resolver.TABLES == RESOLVER_TABLES
     assert registry.TABLES == REGISTRY_TABLES
@@ -881,6 +896,7 @@ def test_the_migration_creates_exactly_the_tables_the_models_declare() -> None:
     assert decline.TABLES == DECLINE_TABLES
     assert memory.TABLES == MEMORY_TABLES
     assert fast_path.TABLES == FAST_PATH_TABLES
+    assert resolution.TABLES == RESOLUTION_TABLES
     # The package tuple is the migrations end to end. Stated as an equality rather than as a
     # set comparison, because the order is what a downgrade depends on.
     end_to_end = (
@@ -896,6 +912,7 @@ def test_the_migration_creates_exactly_the_tables_the_models_declare() -> None:
         + tuple(decline.TABLES)
         + tuple(memory.TABLES)
         + tuple(fast_path.TABLES)
+        + tuple(resolution.TABLES)
     )
     assert end_to_end == tables.TABLES_IN_DEPENDENCY_ORDER
     # Every table has a migration and every migration has a model. The union is the check
@@ -913,6 +930,7 @@ def test_the_migration_creates_exactly_the_tables_the_models_declare() -> None:
         set(decline.TABLES),
         set(memory.TABLES),
         set(fast_path.TABLES),
+        set(resolution.TABLES),
     )
     assert set().union(*every) == set(metadata.tables)
     assert sum(len(s) for s in every) == len(set().union(*every)), "a table is created twice"
