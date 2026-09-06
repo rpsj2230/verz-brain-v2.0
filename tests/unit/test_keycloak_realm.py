@@ -265,6 +265,65 @@ def test_the_scope_the_console_uses_maps_the_two_claims_the_code_reads() -> None
     assert {"groups", "department"} <= mapped, f"brain-identity maps {mapped}"
 
 
+def test_the_audience_the_api_demands_is_minted_into_the_console_s_own_tokens() -> None:
+    """**The realm was broken here and every test passed.** `validate_token` refuses a token
+    whose `aud` does not contain the expected audience, with `TokenRefusal.WRONG_AUDIENCE`.
+    An `oidc-audience-mapper` is what puts it there, and where that mapper sits decides
+    whether it ever runs.
+
+    It sat in `brain-api`'s own `protocolMappers`. A dedicated mapper applies to tokens
+    issued **for** that client, and `brain-api` has standardFlow, directAccess,
+    serviceAccounts and implicit all disabled, because it is a resource server nobody signs
+    in to. So no token was ever issued for it, the mapper could never fire, and the console's
+    tokens would have carried no audience for the API at all. Every sign-in would have
+    succeeded at Keycloak and then been refused by this system, which reads as "login is
+    broken" and is nowhere near the file that caused it.
+
+    The mapper's own `_comment` described exactly that failure as the thing it existed to
+    prevent. It is this repository's most common defect in its purest form: correct,
+    documented, and never invoked.
+
+    The two checks either side of this one could not see it. One asserts every scope a client
+    asks for is defined, and the mapper was not in a scope. The other asserts `brain-identity`
+    maps groups and department, and would pass with no audience mapper anywhere in the file.
+    Nothing joined the audience the code demands to the client that actually signs in.
+
+    So this test walks the join: take the audience from the client that a person authenticates
+    through, follow its default scopes, and require a mapper reached that way to mint it.
+    Asserting the mapper is merely present somewhere would pass again on the day somebody
+    moves it back.
+
+    Delete this and the mapper can return to a client that mints no tokens, which is where it
+    was written in the first place and looks like the obvious place for it."""
+    realm = _realm()
+    clients = {c["clientId"]: c for c in realm.get("clients", [])}
+    scopes = {s["name"]: s for s in realm.get("clientScopes", [])}
+
+    console = clients["brain-console"]
+    assert console.get("standardFlowEnabled") is True, (
+        "this test assumes the console is the client a person signs in through"
+    )
+
+    # Every mapper that can reach a token minted for the console: its own dedicated ones,
+    # plus those on the scopes it carries by default. An optional scope is deliberately not
+    # counted, because the console would have to ask for it and nothing here asks.
+    reachable = list(console.get("protocolMappers") or [])
+    for name in console.get("defaultClientScopes") or []:
+        reachable.extend(scopes.get(name, {}).get("protocolMappers") or [])
+
+    audiences = {
+        m.get("config", {}).get("included.client.audience")
+        for m in reachable
+        if m.get("protocolMapper") == "oidc-audience-mapper"
+        and m.get("config", {}).get("access.token.claim") == "true"
+    }
+
+    assert "brain-api" in audiences, (
+        "no audience mapper reachable from brain-console mints aud=brain-api, so "
+        f"validate_token refuses every token it issues; reachable audiences: {audiences}"
+    )
+
+
 def test_the_realm_is_the_one_the_application_expects() -> None:
     """A realm renamed is every issuer wrong at once, and the failure is a token rejected
     with no explanation of which end moved."""

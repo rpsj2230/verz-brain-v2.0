@@ -189,6 +189,17 @@
             "access.token.claim": "true",
             "userinfo.token.claim": "true"
           }
+        },
+        {
+          "name": "brain-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "brain-api",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          },
+          "_comment": "Without an explicit audience mapper, a token minted for the console carries no aud for the API, and validate_token refuses it. That refusal is correct: a token is issued for a party, and accepting one issued for somebody else is the confused deputy. This sits on the brain-identity client scope rather than on brain-api's own protocolMappers, where it was first written. A dedicated mapper applies to tokens issued FOR that client, and brain-api has standardFlow, directAccess, serviceAccounts and implicit all disabled, so no token is ever issued for it and the mapper could never fire. The comment above described precisely the failure its own placement guaranteed: every console sign-in would have completed at Keycloak and then been refused by validate_token for WRONG_AUDIENCE. brain-console carries brain-identity as a default client scope, so here it applies to exactly the tokens that need it."
         }
       ]
     }
@@ -268,19 +279,8 @@
         "access.token.signed.response.alg": "RS256",
         "id.token.signed.response.alg": "RS256"
       },
-      "protocolMappers": [
-        {
-          "name": "brain-api-audience",
-          "protocol": "openid-connect",
-          "protocolMapper": "oidc-audience-mapper",
-          "config": {
-            "included.client.audience": "brain-api",
-            "id.token.claim": "false",
-            "access.token.claim": "true"
-          },
-          "_comment": "Without an explicit audience mapper, a token minted for the console carries no aud for the API, and validate_token refuses it. That refusal is correct: a token is issued for a party, and accepting one issued for somebody else is the confused deputy."
-        }
-      ]
+      "protocolMappers": [],
+      "_comment": "No dedicated mappers, deliberately. The brain-api-audience mapper lived here and could never fire: a dedicated mapper applies to tokens issued for its own client, and every flow on this one is disabled because it is a resource server that nobody signs in to. It now sits on the brain-identity client scope, which brain-console carries by default."
     },
     {
       "clientId": "brain-sync",
