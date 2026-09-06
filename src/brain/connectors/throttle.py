@@ -51,6 +51,7 @@ from brain.connectors.manifest import ConnectorManifest
 from brain.core.envelope import SideEffect
 from brain.models.routing import CircuitBreaker
 from brain.ops.limits import (
+    MAX_BACKOFF_SECONDS,
     ConnectorLimit,
     Limit,
     backoff_seconds,
@@ -80,6 +81,25 @@ A_QUOTA_REFUSAL_IS_NOT_ILL_HEALTH = (
     "is a longer cooldown, which makes it worse. The two failures also have opposite "
     "remedies: a breaker protects us from a dead source, and a quota refusal protects the "
     "source from us."
+)
+
+#: Why a refusal that named no wait is given the longest one rather than none.
+A_SOURCE_THAT_SAID_NOTHING_DID_NOT_SAY_ZERO = (
+    "brain.ops.limits.backoff_seconds multiplies the figure it is handed, so a refusal "
+    "carrying no Retry-After header multiplies zero and returns zero however many refusals "
+    "came before it. The doubling looks like a backoff and produces none, and the client that "
+    "comes back immediately is the one that turns a burst into a rate limit and then keeps it "
+    "there, which is the failure this module exists to prevent. backoff_seconds is not the "
+    "bug: it is handed a measured time until the window has room, and zero is a truthful "
+    "answer to that question. The bug is the conversion at the boundary, where a header "
+    "nobody sent becomes a float that means the opposite of what happened. So the parameter "
+    "here is float | None and the distinction is carried by the type: a float is a figure "
+    "somebody measured, None is the absence of one, and there is no call site left to write "
+    "retry_after(headers) or 0.0 in. A stated zero is floored too, because a 429 is a refusal "
+    "by definition and no refusal is ever honestly answered by returning at once. The "
+    "substituted figure is the platform's own MAX_BACKOFF_SECONDS rather than one chosen "
+    "here, and it is deliberately the long end: guessing low spends what is left of a daily "
+    "allowance faster, while a wait that is too long costs one question its freshness."
 )
 
 #: Why a percentile is nearest-rank rather than interpolated.
@@ -191,8 +211,14 @@ def is_retryable(
     return verifies_write
 
 
+#: What a refusal that stated no wait, or stated a zero, is treated as having asked for. The
+#: platform's own ceiling rather than a figure invented here. See
+#: `A_SOURCE_THAT_SAID_NOTHING_DID_NOT_SAY_ZERO`.
+RETRY_AFTER_WHEN_UNSTATED: Final = MAX_BACKOFF_SECONDS
+
+
 def retry_delay(
-    *, retry_after_seconds: float, consecutive_refusals: int, jitter: float = 0.0
+    *, retry_after_seconds: float | None, consecutive_refusals: int, jitter: float = 0.0
 ) -> float:
     """How long to wait before trying again. The window's own arithmetic, not a guess.
 
@@ -202,11 +228,23 @@ def retry_delay(
     give a connector a different backoff from the rest of the platform for no reason anybody
     could name later.
 
+    **What is not delegated is the absence of a figure.** `backoff_seconds` multiplies what it
+    is given, so a refusal carrying no `Retry-After` header arrives as zero, is doubled four
+    times, and comes back as zero: a backoff that looks like one and is a hot retry loop. The
+    parameter is therefore `float | None`, so a source that said nothing is a different value
+    from a source that said zero, and the substitution happens once here rather than in each
+    connector that remembers to. Three connectors reached this rule independently and a fourth
+    did not, which is the argument for it living at the shared root. See
+    `A_SOURCE_THAT_SAID_NOTHING_DID_NOT_SAY_ZERO`.
+
     Jitter is the caller's, and only ever lengthens, matching both modules it sits between.
     """
-    return backoff_seconds(
-        retry_after_seconds, consecutive_refusals=consecutive_refusals, jitter=jitter
+    stated = (
+        RETRY_AFTER_WHEN_UNSTATED
+        if retry_after_seconds is None or retry_after_seconds <= 0.0
+        else retry_after_seconds
     )
+    return backoff_seconds(stated, consecutive_refusals=consecutive_refusals, jitter=jitter)
 
 
 # ------------------------------------------------------- the bucket, adapted (M11.3.1, M11.3.5)

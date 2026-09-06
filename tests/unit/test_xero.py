@@ -78,6 +78,7 @@ from brain.connectors.xero import (
     projected_record,
     projection_for,
     refresh_promise,
+    retry_after,
     xero_field_policy,
     xero_manifest,
     xero_retry_delay,
@@ -242,6 +243,53 @@ def test_a_wait_is_never_shorter_than_the_source_asked_for() -> None:
         retry_after_seconds=900.0, consecutive_refusals=0, budget=None, now=NOW
     )
     assert waited >= 900.0
+
+
+def test_a_refusal_that_named_no_wait_is_still_waited_for() -> None:
+    """**The negative sibling of the test above, and it was live.** Measured at 0.0 seconds
+    after nine consecutive refusals before this existed.
+
+    Every term of the max was derived from the same missing number: the platform's backoff
+    multiplies it, the source's own figure is it, and the reset term is zero while the day is
+    not yet spent. So a 429 with no `Retry-After` on it, early in the day, was answered by
+    returning at once, against a source with an allowance that does not refill until midnight.
+    It was invisible because the two tests either side of this one both state a figure, which
+    is the shape of the bug rather than a coincidence: the positive case is the one people
+    think to write.
+
+    `retry_after` already answered `None` for an absent header. The number came back because
+    this function took a bare float, so the conversion had to happen at a call site.
+
+    Delete this and the signature can go back to `float`, which reads as a simplification and
+    restores a hot retry loop against a daily ceiling."""
+    for refusals in (0, 1, 9):
+        waited = xero_retry_delay(
+            retry_after_seconds=None, consecutive_refusals=refusals, budget=None, now=NOW
+        )
+        assert waited > 0.0, f"a refusal that named no wait was answered at once ({refusals})"
+
+    stated_zero = xero_retry_delay(
+        retry_after_seconds=0.0, consecutive_refusals=4, budget=None, now=NOW
+    )
+    assert stated_zero > 0.0
+
+
+def test_the_absent_header_travels_as_absent_rather_than_as_a_zero() -> None:
+    """The guard on the test above. It asserts a wait is produced for `None`, and a call site
+    writing `retry_after(headers) or 0.0` would put the zero back without changing a single
+    line of `xero_retry_delay`, leaving that test green and the loop restored.
+
+    So this drives the pair together the way the connector must: what `retry_after` returns
+    for a refusal with no header is what `xero_retry_delay` is handed.
+
+    Delete this and the two functions can drift apart at whatever call site converts."""
+    absent = retry_after({})
+    assert absent is None
+
+    waited = xero_retry_delay(
+        retry_after_seconds=absent, consecutive_refusals=1, budget=None, now=NOW
+    )
+    assert waited > 0.0
 
 
 def test_a_reading_within_one_day_never_raises_the_remaining_figure() -> None:

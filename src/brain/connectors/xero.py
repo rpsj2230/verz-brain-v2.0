@@ -551,7 +551,7 @@ def may_call(*, decision: LimitDecision, budget: DayBudget | None, now: datetime
 
 def xero_retry_delay(
     *,
-    retry_after_seconds: float,
+    retry_after_seconds: float | None,
     consecutive_refusals: int,
     budget: DayBudget | None,
     now: datetime,
@@ -567,6 +567,15 @@ def xero_retry_delay(
     Taking the longest is deliberate against taking the platform's. A wait that is too long
     costs one question its freshness; a wait that is too short costs a call out of an
     allowance that does not refill until midnight, and then does it again.
+
+    **The parameter takes what `retry_after` returns, and that is load-bearing.** `retry_after`
+    already answers `None` rather than zero for a header nobody sent, and this signature used
+    to take a bare float, so the refusal to invent a figure was undone by whichever call site
+    wrote the conversion. A 429 with no header, against a budget that was not yet exhausted,
+    then produced max(0.0, 0.0, 0.0) and a wait of zero: measured at nine consecutive refusals
+    and still zero, because every term in the max was derived from the same missing number.
+    `throttle.retry_delay` now carries the substitution for every connector rather than each
+    one remembering. See `throttle.A_SOURCE_THAT_SAID_NOTHING_DID_NOT_SAY_ZERO`.
     """
     platform = retry_delay(
         retry_after_seconds=retry_after_seconds,
@@ -576,7 +585,8 @@ def xero_retry_delay(
     until_reset = (
         budget.seconds_until_reset(now) if budget is not None and budget.is_exhausted else 0.0
     )
-    return max(platform, max(0.0, retry_after_seconds), until_reset)
+    asked = 0.0 if retry_after_seconds is None else max(0.0, retry_after_seconds)
+    return max(platform, asked, until_reset)
 
 
 # ----------------------------------------------------------- the connection (M11.2.3)

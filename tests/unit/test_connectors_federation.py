@@ -32,6 +32,7 @@ from brain.connectors.federation import (
 )
 from brain.connectors.manifest import ConnectorManifest
 from brain.connectors.throttle import (
+    RETRY_AFTER_WHEN_UNSTATED,
     CallOutcome,
     CallRecord,
     UnmeasuredSourceError,
@@ -49,7 +50,7 @@ from brain.connectors.throttle import (
 from brain.core.envelope import SideEffect
 from brain.core.errors import Degraded
 from brain.models.routing import BREAKER_CONSECUTIVE_FAILURES, BreakerState
-from brain.ops.limits import FRESHDESK_SEARCH_MAX_RECORDS, LimitScope
+from brain.ops.limits import FRESHDESK_SEARCH_MAX_RECORDS, MAX_BACKOFF_SECONDS, LimitScope
 from brain.ops.secrets import SecretRef, VaultRole
 
 NOW = datetime(2026, 9, 5, 9, 0, tzinfo=UTC)
@@ -382,6 +383,67 @@ def test_jitter_only_ever_lengthens_a_retry() -> None:
     refused client would come back before there was room."""
     assert retry_delay(retry_after_seconds=10.0, consecutive_refusals=0, jitter=0.5) == 15.0
     assert retry_delay(retry_after_seconds=10.0, consecutive_refusals=0, jitter=-9.0) == 10.0
+
+
+def test_a_refusal_that_stated_no_wait_is_still_waited_for() -> None:
+    """**The case that was live in `brain.connectors.xero` and measured at zero.**
+
+    `backoff_seconds` multiplies the figure it is handed, so a refusal carrying no
+    `Retry-After` header multiplies zero and returns zero however many refusals came before
+    it: the doubling looks like a backoff and produces none. Every connector then retries a
+    429 immediately, which is what turns a burst into a rate limit and then keeps it there.
+
+    Asserted at nine consecutive refusals as well as one, because the multiplication is what
+    hides the bug: a reader checking the doubling sees it double correctly and never notices
+    that it is doubling nothing.
+
+    Delete this and the substitution can be dropped from `retry_delay` while both tests above
+    stay green, since neither of them passes an absent figure."""
+    assert retry_delay(retry_after_seconds=None, consecutive_refusals=0) > 0.0
+    assert retry_delay(retry_after_seconds=None, consecutive_refusals=9) > 0.0
+    unstated = retry_delay(retry_after_seconds=None, consecutive_refusals=0)
+    assert unstated == RETRY_AFTER_WHEN_UNSTATED
+
+
+def test_a_stated_zero_is_treated_as_no_wait_stated_rather_than_as_no_wait_needed() -> None:
+    """A 429 is a refusal by definition, so no answer to it is honestly zero. The distinction
+    matters because the two arrive as different values and only one of them is anybody's
+    measurement: `None` is a header nobody sent, and `0.0` is the number a call site writing
+    `retry_after(headers) or 0.0` produces from it.
+
+    Flooring both means the floor cannot be defeated by a conversion at a call site, which is
+    exactly how it was defeated in Xero.
+
+    Delete this and `retry_delay` can go back to accepting a bare float, which reads as a
+    simplification and reopens the hot loop for the next connector somebody writes."""
+    assert retry_delay(retry_after_seconds=0.0, consecutive_refusals=4) == RETRY_AFTER_WHEN_UNSTATED
+
+
+def test_the_substituted_wait_is_the_platforms_own_ceiling_and_not_a_token_pause() -> None:
+    """**Written because a mutation exposed the two tests above as blind to it.** Both assert
+    the answer equals `RETRY_AFTER_WHEN_UNSTATED`, which compares the constant against itself:
+    drop the figure to one second and the equality still holds, so a substitution that no
+    longer substitutes anything useful stays green. One of them happened to fail through the
+    doubling arithmetic, which is luck rather than coverage and disappears at nought refusals.
+
+    The figure is asserted against `MAX_BACKOFF_SECONDS` rather than against 300, because what
+    makes it right is that it is the platform's own measured ceiling rather than a number
+    somebody picked here. Tying the test to the literal would freeze the wrong half.
+
+    Delete this and the substitution can be quietly reduced to a value that is greater than
+    zero and shorter than the window, which is the original hot loop wearing a floor."""
+    assert RETRY_AFTER_WHEN_UNSTATED >= MAX_BACKOFF_SECONDS
+    assert retry_delay(retry_after_seconds=None, consecutive_refusals=0) >= MAX_BACKOFF_SECONDS
+
+
+def test_a_measured_wait_is_never_replaced_by_the_substituted_one() -> None:
+    """The positive sibling. A floor applied to a figure the source actually stated would
+    delay every retry to five minutes, which is the same bug in the useless direction and the
+    one nobody files a report about.
+
+    Delete this and substituting unconditionally passes every other test here."""
+    assert retry_delay(retry_after_seconds=12.0, consecutive_refusals=0) == 12.0
+    assert retry_delay(retry_after_seconds=0.5, consecutive_refusals=0) == 0.5
 
 
 # ---------------------------------------------------- the configured ceilings (M11.3.5)

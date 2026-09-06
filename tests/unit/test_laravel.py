@@ -199,6 +199,32 @@ def failed(fault: DatabaseFault) -> LaravelReply:
     return interpret(a_read(), ViewReply(fault=fault), fetched_at=NOW.isoformat())
 
 
+# --------------------------------------------------------------- the two error families
+def test_a_wiring_mistake_is_a_contract_error_and_never_a_degraded_answer() -> None:
+    """`LaravelError`'s docstring makes a claim its own class statement has to keep: every
+    refusal here is a mistake by whoever wrote or wired the connector, so it should stop the
+    connector rather than degrade somebody's answer, and nobody asking a question should ever
+    see it.
+
+    Both halves are asserted because only one of them is obvious. Being a
+    `ConnectorContractError` is what makes a caller's `except ConnectorContractError` catch a
+    Laravel misdeclaration along with every other connector's. **Not** being a `Degraded` is
+    the half that would break silently: a maintainer who moved it under `Degraded` so that a
+    bad view name stopped taking the connector out of service would have turned a wiring bug
+    into a shrug shown to whoever happened to ask, once, and the connector would stay
+    installed and wrong.
+
+    Written because the import of `ConnectorContractError` in this file was unused, which
+    ruff reported as a stray import and was in fact the missing test.
+
+    Delete this and the two families can merge in either direction with every other test in
+    this file still green."""
+    assert issubclass(LaravelError, ConnectorContractError)
+    assert not issubclass(LaravelError, Degraded)
+    assert issubclass(LaravelDegraded, Degraded)
+    assert not issubclass(LaravelDegraded, ConnectorContractError)
+
+
 # --------------------------------------------------- views and never tables (M11.1.4)
 def test_a_table_name_is_refused_where_this_connector_expects_a_view() -> None:
     """The whole leaf. A connector that can read a table can read a column added in next
