@@ -56,6 +56,13 @@ jobs:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/brain_test
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history. The default is a shallow clone of one commit, and every
+          # check in this job that reads `Closes:` trailers then computes against an
+          # almost empty set: the traceability sweep passed here while verifying
+          # nothing about commit claims, and a test that reads real history failed
+          # for a reason that did not exist on any laptop.
+          fetch-depth: 0
       - uses: astral-sh/setup-uv@v5
         with:
           version: ${{ env.UV_VERSION }}
@@ -98,6 +105,13 @@ jobs:
     needs: static
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history. The default is a shallow clone of one commit, and every
+          # check in this job that reads `Closes:` trailers then computes against an
+          # almost empty set: the traceability sweep passed here while verifying
+          # nothing about commit claims, and a test that reads real history failed
+          # for a reason that did not exist on any laptop.
+          fetch-depth: 0
       - uses: astral-sh/setup-uv@v5
         with:
           version: ${{ env.UV_VERSION }}

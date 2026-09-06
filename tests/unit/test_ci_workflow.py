@@ -211,6 +211,38 @@ def test_the_job_that_runs_the_database_sweeps_actually_has_a_database() -> None
         )
 
 
+@pytest.mark.parametrize("job", ["tests", "sweeps"])
+def test_a_job_that_reads_commit_history_is_given_some(job: str) -> None:
+    """**CI failed three pushes in a row for a reason that could not happen on a laptop.**
+
+    `actions/checkout` defaults to `fetch-depth: 1`, a shallow clone holding exactly one
+    commit. Everything in this repository that asks what has been closed reads `Closes:`
+    trailers out of `git log`, so in CI it was reading one commit and concluding almost
+    nothing had ever been closed.
+
+    That is worse than the failing test it produced. The traceability sweep runs in the
+    sweeps job, and its three advisory counts are computed from that same empty set: they
+    printed reassuring numbers in CI while verifying nothing at all about commit claims. A
+    check that reports "ok" over no inputs is the exact defect this repository keeps finding,
+    and here it was the CI gate itself.
+
+    Asserted per job rather than globally, because the other four have no business reading
+    history and a blanket rule would slow every checkout for no reason.
+
+    Delete this and the depth silently returns to one: every test still passes locally, where
+    the clone is complete, and the gate quietly stops gating."""
+    steps = _workflow()["jobs"][job]["steps"]
+    checkouts = [s for s in steps if "actions/checkout" in str(s.get("uses", ""))]
+
+    assert checkouts, f"the {job} job does not check anything out"
+    for step in checkouts:
+        depth = (step.get("with") or {}).get("fetch-depth")
+        assert depth == 0, (
+            f"the {job} job checks out at depth {depth!r}, so git log sees one commit and "
+            "every claim read from history is computed against an empty set"
+        )
+
+
 def test_the_skip_message_claims_nothing_about_where_it_does_run() -> None:
     """It used to read "(CI always sets it)", which was false in the one place anybody read
     it: printed by CI, in a job with no database.

@@ -217,11 +217,11 @@ def test_a_malformed_task_line_actually_fails_the_sweep() -> None:
     prove."""
     original = sweeps._malformed_task_lines
     try:
-        sweeps._malformed_task_lines = lambda: ["a deliberate finding"]  # type: ignore[assignment]
+        sweeps._malformed_task_lines = lambda: ["a deliberate finding"]
         with pytest.raises(sweeps.SweepFailure) as raised:
             sweeps.sweep_traceability()
     finally:
-        sweeps._malformed_task_lines = original  # type: ignore[assignment]
+        sweeps._malformed_task_lines = original
 
     assert "a deliberate finding" in raised.value.findings
 
@@ -716,11 +716,11 @@ def test_a_broken_claim_in_a_commit_is_reported_and_not_only_one_in_a_docstring(
     original_reader = status_module.closed_task_ids
     try:
         sweeps.SRC = _NoFiles()  # type: ignore[assignment]
-        status_module.closed_task_ids = lambda *a, **k: ({invented}, [])  # type: ignore[assignment]
+        status_module.closed_task_ids = lambda *a, **k: ({invented}, [])
         reported = set(sweeps._claims_that_name_no_leaf())
     finally:
         sweeps.SRC = original_src
-        status_module.closed_task_ids = original_reader  # type: ignore[assignment]
+        status_module.closed_task_ids = original_reader
 
     assert invented in reported, "a broken claim made only in a commit was not reported"
 
