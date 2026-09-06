@@ -82,6 +82,27 @@ import enum
 from dataclasses import dataclass
 from typing import Final, Literal
 
+#: The machine, in mebibytes, as `free -m` reports it. Measured 2026-09-06 on the live host.
+HOST_TOTAL_MIB: Final = 11960
+
+#: What everything that is not this system already reserves on that machine, measured the
+#: same day with `docker inspect -f {{.HostConfig.Memory}}` over every running container.
+#:
+#: Three groups, and every one of them belongs to the owner's other project rather than to
+#: this one: the Dify stack at 3,712 MiB across ten containers, an older Langfuse at
+#: 1,280 MiB across two, and a v1 worker at 1,024 MiB. `docs/needs-rupash.md` item 25 lists
+#: them by name, because the whole value of this figure to the person who can act on it is
+#: knowing which containers to remove.
+#:
+#: **Reservations rather than usage, and the distinction is the reason this constant exists
+#: rather than a reading of free memory.** Seven containers were deleted from this host on
+#: 2026-09-06 and available memory went from 6,319 MiB to 8,469 MiB, and this number did not
+#: move by a single mebibyte, because every container removed was one that reserved nothing.
+#: Free memory is what is spare at an instant. A reservation is memory the kernel will hand
+#: to a neighbour the moment it asks. Sizing against the first is how a stack runs all week
+#: and kills something on the day the neighbour gets busy.
+NEIGHBOUR_MIB: Final = 6016
+
 #: What this system's declared limits may add up to on the shared host, in mebibytes.
 #: Approximate on purpose: it is headroom above a neighbour whose own usage moves, so
 #: treating it as exact would be false precision. Sizing against it is still the point,
@@ -92,14 +113,20 @@ from typing import Final, Literal
 #: which this system accounts for 394 MiB. `docs/needs-rupash.md` item 25 said "your server
 #: has about 6.4 GB usable" and that sentence was describing this constant. Corrected there.
 #:
-#: The cap stays at 6400 rather than rising to meet the measurement, and the reason is the
-#: rest of the box: 15 of the 31 containers on it declare no memory limit at all, and the
-#: 16 that do are already allowed 9,600 MiB of the 11,960. The host is overcommitted before
-#: this system asks for anything, so headroom measured as "free right now" is headroom that
-#: belongs to whichever neighbour grows first. Sizing to it would make this system the
-#: reason somebody else's production is killed, which is the one outcome the whole module
-#: exists to prevent.
-HOST_HEADROOM_MIB: Final = 6400
+#: The cap does not rise to meet the measurement, and the reason is the rest of the box:
+#: the containers that reserve memory are already allowed 9,600 MiB of the 11,960. The host
+#: is overcommitted before this system asks for anything, so headroom measured as "free
+#: right now" is headroom that belongs to whichever neighbour grows first. Sizing to it
+#: would make this system the reason somebody else's production is killed, which is the one
+#: outcome the whole module exists to prevent.
+#:
+#: **It was 6400 and 6400 did not fit either.** Re-measured 2026-09-06 after seven
+#: containers were removed from the host: the neighbours still reserve `NEIGHBOUR_MIB`, and
+#: 6400 on top of that came to 12,416 MiB on an 11,960 MiB machine. The cap was 712 MiB
+#: past what the box could honour and nothing said so, because the only test on it re-derived
+#: it from itself. It is now `safe_headroom_mib()`, computed from the measurement below, so
+#: the number cannot drift from the machine without the recorded machine drifting too.
+HOST_HEADROOM_MIB: Final = 5688
 
 #: The sum of `deploy.resources.limits.memory` across the four services in
 #: `docker-compose.yml`, which is what is deployed today. Asserted against that file by
@@ -444,6 +471,32 @@ def components_for(profile: str) -> tuple[Component, ...]:
 def wave_two_mib(profile: str) -> int:
     """What wave 2 adds in this profile."""
     return sum(c.memory_mib for c in components_for(profile))
+
+
+def safe_headroom_mib(
+    *,
+    host_mib: int = HOST_TOTAL_MIB,
+    neighbour_mib: int = NEIGHBOUR_MIB,
+    reserve_mib: int = HOST_RESERVE_MIB,
+) -> int:
+    """The largest cap this system may hold itself to without overcommitting the machine.
+
+    The arithmetic is the whole argument: what is on the box, less what the neighbours are
+    already promised, less what the host keeps for itself. Anything above this is a cap that
+    the machine cannot honour if every reservation is called at once, which is the only
+    moment a limit matters.
+
+    A function rather than a constant, and that is the point of it. `HOST_HEADROOM_MIB` used
+    to be a number with a paragraph of justification and nothing checking either, so the
+    paragraph stayed true while the number stopped being. Now the number is the output of the
+    measurement, the measurement is three constants a reader can compare against `free -m`
+    and `docker inspect`, and a test asserts the two agree. Changing the cap without changing
+    the recorded machine fails.
+
+    Parameterised for the question that is actually asked of it: "what if the old project
+    goes away" is `safe_headroom_mib(neighbour_mib=0)`, which needs no edit to answer.
+    """
+    return host_mib - neighbour_mib - reserve_mib
 
 
 def spendable_mib(*, headroom_mib: int = HOST_HEADROOM_MIB, baseline_mib: int | None = None) -> int:

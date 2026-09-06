@@ -31,6 +31,8 @@ from brain.ops.wiring import (
     COMPONENTS,
     HOST_HEADROOM_MIB,
     HOST_RESERVE_MIB,
+    HOST_TOTAL_MIB,
+    NEIGHBOUR_MIB,
     PRODUCTION_BASELINE_MIB,
     PROFILES,
     TRACE_DESTINATION_SETTINGS,
@@ -43,6 +45,7 @@ from brain.ops.wiring import (
     components_for,
     pooler_misuse,
     runs_trace_ledger,
+    safe_headroom_mib,
     spendable_mib,
     trace_config_conflicts,
     wave_two_mib,
@@ -190,15 +193,22 @@ def test_the_standard_profile_is_over_by_the_identity_provider_and_the_inference
     component on purpose and discover it under load" failure this file exists to prevent,
     which on a shared host is a neighbour's outage rather than ours.
 
-    **The overrun now survives the host being freed, which is the part worth reading twice.**
-    Item 25 measured 2,402 MiB coming back when Rupash removes his other project. Against
-    3328 that leaves roughly 926 MiB still short, so this is no longer a decision that
-    resolves itself by waiting: it is a second host, a smaller embedding model, or int8
-    weights, and each of those has a cost that is not ours to accept.
+    **The figure moved a third time on 2026-09-06, and that time the cap moved rather than a
+    component.** `HOST_HEADROOM_MIB` went from 6400 to 5688 because 6400 was never a cap the
+    machine could honour: the neighbours reserve 6016 MiB of an 11,960 MiB box, so the old
+    number promised 12,416 MiB of a machine that has 11,960. See
+    `test_the_cap_this_system_holds_itself_to_is_one_the_machine_can_honour`. Nothing about
+    standard grew; the honest ceiling shrank, and the overrun went from 3328 to 4040.
+
+    **This one does resolve by waiting, and the sibling test is where that is measured.**
+    `test_removing_the_other_project_is_what_makes_the_full_set_fit` computes it rather than
+    asserting it here: with the neighbours gone the cap is 11,704, standard fits with 1,976
+    MiB spare, and it is `full` that is left short. So standard is a capacity problem with a
+    known answer, which is not what this test said before.
 
     **The guard keeps its teeth by being exact.** One breach, naming the largest single
-    component, of exactly 3328 MiB. Any further growth in standard fails here, which is what
-    the previous two versions of this assertion were for.
+    component, of exactly 4040 MiB. Any further growth in standard fails here, which is what
+    the previous three versions of this assertion were for.
 
     Delete this and the overrun stops being visible anywhere, which means it is discovered by
     deploying it."""
@@ -206,11 +216,11 @@ def test_the_standard_profile_is_over_by_the_identity_provider_and_the_inference
 
     assert len(breaches) == 1, breaches
     assert "inference-server" in breaches[0]
-    assert "over by 3328 MiB" in breaches[0], (
+    assert "over by 4040 MiB" in breaches[0], (
         "the standard overrun has moved; something has grown or shrunk and this test is the "
         "only place that would have said so"
     )
-    assert wave_two_mib("standard") - spendable_mib() == 3328
+    assert wave_two_mib("standard") - spendable_mib() == 4040
 
 
 def test_the_full_profile_does_not_fit_and_names_the_component_that_does_not() -> None:
@@ -236,9 +246,82 @@ def test_the_full_profile_does_not_fit_and_names_the_component_that_does_not() -
 def test_the_budget_leaves_the_host_something_to_be_fixed_from() -> None:
     """Spending the last megabyte means the first casualty is the SSH session an operator
     needs to see what happened. Delete this and the reserve can be set to zero to make a
-    profile fit, which is arithmetic solving a capacity problem."""
+    profile fit, which is arithmetic solving a capacity problem.
+
+    The equality here is deliberately the weaker half of what this file checks. It asserts
+    that `spendable_mib` spends both the baseline and the reserve and forgets neither, which
+    is a real property of the function, and it says nothing about whether the cap is a
+    sensible number, because it cannot: every term comes from the module under test. The
+    sibling below is where the cap meets something outside itself."""
     assert spendable_mib() == HOST_HEADROOM_MIB - PRODUCTION_BASELINE_MIB - HOST_RESERVE_MIB
     assert HOST_RESERVE_MIB > 0
+
+
+def test_the_cap_this_system_holds_itself_to_is_one_the_machine_can_honour() -> None:
+    """**The check the cap went without.** `HOST_HEADROOM_MIB` was 6400 with a paragraph
+    justifying it and one test on it, and that test re-derived it from itself: it asserted
+    `spendable_mib() == HOST_HEADROOM_MIB - ...` while importing every term, so it was green
+    for every value the cap could possibly hold. On 2026-09-06 the value it held was
+    6400 against neighbours reserving 6016 on an 11,960 MiB machine, which is 12,416 MiB
+    promised on a box that has 11,960, and nothing anywhere said so.
+
+    So the cap is asserted against the recorded machine rather than against itself. The
+    three figures it is built from are things a reader can go and check with `free -m` and
+    `docker inspect`, which is what makes this a comparison and not a restatement.
+
+    Delete this and the cap becomes whatever makes today's profile fit, which is the exact
+    move `budget_breaches` exists to refuse and the exact move the missing test permitted."""
+    assert safe_headroom_mib() >= HOST_HEADROOM_MIB, (
+        f"the cap is {HOST_HEADROOM_MIB} MiB, but {NEIGHBOUR_MIB} MiB is already promised "
+        f"to other containers on an {HOST_TOTAL_MIB} MiB machine, so at most "
+        f"{safe_headroom_mib()} MiB can be honoured"
+    )
+    assert NEIGHBOUR_MIB + HOST_HEADROOM_MIB + HOST_RESERVE_MIB <= HOST_TOTAL_MIB
+
+
+def test_the_cap_is_the_measurement_rather_than_a_number_beside_it() -> None:
+    """A cap set below the safe figure would pass the test above while being arbitrary, and
+    arbitrary is how it drifts: nobody can tell a deliberate margin from a stale number.
+
+    This holds it at the measured figure exactly, so lowering it needs a reason recorded in
+    the measurement and raising it needs the neighbours to actually go. The one thing it must
+    not become is a number somebody nudged until a profile fitted.
+
+    Delete this and 5688 can drift anywhere below the ceiling with nothing to compare it to,
+    which is where it was before, one direction later."""
+    assert safe_headroom_mib() == HOST_HEADROOM_MIB
+
+
+def test_removing_the_other_project_is_what_makes_the_full_set_fit() -> None:
+    """The owner asked what removing their other project buys, and an answer that requires
+    editing a constant to find out is an answer nobody can check.
+
+    `safe_headroom_mib` takes the neighbours as a parameter for exactly this, so the question
+    is arithmetic rather than a deployment. The assertion is the shape of the answer and not
+    a particular figure: with the neighbours gone the cap clears the largest profile, and
+    with them present it does not. If both branches ever agree, the question has stopped
+    being worth asking and this should be deleted on purpose rather than left passing.
+
+    Delete this and the capacity conversation goes back to being a paragraph in a document
+    that nothing recomputes."""
+    with_them = safe_headroom_mib()
+    without_them = safe_headroom_mib(neighbour_mib=0)
+
+    assert without_them - with_them == NEIGHBOUR_MIB
+
+    # Standard is the profile the answer is about: it does not fit today and it does fit
+    # once the neighbours go, which is what makes "remove the other project" a real answer
+    # rather than a hope.
+    assert budget_breaches("standard", headroom_mib=with_them)
+    assert not budget_breaches("standard", headroom_mib=without_them)
+
+    # Full still does not, and this is asserted rather than left out because the first draft
+    # of item 25 said everything would fit and this test is what corrected it. An assertion
+    # that only recorded the good half would have let that sentence stand.
+    assert budget_breaches("full", headroom_mib=without_them), (
+        "the full set fits now, so item 25 in needs-rupash understates what removing the "
+        "other project buys and should be corrected upward"
+    )
 
 
 def test_the_budget_can_be_asked_about_a_host_we_do_not_have() -> None:

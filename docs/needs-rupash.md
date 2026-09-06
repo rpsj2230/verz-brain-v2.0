@@ -213,37 +213,85 @@ address and back in, which works and spends part of the reason the sandbox exist
 
 ---
 
-## 25. Server capacity - ANSWERED: you are removing the other project
+## 25. Server capacity - PARTLY DONE: you freed real memory, and the number that binds has not moved
 
-**You said you will remove your other project from this server so it is used by this one
-only. Measured today, that changes everything below.**
+**Re-measured on the live host 2026-09-06, after you said you had deleted resources under
+the other project. Some of this is good news and one part of it is not, so here is both.**
 
-Your other project is the tenant control plane: eight containers, and they are the largest
-block on the machine.
+**What your cleanup actually did.** Seven containers are gone: 24 running now, 31 before.
+Free memory went from 5,641 MB in use to **8,469 MB available**. That is real and it is
+worth having.
 
-| | Using now |
-|---|---|
-| Your other project (control plane, tenant console, provisioning API, its database) | **2,402 MB** |
-| The Dify stack, if that is also yours | 541 MB |
-| The Company Brain, everything | 1,414 MB |
-| Coolify itself, which stays | 563 MB |
+**What did not change, and it is the one that decides the answer.** Every container that
+went was one with no memory limit set. The containers that reserve memory are all still
+there, and they still reserve **9,600 MB of the 11,960 MB on the machine**, which is the
+same figure as before you started.
 
-The machine is 11,960 MB. Removing the control plane alone frees **2.4 GB**, which is more
-than the full feature set was ever short by, and roughly twice the largest single component.
+That distinction matters more than it sounds. Free memory is what is spare at this instant.
+A declared limit is a promise the kernel keeps: it is memory another container is entitled
+to take the moment it gets busy, whether or not it is using it now. This system sizes itself
+against the promises, not against the instant, because sizing against the instant is how a
+deployment works all week and kills a neighbour on the one day the neighbour is busy.
 
-**So the shortfall in this item is gone once you do that**, and the options below become a
-matter of tidiness rather than necessity. Two are still worth doing on their own merits and I
-can do both whenever you say:
+**Here is where all 9,600 MB sits, measured container by container.**
 
-Option 1, right-sizing the Brain's own reservations, because 3.5 GB reserved against 429 MB
-used is a number that misleads everyone who reads it, including me.
+| Whose | Containers | Reserved |
+|---|---|---|
+| The Dify stack | 10 (api, worker, web, db, weaviate, sandbox, plugin daemon, redis, nginx, ssrf proxy) | **3,712 MB** |
+| Langfuse, the old copy | 2 (server, db) | **1,280 MB** |
+| The old Brain worker | 1 (`verz-brain-worker-1`) | **1,024 MB** |
+| The Company Brain, live | 3 (app, database, cache) | 3,584 MB |
 
-Option 2, capping the containers that declare no limit at all, because the kernel decides what
-dies at three in the morning and it does not know which container is your client-facing one.
-That one matters less once the other project is gone, and it is not free of risk while it is
-still there, so it is worth doing in the order: remove the project, then re-measure, then cap.
+Plus `verzbrain-activepieces`, which reserves nothing and is using 748 MB, the largest
+single consumer on the box.
 
-Nothing is blocked on this now.
+**So the total still to remove is 6,016 MB of reservations plus that 748 MB.** All of it
+belongs to the old project. None of it is the Company Brain.
+
+**What each removal buys, in order of size.**
+
+1. **The Dify stack, 3,712 MB.** The single biggest block, and ten containers.
+2. **The old Brain worker, 1,024 MB.** It is the v1 project's, not this one's. This system's
+   own worker is a separate thing and is not in that table.
+3. **Old Langfuse, 1,280 MB.** This one has a caveat: the full feature set includes a
+   Langfuse of its own, so removing the old copy frees the memory and the new one will ask
+   for some of it back. Still worth doing, because the new one is sized and the old one is
+   not.
+4. **Old Activepieces, about 750 MB.** Reserves nothing, so removing it does not change the
+   9,600, but it frees the most memory of any single container.
+
+**What it unlocks, computed rather than estimated.** Remove the 6,016 MB above and the cap
+rises to 11,704 MB, which leaves 7,736 MB after the live services and the host's reserve.
+
+| | Wants | Today | With the other project gone |
+|---|---|---|---|
+| The main feature set | 5,760 MB | short by 4,040 MB | **fits, with 1,976 MB spare** |
+| The full set, tracing included | 8,320 MB | short by 6,672 MB | short by 584 MB |
+
+**So removing the other project solves the main feature set outright.** That is the answer
+to this item. The full set, which adds the tracing stack, is still 584 MB short afterwards,
+and that is a separate and much smaller decision than the one this page has been carrying.
+
+**A correction, because I got this wrong an hour ago.** The first version of this section
+said everything would fit with room over. It does not: the full set is still 584 MB short.
+I only know that because a test I wrote at the same time recomputes it, and it failed on the
+sentence I had just written. The arithmetic now lives in
+`test_removing_the_other_project_is_what_makes_the_full_set_fit`, so this table cannot go
+stale without the suite going red.
+
+**I have lowered our own cap rather than raised it, and I would rather explain that now than
+have you find it.** The cap was 6,400 MB, and while your neighbours reserve 6,016 MB on an
+11,960 MB machine, 6,400 was never a number the machine could honour: the two together
+promise 12,416 MB of a box that has 11,960. Nothing was checking it, because the only test on
+that number recalculated it from itself and was green whatever it said. It is now 5,688 MB,
+which is what the measurement leaves, and it is computed from the machine rather than typed
+beside it. This makes the shortfall bigger on paper and it does not make anything smaller in
+reality: nothing deployed changes, because the profile in use is the base one either way.
+When those containers go the cap rises to 11,704 on the same arithmetic, and that is one
+commit.
+
+**Nothing is blocked on this.** Everything currently being built fits inside the cap as it
+stands.
 
 ---
 
