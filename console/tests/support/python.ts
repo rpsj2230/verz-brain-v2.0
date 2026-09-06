@@ -56,17 +56,21 @@ export function backendEnumMembers(
 }
 
 /**
- * The declared field names of one pydantic model, in source order.
+ * The declared field names of one pydantic model or dataclass, in source order.
  *
- * Only annotated assignments at one level of indentation count, so `model_config` and any
- * method on the model are skipped without a special case. As with the enum reader, an empty
- * result throws: a model whose fields cannot be found makes every comparison against it a
- * comparison between two empty lists.
+ * Only annotated assignments at one level of indentation count, so `model_config`, a
+ * `__post_init__` and any method on the class are skipped without a special case. As with the
+ * enum reader, an empty result throws: a model whose fields cannot be found makes every
+ * comparison against it a comparison between two empty lists.
+ *
+ * The base-class list is optional in the pattern because a frozen dataclass declares none.
+ * `brain.ops.tracing.Span` is written that way and is the one thing a trace graph's node
+ * reader has to be checked against.
  */
 export function backendModelFields(modulePath: string, className: string): string[] {
   const source = readRepoFile(modulePath);
   const opened = new RegExp(
-    `^class\\s+${className}(?:\\[[^\\]]*\\])?\\([^)]*\\):$`,
+    `^class\\s+${className}(?:\\[[^\\]]*\\])?(?:\\([^)]*\\))?:$`,
     "m",
   ).exec(source);
   if (!opened) {
@@ -93,6 +97,19 @@ export function backendPageFields(): string[] {
 /** A field withheld from a record the caller may otherwise see. Carries no reason. */
 export function backendLockedFieldFields(): string[] {
   return backendModelFields(REDACTION, "LockedField");
+}
+
+/**
+ * One unit of trace as the API records it. `brain.ops.tracing.Span`.
+ *
+ * Read for the two fields a graph must never carry: `payload_in` and `payload_out` are the
+ * question and the answer, they are the two the module refuses to allowlist, and they are
+ * masked before a span leaves the process that made it. A console that drew them on a canvas
+ * would put the masked question on a screen; a console written against an older shape would
+ * quietly draw the unmasked one.
+ */
+export function backendSpanFields(): string[] {
+  return backendModelFields("src/brain/ops/tracing.py", "Span");
 }
 
 /**

@@ -125,6 +125,18 @@
 
   --shell-nav-width: 15rem;
   --content-max-width: 60rem;
+  --form-max-width: 40rem;
+
+  /*
+   * The canvas. `--canvas-node-width` is in pixels and every other length here is in rem,
+   * and that is not an inconsistency: a drawing surface is a coordinate space, the node
+   * positions in `components/graph.ts` are numbers in it, and a node whose drawn width did
+   * not match the width the layout spaced its columns by would overlap its neighbour at one
+   * text size and not at another. `tests/trace-graph.test.tsx` reads this value out of this
+   * file and compares it with `NODE_WIDTH`, so the two cannot drift.
+   */
+  --canvas-height: 26rem;
+  --canvas-node-width: 200px;
 }
 
 /* --- dark values, copy 1 of 2: the machine is dark and nobody chose otherwise --------- */

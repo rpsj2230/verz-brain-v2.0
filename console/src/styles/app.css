@@ -395,6 +395,174 @@ code {
   gap: var(--space-2);
 }
 
+/* ------------------------------------------------------------------ forms */
+
+/*
+ * A generated form. The class names here are mostly not ours: `@rjsf/core` is the
+ * plain-HTML theme and emits `.rjsf`, `.rjsf-field`, `.form-group`, `.control-label`,
+ * `.form-control` and `.field-description`, and painting those from tokens is what keeps a
+ * form library from being a second design system with its own palette.
+ *
+ * There is deliberately no rule that styles a field by anything about it. No disabled state
+ * that says "you may not have this", no tinted row for a withheld value, and no modifier on
+ * the block a lock sits in. A withheld field renders `ui/Lock.tsx`, which has one appearance
+ * and no modifiers; a form is the third place that rule gets rebuilt, after this stylesheet
+ * and the grid, and it gets rebuilt as a greyed input with an explanation attached.
+ */
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-width: var(--form-max-width);
+}
+
+.form__caption {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.rjsf fieldset {
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+.rjsf legend {
+  font-size: var(--text-lg);
+  font-weight: 600;
+  padding: 0;
+  margin-bottom: var(--space-3);
+}
+
+.rjsf-field {
+  margin-bottom: var(--space-4);
+}
+
+.control-label {
+  display: block;
+  margin-bottom: var(--space-1);
+  font-weight: 600;
+  font-size: var(--text-sm);
+}
+
+.control-label .required {
+  margin-left: var(--space-1);
+  color: var(--text-muted);
+}
+
+.field-description {
+  margin-bottom: var(--space-1);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.form-control {
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.form-control:disabled {
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+}
+
+.rjsf .checkbox label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/*
+ * The slot a withheld field's lock sits in. It has the padding of an input and no border,
+ * so the row keeps its height and the form does not change shape between two people. There
+ * is no colour here and no modifier: everything visible in this block comes from `.lock`.
+ */
+.form-withheld {
+  padding: var(--space-2) 0;
+}
+
+.form-actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+/* ------------------------------------------------------------------ canvases */
+
+/*
+ * The drawing surface. `@xyflow/react` reads its own colours through variables with a
+ * `-default` fallback, so pointing the un-suffixed names at tokens is how the library
+ * follows this console's theme instead of shipping a second one. Only `base.css` is
+ * imported, so nothing here is fighting a stylesheet: the library supplies the mechanics
+ * and every colour on the canvas comes from below.
+ *
+ * There is deliberately no rule that varies a node by anything about it. A node that looked
+ * different when a step was one kind rather than another would be `.lock--out-of-scope`
+ * drawn on a canvas, and a canvas is where a designer reaches for a colour first. The kind
+ * is shown as text.
+ */
+.graph {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.graph__caption {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.graph__canvas {
+  height: var(--canvas-height);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-sunken);
+}
+
+.graph__empty,
+.graph__busy {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.react-flow {
+  --xy-edge-stroke: var(--border-strong);
+  --xy-edge-stroke-selected: var(--border-strong);
+  --xy-connectionline-stroke: var(--border-strong);
+  --xy-handle-background-color: var(--border-strong);
+  --xy-attribution-background-color: transparent;
+  --xy-node-color: var(--text);
+  --xy-node-border: 1px solid var(--border);
+}
+
+.react-flow__attribution a {
+  color: var(--text-muted);
+}
+
+.graph-node {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  align-items: flex-start;
+  width: var(--canvas-node-width);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--text-sm);
+}
+
+.graph-node__label {
+  font-weight: 600;
+}
+
 /* ------------------------------------------------------------------ notices */
 
 .centred-panel {

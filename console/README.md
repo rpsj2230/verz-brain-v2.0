@@ -4,7 +4,8 @@ The browser application. React and Vite, a typed client generated from the API's
 OpenAPI document, sign-in through Keycloak with authorisation code and PKCE, and a light
 and dark theme driven by tokens.
 
-Task ids: M32.5.1.1, M32.5.1.2, M32.5.1.3, M32.5.1.4.
+Task ids: M32.5.1.1, M32.5.1.2, M32.5.1.3, M32.5.1.4, M32.5.2.1, M32.5.2.2, M32.5.2.3,
+M32.5.2.4.
 
 **This has been installed, generated, typechecked, built and tested. It has still never
 been opened in a browser.** `npm install`, `npm run api:generate`, `npm run typecheck`,
@@ -334,6 +335,136 @@ screen.
 
 ---
 
+## The component layer
+
+Four leaves, in `src/components/` and `src/ui/`. **None of them is mounted on a page**, which
+is deliberate and is the same decision the overview page records: a screen filled with
+invented rows, an invented schema or an invented run would make the console look further
+along than it is, and somebody would screenshot it. Every one of them is exercised by the
+suite instead.
+
+The rule they all serve is the one the redaction module states twice, once for records and
+once for fields, and the two halves are different rules that keep getting collapsed into one:
+
+- **A whole record the caller may not see is dropped rather than emptied.** A husk announces
+  that the record exists. So a step missing from a trace graph has no node, no outline and no
+  gap, and a row missing from a page has nothing standing in for it.
+- **A field inside a record whose existence was already disclosed renders a lock.** The API
+  put the field in the schema and named it in `locked`; the console's job is to render the one
+  appearance `render_lock` has, and never a second one that varies by reason.
+
+### Grids
+
+`components/DataTable.tsx`, `paging.ts` and `useServerPage.ts`. TanStack Table v9 with no
+feature registered, so a client-side page or filter is a type error rather than a behaviour,
+and a cursor-paged hook that drops the API's total on the way in. Their own files argue the
+detail.
+
+### Generated forms
+
+`components/SchemaForm.tsx` and `formSchema.ts`, on `@rjsf/core` with the ajv8 validator.
+
+The plain-HTML theme, not a design-system theme: `@rjsf/core` emits `.rjsf-field`,
+`.control-label` and `.form-control`, which `styles/app.css` paints from tokens. Two of the
+library's own templates are replaced, and both for the same reason: its submit button is
+styled `btn btn-info` and its error list is a red panel, which is a severity variant of the
+thing `ui/Notice.tsx` deliberately has exactly one of.
+
+A generated form is the only screen here whose fields nobody chose, so three things are
+properties of the assembly rather than habits:
+
+- **A withheld field is replaced whole**, by a field that renders `ui/Lock.tsx` and a title.
+  Not `ui:readonly` and not `ui:disabled`, which are the library's own one-word answers to
+  this case and are both wrong: a read-only input renders the value, and a disabled one is a
+  control in the tab order carrying that value in the DOM. Replacing the widget alone would
+  leave the library's field template around it, and the description, help, error and
+  described-by slots in that template are four places a reason could be shown beside a lock.
+- **A withheld name is removed from `required` and stripped from the submitted data.** The
+  second is a write rather than a read: a form library hands back a whole object, a locked
+  property arrives in it empty, and an endpoint that writes what it is given would replace a
+  figure this caller was never permitted to read with nothing.
+- **A property whose format asks for a secret is dropped rather than rendered.**
+  `scripts/check-boundaries.mjs` refuses a password input in this console's source, and a form
+  assembled from a payload is the way round a check that reads source. Rendering it as an
+  ordinary text box would be worse than dropping it.
+
+**The validator needs `unsafe-eval`, and that has to be decided before a form is mounted.**
+`@rjsf/validator-ajv8` compiles each schema into a function with `new Function`, at
+`node_modules/ajv/dist/compile/index.js:89`. Under the Content-Security-Policy this README
+proposes further down, that call throws and the form stops validating. Four ways out, and the
+last one is the one this console's own argument points at:
+
+1. Add `'unsafe-eval'` to `script-src`. It buys client-side validation at the cost of the
+   single most useful directive in the policy, for the whole application, for ever.
+2. Ajv's standalone code generation, which precompiles validators at build time. It cannot
+   work here: the schema arrives at run time from the API, and precompiling needs it at build
+   time. This is the answer for a fixed schema and this leaf is about generated forms.
+3. Write a validator against `ValidatorType`, which is a small interface, that interprets the
+   schema instead of compiling it. Real work, and a third description of JSON Schema
+   semantics in a system that already has two.
+4. Do not validate in the browser. **The console is not a trust boundary**, so client-side
+   validation is a courtesy and never a check: the API validates what it is sent and refuses
+   what it does not like, and it would do that whatever this form believed. What is lost is
+   the round trip, which is worth something and is worth less than the directive.
+
+Nothing is decided here, because the decision belongs with whoever writes the CSP and mounts
+the first form, and both of those are the same person. The validator is wired as the library
+ships it so that the choice is visible rather than pre-empted.
+
+### Canvases
+
+`components/GraphCanvas.tsx`, `TraceGraph.tsx` and `graph.ts`, on `@xyflow/react`.
+
+One mount, for the same reason there is one `fetch`: two would be two sets of interaction
+flags and the second is where somebody leaves `nodesConnectable` on. It is read-only as a
+shape rather than as a setting, because the nodes and edges are props with no change handlers
+and there is nowhere for a change to go.
+
+`graph.ts` holds the two rules a drawing library will not keep for you:
+
+- **An edge whose other end did not arrive is dropped with the node.** A payload filtered for
+  a caller carries one easily, because the edge is a fact about the step they hold. Drawn, it
+  is an arrow that leaves a node and ends nowhere, which says a step is there.
+- **The layout is a function of what arrived.** The sharpest placeholder is not an element, it
+  is a space: a layout that gave every node an edge mentioned a column would leave a gap
+  exactly where the withheld step was. Rows are packed from the surviving nodes, so two
+  callers entitled to different subsets each get a graph with no hole in it.
+
+Deliberately no layout library. `dagre` and `elkjs` both draw better and neither has its
+placement rule anywhere a reviewer would read it, and the placement rule is the property.
+
+`base.css` is imported rather than `style.css`: the first is the mechanics, the second adds a
+visual theme with its own colours. The library reads its colours through variables with a
+`-default` fallback, so `styles/app.css` points the un-suffixed names at tokens and the canvas
+follows this console's theme. **The vendor stylesheet is not covered by the theme tests**,
+which read this project's two stylesheets and nothing else; `base.css` still contains a
+hard-coded grey for the attribution link, which is overridden, and colours for the minimap and
+the resize control, which are components this console does not mount.
+
+### What these dependencies weigh
+
+Measured on 2026-09-06. The first row is `npm run build`, which is the whole application with
+React in it and none of these components reachable. The other three are `vite build` over a
+throwaway entry importing the component, with React, React DOM and the JSX runtime declared
+external, so each figure is what mounting that component would add rather than a total.
+
+| Entry | Bundle | Gzipped |
+| --- | --- | --- |
+| The application as it stands | 267.01 kB | 85.74 kB |
+| plus `SchemaForm` (`@rjsf/core`, `ajv`, `lodash`) | 607.75 kB | 166.85 kB |
+| plus `GraphCanvas` (`@xyflow/react`, `zustand`) | 257.96 kB | 72.17 kB |
+| plus both | 866.18 kB | 238.90 kB |
+
+Roughly tripling the bundle is a real cost and it is worth knowing before either is mounted:
+the answer is a route-level split, which is a change to `App.tsx` at the point somebody adds
+the screen rather than something to do speculatively now. The throwaway entry and its config
+were deleted; they are recorded here because the numbers are the point, not the files.
+
+`TraceGraph` imports the one empty-page sentence from `DataTable.tsx` rather than spelling it
+again, because two spellings of one sentence is two sentences and the second is the one
+somebody later makes more helpful. That import costs nothing: an entry importing only that
+constant builds to 0.17 kB, so the grid is tree-shaken away.
+
 ## What is NOT done
 
 - **No browser has run any of this.** The suite below runs under jsdom, which parses CSS
@@ -353,15 +484,31 @@ screen.
   belongs on the response headers of whatever serves these files. A starting point:
   `default-src 'self'; connect-src 'self' <keycloak origin>; img-src 'self' data:;
   style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'`. Note that the
-  pre-paint theme script is inline and needs its hash in `script-src`, and that
-  `style-src 'unsafe-inline'` is there because Vite injects styles that way in development.
-- **No screens.** Two routes, one of which says it is not built yet. No grid, no forms, no
-  trace graph: those are M32.5.2 and a different piece of work.
+  pre-paint theme script is inline and needs its hash in `script-src`, that
+  `style-src 'unsafe-inline'` is there because Vite injects styles that way in development
+  and because React Flow positions every node with an inline `style` attribute, which a CSP
+  covers, and that **the policy as written stops a generated form's validation from running
+  at all**. See the ajv note in the component layer section.
+- **No screens.** Two routes, one of which says it is not built yet. The grid, the generated
+  form and the canvas all exist and none of them is on a page, so nothing in `dist/` contains
+  TanStack Table, react-jsonschema-form or React Flow: the application bundle is built from
+  the modules `main.tsx` reaches, and it reaches none of them. What that leaves unverified is
+  in the next section.
+- **No procedure canvas.** M32.5.2.3 is the drawing surface, and `GraphCanvas` is it. The
+  canvas as a thing somebody authors on, with five node kinds, scope predicates as the only
+  conditional grammar, no code node and a SKILL.md coming out of the other end, is a
+  different leaf and none of it is built. Nothing here can create, move, connect or delete a
+  node, and that is the read-only half working rather than the authoring half being close.
+- **No form composer.** M32.5.2.2 is the library and the rules a generated form obeys.
+  The seven-section agent manifest form, the AI co-author proposing diffs, and draft and
+  version handling are a different leaf and none of them is built.
 - **No display of who is signed in.** The header says nothing about the person, because the
   only way to know without asking the API is to read the token. When an endpoint exists that
   says who the caller is, that is where the name comes from.
-- **No `/api/v1` calls anywhere.** `src/api/client.ts` is wired and unused. Two operations
-  are now mounted and typed, so this is a gap in the console rather than in the API.
+- **No `/api/v1` call is made by anything a person can reach.** `useServerPage.ts` is the
+  one caller of `src/api/client.ts`, and nothing on a page uses it, so no request leaves this
+  console at run time. The generated form and the canvas do not fetch at all: they take a
+  schema and a graph as values, because there is no route that returns either.
 - **No error reporting, no analytics, no telemetry.**
 - **`vite.config.ts` is not typechecked**, deliberately: including it would mean adding
   `@types/node` and a second tsconfig. A mistake in it surfaces when the build fails rather
@@ -394,6 +541,29 @@ was; items 1, 2, 4 and 5 of the original eight are now verified and are recorded
 5. **The cross-tab refresh race is not fixed and is not tested.** Two tabs cannot await
    each other's promise, and a test with one module graph cannot reproduce two tabs. See
    the section above for the two ways to fix it.
+6. **Nothing in the component layer has spoken to a route.** `GET /api/v1/records/{entity}`
+   exists and is what the grid's page shape was written against, and it answers 404 for every
+   entity on the deployed application because no row tool is registered. There is no endpoint
+   at all that returns a JSON Schema for a form or a graph for a run, so `formShape` and
+   `readGraph` are checked against shapes this console proposes. The names in them are the
+   part that has to be agreed with whoever writes those endpoints, and the failure mode of
+   disagreeing is quiet: a form with no fields, or a canvas with nothing on it, either of
+   which reads as a permission problem.
+7. **Nothing on the canvas has been positioned by a browser.** jsdom runs no layout and has
+   no `ResizeObserver`, so `tests/setup.ts` supplies one that observes nothing. React Flow
+   therefore measures every node as having no size, renders them hidden, and draws no edges
+   at all. What the suite reads is which nodes and which text reach the DOM and what the
+   placement arithmetic in `graph.ts` computes; that an edge is drawn between two nodes, that
+   a node fits inside its box, and that `fitView` frames the graph are all unchecked. The
+   node width is the one place the arithmetic and the stylesheet have to agree, and that is
+   asserted against the token rather than left to inspection.
+8. **The canvas has not been through a screen reader and probably reads badly.** It is a set
+   of absolutely positioned boxes inside `role="application"`, which is the shape React Flow
+   has. The labels are real text and the group is labelled, and that is the whole of what can
+   be claimed. A run that has to be readable without sight most likely wants the same trace
+   rendered as a list beside it, and that is a decision rather than an omission.
+9. **No form has been submitted to anything.** `onSubmit` hands its caller a record with the
+   withheld names stripped, and no call site sends one anywhere.
 
 ---
 
@@ -445,6 +615,11 @@ by a function that refuses everything.
 | `tests/routing.test.tsx` | Deep links, the console's own 404, and the two routes that must stay outside the guard. |
 | `tests/config.test.tsx` | The issuer rules, and that a misconfigured console names the variable on the screen. |
 | `tests/startup.test.ts` | `src/main.tsx`, which nothing else reaches: the theme applied before the first render, and the contract with `index.html`. |
+| `tests/data-table.test.tsx` | The grid renders the page it was handed: no slicing, no filtering, no count, and one lock per withheld cell. |
+| `tests/server-paging.test.tsx` | The cursor, the query string, the total that reaches nothing, and the locked-cell reader. |
+| `tests/status-primitives.test.tsx` | The chip, the badge and the tone table, and that no other module turns a value into a colour. |
+| `tests/schema-form.test.tsx` | A generated form: the lock in place of a withheld field, the value that is never written back, the field the API did not send, and the credential nobody collects. |
+| `tests/trace-graph.test.tsx` | The canvas: the dangling edge, the packed layout, the absent step with no placeholder, and the read-only surface. |
 
 **Several constants are checked against the thing they are a copy of, not against
 themselves.** That is the point of `tests/support/python.ts` and the realm parsing in
@@ -459,6 +634,32 @@ forbid in a comment in order to forbid it, so a substring search for
 `:root:not([data-theme="light"])` or for `.lock--out-of-scope` would be satisfied by the
 comment with the real rule gone. `tests/support/css.ts` strips comments and reads rules,
 and the theme test hands the selector it found to the browser's own matcher.
+
+**Parsing extends to the component layer, for the same reason.** `Badge.tsx` writes out
+`tone={ok ? "positive" : "critical"}` as the shape to refuse and `Status.tsx` writes out
+`denied: "critical"`, so `tests/status-primitives.test.tsx` parses every `.tsx` under `src`
+rather than searching it. `GraphCanvas.tsx` states in prose the very flags it sets, so
+`tests/trace-graph.test.tsx` reads its JSX attributes out of the syntax tree.
+`tests/support/typescript.ts` is where all of that lives.
+
+**Twenty-four mutations were run against the generated form and the canvas on 2026-09-06,
+and all twenty-four were caught by a specifically named test.** Each source file was restored
+byte-identically afterwards and checked by md5. The four the brief asked for are in there:
+a reason tooltip on a withheld field, a placeholder node for a step that did not arrive, a
+node count above the canvas, and a colour literal in a component. Three of the twenty-four
+were caught by tests that already existed rather than by the new ones, which is the useful
+result: the colour literal in `WithheldField` and in `StepNode` were both caught by
+`no component in the shared layers writes a colour`, and a `.lock--out-of-scope` rule added
+to the stylesheet was caught by `the lock carries one class name and the stylesheet gives it
+no modifiers`. The rules written for the theme and the lock held over two libraries neither
+of them had heard of, and nobody had to extend them.
+
+Two of them are worth recording for what they showed rather than for passing. Replacing
+`ui:field` with the library's own `ui:readonly`, which is the one-word answer to "this field
+is not editable", put the withheld value into the DOM as an input's `value` attribute, and
+five tests failed. And keeping a locked field in the schema's `required` list left the form
+unsubmittable for the person who could not fill it and submittable for the person who could,
+which is a difference two people comparing screens can read off.
 
 **Fifty-one mutations were run against this suite and fifty were caught by a specifically
 named test.** The one survivor is `end={section.to === "/"}` in `src/layout/Shell.tsx`
