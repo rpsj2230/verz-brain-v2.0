@@ -1,0 +1,115 @@
+# The background worker, and the two things it is capped by.
+#
+# `brain.ops.queue` decides what a worker may do and `brain.ops.worker` is the process that
+# reads this file's environment and either lays out its processes or refuses. Everything
+# below is one of those two modules expressed as a deployment, and `tests/unit/test_worker.py`
+# compares them: a slot count changed here without being changed there fails, and so does a
+# memory limit that stops matching `brain.ops.wiring`.
+#
+# **Composed on purpose, like the automation canvas.** It is a separate file rather than a
+# service in `docker-compose.yml` because `brain.ops.wiring` puts `brain-worker` in the
+# `standard` and `full` profiles and not in `lite`, and lite is what is deployed today. The
+# `profiles:` key below carries the same two names, so `docker compose up` without one of
+# them starts nothing from this file. Not composing it is unambiguous; a service that is
+# present and disabled by a variable is a service somebody enables by editing the wrong line.
+#
+# **Capped twice, and the second cap is a different shape here than in the trace ledger.**
+# `deploy.resources.limits.memory` is a cgroup ceiling: it protects the neighbour on this
+# shared host, and it does so by killing the container. `docker-compose.langfuse.yml` pairs
+# each of its limits with a ceiling in the process's own units - `GOMEMLIMIT` for Go,
+# `--max-old-space-size` for Node - so the runtime collects harder instead of being killed.
+#
+# CPython has no equivalent and this file does not pretend otherwise. `RLIMIT_AS` bounds
+# address space rather than heap, and a Python process given 336 MiB of address space fails
+# on an ordinary import rather than on a leak. So the second cap is the number of jobs the
+# process will run at once:
+#
+# | cap | value | enforced by | what it does not cover |
+# | --- | --- | --- | --- |
+# | cgroup limit | 384M | the kernel, by killing the container | nothing; it is the backstop |
+# | slot budget | 7 slots x 48 MiB = 336 MiB | `brain.ops.worker.preflight`, before the first fetch | one job that leaks |
+#
+# 336 sits strictly below 384 for the same reason every pair in the trace ledger does: the
+# quantity being capped is not the whole of what the cgroup counts. `MIB_PER_SLOT` is the
+# working set of one in-flight job and the gap is the interpreter, the connection pool and
+# the imports. And it is honest about what it misses: a single job that leaks is still an OOM
+# kill, because nothing inside CPython will stop it. What this prevents is the ordinary
+# failure, which is a slot count sized for a machine we do not have.
+#
+# **QUEUE_URL goes straight to the database and DATABASE_URL does not.** Both are set, and
+# the worker compares them: `brain.ops.queue.queue_url_refusals` exists for the case where
+# somebody gives the worker one connection string for both jobs, which is the mistake that is
+# easy to write and impossible to see. A LISTEN behind the transaction pooler is moved to
+# another backend and stops delivering, so the worker polls on its fallback timer, throughput
+# drops to whatever that allows, and every metric reports an empty queue.
+#
+# **It has never been started.** `brain.ops.worker` exits 69 with a message saying no queue
+# driver is installed, because procrastinate is not a dependency of this project. That is the
+# honest behaviour: a worker that started anyway would poll a queue that does not exist and
+# report itself healthy. So M32.4.1.4 is not claimed here, on the same grounds
+# `docker-compose.langfuse.yml` refuses M32.1.1.1: a compose file that has never run is a
+# design.
+#
+# Task ids: none. M32.4.1.4 is what this serves and is deliberately not claimed; see above.
+
+services:
+  brain-worker:
+    # The same image as the application. A worker is the same code with a different command,
+    # and a second image would be a second build that can be one commit behind the one whose
+    # jobs it is running - which presents as a task that fails only in production.
+    image: ${APP_IMAGE:-ghcr.io/rpsj2230/verz-brain-v2.0:latest}
+    restart: unless-stopped
+    # The profiles `brain.ops.wiring` gives the `brain-worker` component, spelled the way
+    # compose selects them. Held equal by test, in both directions.
+    profiles: ["standard", "full"]
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["python", "-m", "brain.ops.worker"]
+    environment:
+      # Straight to Postgres. Not through pgbouncer, and deliberately not the same string as
+      # DATABASE_URL below: see the header, and `brain.ops.queue.queue_url_refusals`, which
+      # this container runs against these two values before it starts.
+      QUEUE_URL: postgresql+psycopg://brain:${POSTGRES_PASSWORD}@db:5432/brain
+      # The application's connection, through the pooler like everything else. The worker
+      # makes ordinary queries on it, and reads it here so the two can be compared.
+      DATABASE_URL: postgresql+psycopg://brain:${POSTGRES_PASSWORD}@pgbouncer:5432/brain
+      # Where a durable graph's saved state would go. Direct for a different reason from the
+      # queue's: the saver prepares statements server-side, and a pooler in transaction mode
+      # hands the next statement to a backend that never saw the prepare.
+      BRAIN_CHECKPOINTER_URL: postgresql+psycopg://brain:${POSTGRES_PASSWORD}@db:5432/brain
+      # The per-class allocation, one variable per class. `brain.ops.queue.CONCURRENCY` is
+      # where these numbers are decided and argued; they are repeated here because a
+      # container is configured by its environment, and the test holds the two equal.
+      #
+      # Zero for the interactive class is not an oversight. A person watching a cursor is
+      # answered inside the request, and a queue in that path adds a hop whose only possible
+      # effect is delay. It is set rather than omitted because an omitted class is reported
+      # as one whose jobs are never fetched, and the two states must not look alike.
+      BRAIN_WORKER_SLOTS_HUMAN_INTERACTIVE: "0"
+      BRAIN_WORKER_SLOTS_HUMAN_ASYNC: "4"
+      BRAIN_WORKER_SLOTS_AUTOMATION: "2"
+      BRAIN_WORKER_SLOTS_SYSTEM: "1"
+      # glibc gives a threaded process up to eight arenas per core and never returns them,
+      # so resident memory climbs to a plateau set by the host's core count rather than by
+      # the container's limit. On this box that plateau is above 384M. Two arenas costs a
+      # little allocator contention and is the one memory knob CPython actually has.
+      MALLOC_ARENA_MAX: "2"
+      PYTHONUNBUFFERED: "1"
+    deploy:
+      resources:
+        limits:
+          # Matches the `brain-worker` component in `brain.ops.wiring`, which is where the
+          # budget is decided and what every profile's arithmetic is computed from.
+          memory: 384M
+    healthcheck:
+      # Readiness, not liveness, and `brain.ops.wiring` says what it means: the queue driver
+      # has fetched at least once and the database is reachable. `--ready` reads the
+      # heartbeat a draining worker writes and compares its age against the same staleness
+      # the re-drive sweep uses. Nothing writes it yet, so this reports not-ready, which is
+      # the correct answer for a container that is not draining a queue.
+      test: ["CMD", "python", "-m", "brain.ops.worker", "--ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 30s

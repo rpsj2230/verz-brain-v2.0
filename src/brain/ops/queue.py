@@ -57,10 +57,27 @@ sends it twice, and nothing downstream can tell that from two people asking. Tho
 `QUARANTINE`, where a person decides, because the honest state of an interrupted side
 effect is "nobody knows whether it happened".
 
-What is not claimed here: Procrastinate is not a dependency of this repository and no
-worker process exists, so M32.4.1.1 and M32.4.1.4 are policy in this file and nothing
-running. The connection rule and the concurrency budget are what a worker will have to
-satisfy, and are tested as such.
+**Per-class concurrency is a process layout, not a setting, and that is the driver's doing.**
+The driver takes one concurrency per worker process and a list of queues for it to drain, so
+the only way it can enforce a per-class allocation is as separate processes over separate
+queues. `worker_shards` is that translation, and `queue_name_for` derives the queue name
+from the traffic class so a task author cannot choose a priority by choosing a name. A class
+allocated zero gets no shard rather than an idle one: a worker that fetches nothing still
+holds a connection and still reports itself up.
+
+**The queue's own tables are not in `migrations/versions`, and `DRIVER_SCHEMA` is what keeps
+that from being invisible.** See `THE_QUEUE_SCHEMA_IS_NOT_ALEMBICS`. The short version is
+that the driver versions its own DDL, a transcribed copy forks at the driver's next release,
+and the price of not transcribing it is tables that arrive with no row-level security. Naming
+a schema `brain.db.SCHEMAS` already lists puts them inside the only sweep that would report
+that, which converts a silent gap into a failing check.
+
+What is not claimed here, and it has not moved: **Procrastinate is not a dependency of this
+repository**, so nothing in this file has ever fetched a job. M32.4.1.1 is the driver
+running, and what is written is the shape a driver has to fit: the schema it may install
+into, the queues it must drain, the connection it may not use, and the message it prints
+when it is absent. `brain.ops.worker` is the process that would run it and refuses to start
+without it, so the absence is loud rather than a worker looping on an empty queue.
 
 Task ids: M32.4.1.3, M32.4.2.1, M32.4.2.2, M32.4.2.3
 """
@@ -74,6 +91,7 @@ from datetime import datetime, timedelta
 from typing import Final, Protocol
 from urllib.parse import urlsplit
 
+from brain.db import SCHEMAS
 from brain.gate.context import TrafficClass
 from brain.ops.wiring import component
 
@@ -227,22 +245,23 @@ def concurrency_gaps(
     return tuple(findings)
 
 
-def queue_url_refusals(queue_url: str, *, app_url: str = "") -> tuple[str, ...]:
-    """Every reason this connection string is wrong for a queue, in words that name the fix.
+def pooler_url_findings(url: str) -> tuple[str, ...]:
+    """Every sign that this connection string goes through a transaction pooler.
 
-    Returns all of them. A worker pointed at the pooler and sharing the application's URL
-    has two problems, and fixing one of them produces a configuration that is still wrong
-    in a way that raises nothing.
+    Separate and public because **the queue is not the only thing that must not go behind
+    one**. `brain.ops.checkpoints` asks the identical question about the checkpointer's
+    connection, and a second copy of this would be the fourth copy of a pooler rule in this
+    repository. The house argument against that is in `brain.knowledge.uploads`: the copy
+    that drifts is the one nobody is looking at, and every failure in this family is silent,
+    so the drift is discovered by the thing it was meant to prevent.
+
+    What is deliberately not here is the consequence. A pooler breaks LISTEN for the queue
+    and breaks server-side prepared statements for the checkpointer, and those are different
+    sentences to write in a refusal. So this reports the pooler's own behaviour, which is
+    true whoever is asking, and each caller adds what it means for them.
     """
     findings: list[str] = []
-    if app_url and queue_url == app_url:
-        findings.append(
-            "the queue is using the application's own connection string, which goes through "
-            "the transaction pooler; LISTEN/NOTIFY binds to a backend connection and "
-            "transaction pooling moves it, so the worker stops being notified and reports "
-            "nothing. Give the worker a session-mode or direct URL."
-        )
-    split = urlsplit(queue_url)
+    split = urlsplit(url)
     host = (split.hostname or "").lower()
     if host in POOLER_HOSTNAMES:
         findings.append(
@@ -261,6 +280,166 @@ def queue_url_refusals(queue_url: str, *, app_url: str = "") -> tuple[str, ...]:
                 "transaction pooler. A queue does not work around one; it does not use one."
             )
     return tuple(findings)
+
+
+def queue_url_refusals(queue_url: str, *, app_url: str = "") -> tuple[str, ...]:
+    """Every reason this connection string is wrong for a queue, in words that name the fix.
+
+    Returns all of them. A worker pointed at the pooler and sharing the application's URL
+    has two problems, and fixing one of them produces a configuration that is still wrong
+    in a way that raises nothing.
+
+    The sharing check is first and is this function's own, because it is the only one of the
+    three that needs to know what the application is connected to. The other two are
+    `pooler_url_findings`, asked of the queue URL alone.
+    """
+    findings: list[str] = []
+    if app_url and queue_url == app_url:
+        findings.append(
+            "the queue is using the application's own connection string, which goes through "
+            "the transaction pooler; LISTEN/NOTIFY binds to a backend connection and "
+            "transaction pooling moves it, so the worker stops being notified and reports "
+            "nothing. Give the worker a session-mode or direct URL."
+        )
+    return (*findings, *pooler_url_findings(queue_url))
+
+
+# ----------------------------------------------------------------- the driver's own needs
+#: Where the queue's own tables go. `brain.db.SCHEMAS` describes `ops` as "scheduled jobs,
+#: budgets, deployment records", which is what a job row is.
+#:
+#: The driver's default is `public`, and `public` is the one answer this repository has
+#: already ruled out. `brain.db` puts it plainly: a table there is "a table nobody decided
+#: the classification of". The mechanical half matters more than the tidiness half:
+#: `brain.ops.sweeps.sweep_rls` reads `SCHEMAS` and looks nowhere else, so a queue installed
+#: into `public` is not merely undeclared, it is outside the reach of the only check that
+#: would report its tables having no row-level security.
+DRIVER_SCHEMA: Final = "ops"
+
+#: Why the queue's tables are not in `migrations/versions`, and what that costs.
+THE_QUEUE_SCHEMA_IS_NOT_ALEMBICS = (
+    "The driver ships and versions its own DDL and applies it with its own command. "
+    "Transcribing that into an Alembic revision would fork it: our copy would be the one "
+    "the deploy runs and the driver's would be the one its code expects, and they diverge "
+    "at the driver's next release with no error until a query names a column that is not "
+    "there. So the queue schema is a deploy step and not a migration, and the price is "
+    "paid in two places rather than hidden. There is one migration history for our tables "
+    "and one command for the driver's, which is two things an operator must run; and the "
+    "driver's tables arrive with no row-level security on them, which is why "
+    "DRIVER_SCHEMA puts them somewhere sweep_rls is already looking. A loud failure in a "
+    "sweep beats a silent one in a schema nobody enumerates."
+)
+
+#: How long a worker waits on a notification before polling anyway.
+#:
+#: Not a tuning knob: it is the whole of what is left when the notification path is broken.
+#: A worker behind a transaction pooler receives no notifications and raises nothing, so
+#: this interval becomes the queue's entire latency, and a value chosen for tidiness (a
+#: minute, say) turns that failure into "the system is slow this week" rather than into
+#: something anybody investigates. Five seconds is short enough that the degraded mode is
+#: survivable and long enough that an idle worker is not a poller against a shared database.
+FALLBACK_POLL_SECONDS: Final = 5
+
+#: What a worker says when it has nothing to fetch with.
+#:
+#: Worded here because this is the one module permitted to name an implementation, and
+#: `brain.ops.worker` prints it rather than spelling the name itself. That is the seam doing
+#: its job in the least glamorous way available: even the error message about the driver
+#: being missing lives in the file the swap would replace.
+NO_DRIVER_IS_INSTALLED = (
+    "no queue driver is installed. procrastinate is not a dependency of this project, so "
+    "there is no queue to fetch from and this process would otherwise sit in a loop "
+    "reporting an empty queue, which is indistinguishable from a queue with nothing in it. "
+    "It exits instead, and says which of the two it is."
+)
+
+
+def driver_schema_gaps(schema: str = DRIVER_SCHEMA) -> tuple[str, ...]:
+    """Every reason the queue may not be installed into this schema.
+
+    A parameter with a default rather than a check over the constant beside it, for the
+    reason `concurrency_gaps` gives about itself: a check that can only ever be run against
+    the one value it lives next to cannot be shown to fail, and a check nobody has seen fail
+    is a check nobody knows works.
+    """
+    findings: list[str] = []
+    if not schema.strip():
+        findings.append(
+            "the queue names no schema, so its tables land wherever search_path points, "
+            "which on a fresh connection is public"
+        )
+        return tuple(findings)
+    if schema not in SCHEMAS:
+        findings.append(
+            f"schema {schema!r} is not one brain.db.SCHEMAS names, so brain.ops.sweeps."
+            "sweep_rls does not look in it; a queue table with no row-level security there "
+            f"is never reported. Known: {sorted(SCHEMAS)}"
+        )
+    return tuple(findings)
+
+
+@dataclass(frozen=True)
+class Shard:
+    """One worker process's share of the queue: which queue it drains, and how widely.
+
+    A shard exists because the driver takes one concurrency per worker process and a list
+    of queues for it to drain. **Per-class concurrency is therefore not a setting, it is a
+    process layout**, and expressing it as anything else means one number for the whole
+    worker, which is the failure this module's opening argument names: a backfill's
+    thousand automation jobs occupy every slot and the reply somebody is waiting for sits
+    behind them.
+    """
+
+    queue: str
+    traffic_class: TrafficClass
+    concurrency: int
+
+    def __post_init__(self) -> None:
+        if self.concurrency < 1:
+            # A shard is a process. One with no slots holds a database connection, drains
+            # nothing, and reports itself healthy, which is a connection spent on a queue
+            # that was deliberately never to be drained. The classes allocated zero get no
+            # shard at all rather than an idle one; see `worker_shards`.
+            msg = (
+                f"shard {self.queue!r} has {self.concurrency} slots; a worker that fetches "
+                "nothing still holds a connection and still reports itself up"
+            )
+            raise QueueError(msg)
+
+
+def queue_name_for(traffic_class: TrafficClass) -> str:
+    """The queue a job of this class is enqueued onto.
+
+    The traffic class and nothing else. A queue name chosen per task would let a task author
+    choose a priority, and the thing that decides priority here is whether a person is
+    waiting, which the channel already declared at ingress with no default. Deriving the
+    name means a new traffic class cannot be added without its queue existing, and a task
+    cannot smuggle itself into the interactive share by being named well.
+    """
+    return traffic_class.value
+
+
+def worker_shards(concurrency: Mapping[TrafficClass, int] | None = None) -> tuple[Shard, ...]:
+    """The worker processes this allocation describes, in traffic-class order.
+
+    A class allocated zero is omitted rather than given an idle shard. That is the whole
+    reason this returns a tuple of shards instead of the mapping it was built from:
+    `HUMAN_INTERACTIVE` is deliberately zero, and the natural loop over a mapping produces a
+    worker for it which then waits for ever on a queue nothing is meant to enqueue onto.
+
+    Ordered by the enum rather than by size, so two runs of a deploy produce the same
+    process list and a diff of the plan is a diff of the decision.
+    """
+    allocation = CONCURRENCY if concurrency is None else concurrency
+    return tuple(
+        Shard(
+            queue=queue_name_for(traffic_class),
+            traffic_class=traffic_class,
+            concurrency=allocation[traffic_class],
+        )
+        for traffic_class in TrafficClass
+        if allocation.get(traffic_class, 0) > 0
+    )
 
 
 # ----------------------------------------------------------------- crash recovery
